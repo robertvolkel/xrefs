@@ -4,6 +4,8 @@ import {
   parseSelectionDoc,
   validateSelectionDoc,
   findContradictions,
+  findLogicTypeDivergences,
+  findAskedButUncomparable,
   mergeWithLogicTables,
   renderSelectionDoc,
   renderGeneratedModule,
@@ -157,6 +159,89 @@ describe('findContradictions — the threshold-free gap detector', () => {
     const [found] = findContradictions(doc, registry);
     expect(found.skippedIn).toEqual(['B', 'C']);
     expect(found.unreasonedSkips).toEqual(['C']); // B is settled; only C still needs a human
+  });
+});
+
+/**
+ * The sibling of findContradictions, and the detector that found the package bug. Same
+ * threshold-free principle: if 33 families compare a spec one way and 5 compare it another,
+ * at least one group is wrong — that is evidence, not opinion.
+ */
+describe('findLogicTypeDivergences / findAskedButUncomparable — the package-bug detector', () => {
+  const registry = {
+    A: table('A', { ...rule('package_case', 10), logicType: 'identity' }),
+    B: table('B', { ...rule('package_case', 10), logicType: 'identity' }),
+    C: table('C', { ...rule('package_case', 10), logicType: 'application_review' }), // the odd one out
+  };
+
+  it('flags a spec compared differently across families, majority first', () => {
+    const doc = docOf({
+      A: [['package_case', 'required']],
+      B: [['package_case', 'required']],
+      C: [['package_case', 'required']],
+    });
+    const [d] = findLogicTypeDivergences(doc, registry);
+    expect(d.attributeId).toBe('package_case');
+    expect(d.variants[0]).toEqual({ logicType: 'identity', familyIds: ['A', 'B'] }); // majority first
+    expect(d.variants[1]).toEqual({ logicType: 'application_review', familyIds: ['C'] });
+  });
+
+  it('marks the SHARP case: a family that ASKS for a spec it structurally cannot compare', () => {
+    // `application_review` hands every candidate a flat 50% — it can never separate two parts.
+    // Asking the user and then ignoring the answer is worse than not asking.
+    const asked = docOf({
+      A: [['package_case', 'required']],
+      B: [['package_case', 'required']],
+      C: [['package_case', 'required']], // ← asks, and cannot use the answer
+    });
+    expect(findLogicTypeDivergences(asked, registry)[0].askedButUncomparable).toEqual(['C']);
+    expect(findAskedButUncomparable(asked, registry)).toEqual([
+      { familyId: 'C', attributeId: 'package_case', attributeName: 'PACKAGE_CASE', logicType: 'application_review', weight: 10 },
+    ]);
+  });
+
+  it('an uncomparable spec we do NOT ask about is not flagged — that is fine, not a bug', () => {
+    const notAsked = docOf({
+      A: [['package_case', 'required']],
+      B: [['package_case', 'required']],
+      C: [['package_case', 'not_asked']],
+    });
+    expect(findLogicTypeDivergences(notAsked, registry)[0].askedButUncomparable).toEqual([]);
+    expect(findAskedButUncomparable(notAsked, registry)).toEqual([]);
+  });
+
+  it('does not flag a spec compared the same way everywhere', () => {
+    const same = { A: table('A', rule('iq')), B: table('B', rule('iq')) };
+    expect(findLogicTypeDivergences(docOf({ A: [['iq', 'required']], B: [['iq', 'required']] }), same)).toEqual([]);
+  });
+});
+
+describe('the real logic tables — the package bug must stay fixed', () => {
+  it('every family compares the package; none hands it to a human', () => {
+    // C6/C7/C8/C9/C10 scored `package_case` as application_review — a flat 50% for EVERY
+    // candidate — while 33 other families compared it exactly. All five ALSO required the user
+    // to state their package, so a request for SOT-23 accepted a QFN-32 at half marks.
+    for (const [familyId, t] of Object.entries(logicTableRegistry)) {
+      const pkg = t.rules.find(r => r.attributeId === 'package_case');
+      if (!pkg) continue;
+      expect(`${familyId}:${pkg.logicType}`).toBe(`${familyId}:identity`);
+    }
+  });
+
+  it('no spec we ASK the user for is scored by a rule that cannot compare it', () => {
+    // The six survivors are real review items in docs/min_attr_sets.md (gain, DC bias derating,
+    // logic family, Vgs(th), PSRR, parasitic inductance). When they are resolved this drops to 0;
+    // if it ever GROWS, someone has added a question whose answer the engine throws away.
+    const { doc } = parseSelectionDoc(readDoc());
+    const found = findAskedButUncomparable(doc, logicTableRegistry);
+    expect(found.map(f => `${f.familyId}:${f.attributeId}`).sort()).toEqual([
+      '12:dc_bias_derating',
+      '54:parasitic_inductance',
+      'B5:vgs_th',
+      'B6:hfe',
+      'C1:psrr',
+      'C5:logic_family',
+    ]);
   });
 });
 

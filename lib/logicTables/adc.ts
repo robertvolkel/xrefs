@@ -248,7 +248,7 @@ export const adcLogicTable: LogicTable = {
     {
       attributeId: 'package_case',
       attributeName: 'Package / Case',
-      logicType: 'application_review',
+      logicType: 'identity',
       weight: 5,
       engineeringReason: 'TSSOP-16, MSOP-10, QFN-32, etc. Precision ADCs often have exposed pad or guard-ring requirements affecting PCB layout. High-speed ADCs in QFN/BGA need controlled-impedance routing to differential inputs. Package change is Application Review — verify footprint compatibility, exposed pad thermal connection, and layout-sensitive pin assignments (AGND vs. DGND separation is critical for precision ADCs). Pin-compatible drop-in is the ideal case; any footprint change requires PCB modification.',
       sortOrder: 20,

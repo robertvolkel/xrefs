@@ -266,6 +266,104 @@ export function findContradictions(
     );
 }
 
+/**
+ * THE SAME SPEC, COMPARED DIFFERENTLY IN DIFFERENT FAMILIES.
+ *
+ * A sibling of findContradictions(), and it needs no more judgement than that one does: if 33
+ * families compare a package by matching the text and 5 say "a human must eyeball it", at least
+ * one group is wrong. Families disagreeing about the same thing is evidence, not opinion.
+ *
+ * This is how the package bug was found. `package_case` was `application_review` — a rule type
+ * that scores EVERY candidate an identical 50% and can never separate two parts — in C6/C7/C8/
+ * C9/C10, while 33 other families compared it exactly. All five ALSO required the user to state
+ * their package, so the app asked the question and then threw the answer away. (The C8 rule's own
+ * engineering note said "BLOCK substitutions with a different package size"; the code did the
+ * opposite.)
+ *
+ * NOT every difference is a bug — a mica capacitor's dielectric genuinely has no better/worse
+ * ranking the way an MLCC's does, so `identity` there is right and `identity_upgrade` would be
+ * wrong. So these are REVIEW ITEMS surfaced in the document, never auto-fixes. What IS reported
+ * as actionable is the sharp case: a family that cannot use an answer it asks the user for.
+ */
+export interface LogicTypeDivergence {
+  attributeId: string;
+  attributeName: string;
+  /** logicType → families using it, majority first. */
+  variants: Array<{ logicType: string; familyIds: string[] }>;
+  /** Families that ASK the user for this spec but score it with a rule that cannot compare. */
+  askedButUncomparable: string[];
+}
+
+/** Scores every candidate a flat 50% — it cannot separate two parts, whatever the user says. */
+const CANNOT_COMPARE = new Set(['application_review', 'operational']);
+
+export function findLogicTypeDivergences(
+  doc: ParsedDoc,
+  registry: Record<string, LogicTable> = logicTableRegistry,
+): LogicTypeDivergence[] {
+  const byAttr = new Map<string, { name: string; byType: Map<string, string[]> }>();
+
+  for (const [familyId, table] of Object.entries(registry)) {
+    for (const rule of table.rules) {
+      const e = byAttr.get(rule.attributeId) ?? { name: rule.attributeName, byType: new Map() };
+      e.byType.set(rule.logicType, [...(e.byType.get(rule.logicType) ?? []), familyId]);
+      byAttr.set(rule.attributeId, e);
+    }
+  }
+
+  const out: LogicTypeDivergence[] = [];
+  for (const [attributeId, e] of byAttr) {
+    if (e.byType.size < 2) continue;
+    const variants = [...e.byType.entries()]
+      .map(([logicType, familyIds]) => ({ logicType, familyIds }))
+      .sort((a, b) => b.familyIds.length - a.familyIds.length);
+
+    // The actionable case: we ASK for this spec, and that family's rule cannot compare it.
+    const askedButUncomparable = variants
+      .filter(v => CANNOT_COMPARE.has(v.logicType))
+      .flatMap(v => v.familyIds)
+      .filter(f => {
+        const row = doc.families.get(f)?.find(r => r.attributeId === attributeId);
+        return !!row && row.state !== 'not_asked';
+      });
+
+    out.push({ attributeId, attributeName: e.name, variants, askedButUncomparable });
+  }
+
+  return out.sort(
+    (a, b) =>
+      (b.askedButUncomparable.length > 0 ? 1 : 0) - (a.askedButUncomparable.length > 0 ? 1 : 0) ||
+      b.variants[0].familyIds.length - a.variants[0].familyIds.length ||
+      a.attributeId.localeCompare(b.attributeId),
+  );
+}
+
+/**
+ * Specs we ASK the user for and then CANNOT USE — regardless of whether any other family
+ * disagrees. A question whose answer the engine structurally ignores is worse than no question.
+ */
+export function findAskedButUncomparable(
+  doc: ParsedDoc,
+  registry: Record<string, LogicTable> = logicTableRegistry,
+): Array<{ familyId: string; attributeId: string; attributeName: string; logicType: string; weight: number }> {
+  const out = [];
+  for (const [familyId, table] of Object.entries(registry)) {
+    for (const rule of table.rules) {
+      if (!CANNOT_COMPARE.has(rule.logicType)) continue;
+      const row = doc.families.get(familyId)?.find(r => r.attributeId === rule.attributeId);
+      if (!row || row.state === 'not_asked') continue;
+      out.push({
+        familyId,
+        attributeId: rule.attributeId,
+        attributeName: rule.attributeName,
+        logicType: rule.logicType,
+        weight: rule.weight,
+      });
+    }
+  }
+  return out.sort((a, b) => b.weight - a.weight || a.familyId.localeCompare(b.familyId));
+}
+
 // ─── Merge (the audit refresh) ────────────────────────────────────────────────
 
 /**
@@ -425,6 +523,63 @@ export function renderSelectionDoc(
       out.push(
         `| ${c.unreasonedSkips.length ? '⚠' : ''} | ${escapePipes(c.attributeName)} | \`${c.attributeId}\` | ` +
           `${c.maxWeight} | ${asked} | ${skipped} |`,
+      );
+    }
+  }
+  out.push('');
+  out.push('---');
+  out.push('');
+
+  // ── Specs we ask for and cannot use ─────────────────────────────────────────
+  const uncomparable = findAskedButUncomparable(doc, registry);
+  out.push('## Review items — specs we ASK you for, then IGNORE');
+  out.push('');
+  if (uncomparable.length === 0) {
+    out.push('None. Every spec the agent asks about is one the engine can actually compare.');
+  } else {
+    out.push(
+      'These specs are scored by a rule type that **cannot compare two parts** — it hands every',
+      'candidate an identical half-mark, whatever you told us. So the agent asks the question and',
+      'then throws the answer away. Either the rule type is wrong, or we should not be asking.',
+      '',
+      '| Family | Spec | id | Weight | Scored as |',
+      '|---|---|---|---|---|',
+    );
+    for (const u of uncomparable) {
+      out.push(
+        `| ${u.familyId} | ${escapePipes(u.attributeName)} | \`${u.attributeId}\` | ${u.weight} | ` +
+          `\`${u.logicType}\` |`,
+      );
+    }
+  }
+  out.push('');
+  out.push('---');
+  out.push('');
+
+  // ── Same spec, compared differently across families ─────────────────────────
+  const divergences = findLogicTypeDivergences(doc, registry);
+  out.push('## Review items — the same spec, compared differently in different families');
+  out.push('');
+  if (divergences.length === 0) {
+    out.push('None. Every spec is compared the same way everywhere it appears.');
+  } else {
+    out.push(
+      `${divergences.length} specs are compared differently depending on the family. At least one`,
+      'side of each is likely wrong — but **not all of them are bugs**: a mica capacitor\'s dielectric',
+      'genuinely has no better/worse ranking the way an MLCC\'s does, so an exact match there is',
+      'correct. Judge each on its merits. Rows marked **⚠** are the sharp case: a family that asks',
+      'you for the spec and then scores it with a rule that cannot compare anything.',
+      '',
+      '| | Spec | id | How it is compared |',
+      '|---|---|---|---|',
+    );
+    for (const d of divergences) {
+      const how = d.variants
+        .map(v => `\`${v.logicType}\` (${v.familyIds.length > 8 ? `${v.familyIds.length} families` : v.familyIds.join(', ')})`)
+        .join(' · ');
+      out.push(
+        `| ${d.askedButUncomparable.length ? '⚠' : ''} | ${escapePipes(d.attributeName)} | ` +
+          `\`${d.attributeId}\` | ${how} |`,
       );
     }
   }

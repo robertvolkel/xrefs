@@ -254,7 +254,7 @@ export const dacLogicTable: LogicTable = {
     {
       attributeId: 'package_case',
       attributeName: 'Package / Case',
-      logicType: 'application_review',
+      logicType: 'identity',
       weight: 5,
       engineeringReason: 'SOT-23-6, MSOP-10, TSSOP-16, QFN-20, etc. Precision DACs may have exposed pad requirements for thermal management of internal reference. Layout-sensitive: output pin placement relative to AGND affects noise. Package change is Application Review — verify footprint and any layout-critical pin assignments.',
       sortOrder: 22,

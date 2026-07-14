@@ -112,8 +112,15 @@ export const TTL_RECOMMENDATIONS_MS = 30 * 24 * 60 * 60 * 1000;
  *       is 'atlas' (mirrors searchParts), so an Atlas-sourced Chinese maker whose
  *       name the alias index misses reads 🇨🇳 consistently across the search + recs
  *       panels. Cached v18 recs carry the old 'unknown' origin for those parts.
- *       (Full-result tier only — mfrOrigin is resolved after the base payload.) */
-export const RECS_CACHE_SCHEMA_VERSION = 'v19';
+ *       (Full-result tier only — mfrOrigin is resolved after the base payload.)
+ *   v19→v20 on 2026-07-13: `package_case` is now compared (identity) in C6/C7/C8/C9/C10
+ *       instead of being handed to a human ('application_review' = a flat 50% for EVERY
+ *       candidate). 33 other families already compared it; these five did not, so a
+ *       request for SOT-23 accepted a QFN-32 at half marks. SCORING CHANGES: a
+ *       different-package candidate now FAILS in those families and sinks, as it always
+ *       has everywhere else. Cached v19 recs hold the old flat-50% scores.
+ *       (Full-result tier only — the base payload holds no scores.) */
+export const RECS_CACHE_SCHEMA_VERSION = 'v20';
 
 /** Bump this when search merge/dedup/MFR-filter semantics change. v1→v2 on
  *  2026-06-02 to invalidate entries cached by the pre-MFR-filter merge that

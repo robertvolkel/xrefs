@@ -264,7 +264,7 @@ export const interfaceICsLogicTable: LogicTable = {
     {
       attributeId: 'package_case',
       attributeName: 'Package / Footprint',
-      logicType: 'application_review',
+      logicType: 'identity',
       weight: 5,
       engineeringReason: 'SOIC-8 is de facto standard for RS-485/CAN with identical pinout across most vendors (VCC=8, GND=5, DE=3, RE=2, RO=1, DI=4, A=6, B=7). Verify pin function deviations. Isolated transceivers use SOIC-16W or SMD-16 — incompatible with SOIC-8 footprint. CAN: verify pin 8 function (RS/slope vs STB/WAKE).',
       sortOrder: 22,
