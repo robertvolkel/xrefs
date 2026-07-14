@@ -4,6 +4,18 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Data-shape bugs found during the BC847 diagnostic (Decision #271) — evidenced, not speculative
+
+**1. Digikey's dual-unit facet strings parse as INCHES (P2).** Height facet values look like `0.005" (0.13mm)`. `facetValueToBaseSI` takes the leading number (`0.005`) and finds no unit (the next char is `"`), so a **0.13 mm** part is read as **0.005** on a millimetre scale. Any inch-first facet is misread. Currently masked: Digikey returns `"-"` for height on most small parts, so `fit` rules are largely inert. Fix = teach the parser to prefer the metric value in parentheses.
+
+**2. `toBaseSI` treats a bare `m` as the MILLI PREFIX, not metres (P2).** `toBaseSI('1','mm')` → `1` (mm passes through as its own base unit) but `toBaseSI('1','m')` → `0.001`. Lengths therefore live in millimetres by accident, consistently on both sides — so it works, but it is a landmine for anything that assumes SI metres.
+
+**3. A dimensionless value grabs the number from its TEST CONDITION (P2).** `hfe` = `"420 @ 2mA, 5V"` → `numericValue` = **0.002**. The parser skips the leading `420` because it carries no unit, then takes the first number that does. **Contained**: unit-bearing values parse correctly (`vce_sat "600mV @ 5mA" → 0.6` ✓, `vf "1 V @ 10 mA" → 1` ✓, `ir_leakage "5 µA @ 75 V" → 5e-6` ✓) — I initially flagged those three as broken and **was wrong**. Only dimensionless leading values break. Dormant today (hfe is `application_review` = flat 50%), but **any rule that starts comparing gain must parse the string, never `numericValue`**.
+
+**4. `range_superset` fetch band is still `[X, X×10]` (P3).** Left unchanged by the gte fix — the "required" numeric for a range attribute is ambiguous and no case has been shown to bite. Revisit if one does.
+
+---
+
 ## Selection-review follow-ups (from the Decision #270 Fable 5 pass)
 
 Two items the review surfaced that were deliberately NOT actioned in that pass, so they did not derail it.
