@@ -6,6 +6,7 @@ import { runWithServiceTracking, reportServiceFailure, getServiceWarnings } from
 import { fetchUserPreferences } from '@/lib/services/userPreferencesService';
 import { createClient } from '@/lib/supabase/server';
 import { StoredRow } from '@/lib/partsListStorage';
+import { maybeEnterMaintenance } from '@/lib/services/maintenanceMode';
 
 interface ListChatRequestBody {
   messages: OrchestratorMessage[];
@@ -85,6 +86,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       });
     } catch (error) {
       console.error('List chat API error:', error);
+      maybeEnterMaintenance(error);
       reportServiceFailure('anthropic', 'unavailable', 'List chat request failed');
       const warnings = getServiceWarnings();
       return NextResponse.json(

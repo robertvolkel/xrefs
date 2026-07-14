@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Box, Button, TextField, Typography, Alert, Link as MuiLink } from '@mui/material';
 import GlobalStyles from '@mui/material/GlobalStyles';
@@ -36,6 +36,22 @@ export default function LoginForm() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [maintenance, setMaintenance] = useState(false);
+
+  // Show a friendly heads-up if the app is in maintenance. Admins can still
+  // sign in (the form stays usable); regular users hit the block after login.
+  useEffect(() => {
+    let active = true;
+    fetch('/api/maintenance/status', { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (active && data?.maintenance === true) setMaintenance(true);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -126,6 +142,13 @@ export default function LoginForm() {
         >
           Product Intelligence for Chinese Electronics
         </Typography>
+
+        {maintenance && (
+          <Alert severity="info" icon={<span aria-hidden>🤖</span>} sx={{ mb: 2 }}>
+            We&rsquo;re on a quick maintenance break — our robot is taking a
+            power nap. You can still sign in; it&rsquo;ll be back shortly.
+          </Alert>
+        )}
 
         {searchParams.get('disabled') === '1' && (
           <Alert severity="warning" sx={{ mb: 2 }}>

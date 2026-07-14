@@ -3,6 +3,7 @@ import { ApplicationContext, OrchestratorMessage, XrefRecommendation } from '@/l
 import { refinementChat } from '@/lib/services/llmOrchestrator';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 import { fetchUserPreferences } from '@/lib/services/userPreferencesService';
+import { maybeEnterMaintenance } from '@/lib/services/maintenanceMode';
 
 interface ModalChatRequestBody {
   messages: OrchestratorMessage[];
@@ -62,6 +63,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
   } catch (error) {
     console.error('Modal chat API error:', error);
+    maybeEnterMaintenance(error);
     return NextResponse.json(
       { success: false, error: 'Internal server error' },
       { status: 500 }
