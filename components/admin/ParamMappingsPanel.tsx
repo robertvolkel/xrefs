@@ -62,69 +62,48 @@ const COL_L2 = { num: 36, attrId: 160, attrName: 200, digikey: 240 };
  * nobody had ever ruled on looked identical to one deliberately excluded — there was nothing
  * to review against.
  *
- * The recorded REASON rides in the tooltip. It exists on essentially every `Not Asked` row and
- * on a handful of others, so hovering any chip answers "why is it treated this way?".
+ * The tooltip carries ONLY the recorded reason — never a gloss of what the chip means. The
+ * labels say that already; a tooltip that repeats them is noise on every row, and it trains
+ * you to stop hovering, which is exactly when you'd miss the one that has something to say.
+ * A chip with no reason gets no tooltip at all.
  */
 function SelectionChip({ sel }: { sel: SelectionStateInfo | null }) {
   const { t } = useTranslation();
   if (!sel) return null;
 
-  // Labels are short because they sit in a narrow column; the tooltip carries the full meaning.
-  // (The reason text comes from docs/min_attr_sets.md and is English-only — it is engineering
-  // rationale, not UI copy, and would need re-translating on every review round.)
+  // The reason text comes from docs/min_attr_sets.md and is English-only — it is engineering
+  // rationale, not UI copy, and would need re-translating on every review round.
   const chip = {
-    required: {
-      label: t('admin.tierRequired', 'Required'),
-      color: 'primary' as const,
-      tip: t('admin.tierRequiredTip', 'Required to search — always asked, before any search runs.'),
-    },
-    narrows: {
-      label: t('admin.tierNarrows', 'Narrows'),
-      color: 'default' as const,
-      tip: t('admin.tierNarrowsTip', 'Narrows results — asked only when the result set is too large to be useful.'),
-    },
-    not_asked: {
-      label: t('admin.tierNotAsked', 'Not asked'),
-      color: 'default' as const,
-      tip: sel.needsReview
-        ? t('admin.tierNoReason', 'Not asked — no reason recorded, so this has not been ruled on yet.')
-        : t('admin.tierNotAskedTip', 'Never asked when a user is choosing a part by description.'),
-    },
+    required: { label: t('admin.tierRequired', 'Required'), color: 'primary' as const },
+    narrows: { label: t('admin.tierNarrows', 'Narrows'), color: 'default' as const },
+    not_asked: { label: t('admin.tierNotAsked', 'Not asked'), color: 'default' as const },
   }[sel.state];
 
   // An unreviewed skip is PROVISIONAL, not an error — a dashed outline says "nobody has
   // decided this yet" without shouting. The actual to-do list lives in docs/min_attr_sets.md.
   const provisional = sel.state === 'not_asked' && sel.needsReview;
 
-  return (
-    <Tooltip
-      title={
-        <>
-          {chip.tip}
-          {sel.reason && (
-            <Box component="span" sx={{ display: 'block', mt: 0.75, fontStyle: 'italic', opacity: 0.85 }}>
-              {sel.reason}
-            </Box>
-          )}
-        </>
-      }
-    >
-      <Chip
-        label={chip.label}
-        size="small"
-        color={chip.color}
-        variant="outlined"
-        sx={{
-          height: 18,
-          fontSize: '0.6rem',
-          ...(sel.state === 'not_asked' && {
-            opacity: 0.7,
-            borderStyle: provisional ? 'dashed' : 'solid',
-          }),
-        }}
-      />
-    </Tooltip>
+  const node = (
+    <Chip
+      label={chip.label}
+      size="small"
+      color={chip.color}
+      variant="outlined"
+      sx={{
+        height: 18,
+        fontSize: '0.6rem',
+        ...(sel.state === 'not_asked' && {
+          opacity: 0.7,
+          borderStyle: provisional ? 'dashed' : 'solid',
+        }),
+      }}
+    />
   );
+
+  const reason = sel.reason || (provisional ? t('admin.tierNoReason', 'No reason recorded — not ruled on yet.') : '');
+  if (!reason) return node;
+
+  return <Tooltip title={reason}>{node}</Tooltip>;
 }
 
 /** Flatten a ParamMapEntry into individual ParamMapping items */
