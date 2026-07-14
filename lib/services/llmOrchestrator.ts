@@ -1171,7 +1171,27 @@ async function extractAnsweredSpecs(
             type: 'object',
             properties: {
               attributeId: { type: 'string', enum: table.rules.map(r => r.attributeId), description: 'The spec id from the list.' },
-              value: { type: ['string', 'number', 'null'], description: 'The value the user gave (number for numeric specs, the chosen label for choices). Use null ONLY if the user explicitly said it does not matter / any / not sure.' },
+              // ⚠️ THE RANGE CASE IS LOAD-BEARING, AND IT USED TO BE MISSING.
+              //
+              // The description said "number for numeric specs" and offered null as the only other
+              // option. So when a user said "1 to 5 amps", the model — having no way to express a
+              // range — reported null, which means "doesn't matter". The requirement was deleted.
+              // Measured: "N-channel MOSFET, 30V, 1 to 5 amps" reached the engine carrying only
+              // channel_type and vds_max, and 100 mA / 154 mA / 350 mA parts came back "fits".
+              //
+              // The parse below and `hasValue` already accept a string; only the model was never
+              // told it could send one. A range string ("1-5") flows straight through: the engine
+              // gets a comparable lower bound, and `parseStatedBands` reads both ends for the
+              // catalogue fetch.
+              value: {
+                type: ['string', 'number', 'null'],
+                description:
+                  'The value the user gave. A single number for a plain numeric spec (9). ' +
+                  'A RANGE as a hyphenated string ("1-5" for "1 to 5 amps", "200-400" for "gain 200 to 400") — ' +
+                  'NEVER collapse a range to one end, and NEVER report null just because it is a range. ' +
+                  'The chosen label for a choice spec. ' +
+                  'Use null ONLY if the user explicitly said it does not matter / any / not sure.',
+              },
               unit: { type: 'string', description: 'Unit for numeric values, e.g. "V", "A", "MHz". Omit for choices.' },
             },
             required: ['attributeId', 'value'],
