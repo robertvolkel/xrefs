@@ -6,7 +6,17 @@
      any scored rule is missing a state. Edit State/Reason here — never in the admin UI, which is
      read-only by design (two writable surfaces is the exact bug this file exists to fix). -->
 
-## Review prompt — hand this whole file to Claude
+## How to run this review
+
+Attach this whole file to Claude. Claude will not accept an attachment with an empty message
+box, so paste this one line as the message — everything it needs is already in the file:
+
+> Read the review prompt at the top of the attached file and carry out the review it describes.
+> Return the complete corrected file in the identical format.
+
+---
+
+## Review prompt
 
 You are reviewing which component specifications an electronics sourcing agent asks a user
 about when they are choosing a part by description (rather than by part number).
