@@ -2,7 +2,10 @@
 
 import { Box, Typography, keyframes } from '@mui/material';
 
-// Gentle bob so the sleeping robot feels alive, not frozen.
+// Siemens dark green (darkened petrol). Tweak this hex to taste.
+const SIEMENS_DARK_GREEN = '#00786B';
+
+// Gentle bob so the "zzz" drifts like sleep, not frozen.
 const bob = keyframes`
   0%, 100% { transform: translateY(0); }
   50%      { transform: translateY(-10px); }
@@ -35,27 +38,23 @@ export default function MaintenanceScreen() {
       <Box
         aria-hidden
         sx={{
-          fontSize: { xs: '4.5rem', sm: '6rem' },
+          display: 'flex',
+          alignItems: 'baseline',
+          gap: 0.75,
+          mb: 4,
+          color: SIEMENS_DARK_GREEN,
+          fontWeight: 800,
           lineHeight: 1,
-          mb: 3,
           animation: `${bob} 3s ease-in-out infinite`,
         }}
       >
-        🤖💤
+        <Box component="span" sx={{ fontSize: { xs: '2rem', sm: '2.75rem' } }}>z</Box>
+        <Box component="span" sx={{ fontSize: { xs: '3rem', sm: '4rem' } }}>Z</Box>
+        <Box component="span" sx={{ fontSize: { xs: '4.25rem', sm: '5.5rem' } }}>Z</Box>
       </Box>
 
-      <Typography
-        variant="h4"
-        sx={{ fontWeight: 700, mb: 1.5, maxWidth: 520 }}
-      >
-        Our robot is taking a quick power nap.
-      </Typography>
-
-      <Typography
-        sx={{ color: 'text.secondary', fontSize: '1.05rem', maxWidth: 440 }}
-      >
-        We&rsquo;re topping up and will be back before you know it. Check back
-        soon — no need to refresh, this page will let you back in automatically.
+      <Typography variant="h4" sx={{ fontWeight: 700, maxWidth: 520 }}>
+        We&rsquo;re taking a quick power nap. Be back soon.
       </Typography>
     </Box>
   );
