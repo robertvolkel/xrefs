@@ -126,7 +126,7 @@ const constraints: SearchConstraint[] = [
   const result = await searchParts(query, undefined, undefined, { partType, constraints });
   const matches = result.matches ?? [];
   const rank = matches.findIndex(m => hit(m.mpn));
-  console.log(`  searchParts → ${matches.length} matches (status: ${result.status})`);
+  console.log(`  searchParts → ${matches.length} matches`);
   console.log(`  ${TARGET}: ${rank >= 0 ? `✓ present at rank ${rank + 1}` : '✗ ABSENT FROM THE FINAL LIST'}`);
   console.log('\n  top 10 as the user sees them:');
   matches.slice(0, 10).forEach((m, i) => {
@@ -147,7 +147,7 @@ const constraints: SearchConstraint[] = [
   const probe = ['BC847BLT1G', 'PN5133 PBFREE', 'KSC2223YMTF', '2SC2714-Y'];
   console.log('  penalty = Σ ln(candidate / required) over gte thresholds. LOWER RANKS HIGHER.\n');
   for (const mpn of probe) {
-    const attrs = await getAttributes(mpn, undefined, undefined, { skipMouser: true }).catch(() => null);
+    const attrs = await getAttributes(mpn).catch(() => null);
     if (!attrs) { console.log(`  ${mpn.padEnd(16)} (no attributes)`); continue; }
     const pen = computeOverSpecPenalty(synth.logicTable, synth.source, attrs);
     const ic = attrs.parameters.find(p => p.parameterId === 'ic_max');
