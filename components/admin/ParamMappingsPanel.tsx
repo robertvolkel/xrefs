@@ -66,14 +66,28 @@ function SelectionChip({ sel }: { sel: SelectionStateInfo | null }) {
   if (!sel) return null;
 
   const chip = {
-    required: { label: 'Required to search', color: 'primary' as const, tip: 'Always asked, before any search runs.' },
-    narrows: { label: 'Narrows results', color: 'default' as const, tip: 'Asked only when the result set is too large to be useful.' },
+    required: {
+      label: 'Required to search',
+      color: 'primary' as const,
+      tip: 'Always asked, before any search runs.',
+    },
+    narrows: {
+      label: 'Narrows results',
+      color: 'default' as const,
+      tip: 'Asked only when the result set is too large to be useful.',
+    },
     not_asked: {
-      label: sel.needsReview ? '⚠️ Not asked' : 'Not asked',
-      color: (sel.needsReview ? 'warning' : 'default') as 'warning' | 'default',
-      tip: sel.reason || 'Never asked — and no one has recorded a reason. This has not been ruled on.',
+      label: 'Not asked',
+      color: 'default' as const,
+      tip: sel.reason
+        ? `Not asked — ${sel.reason}`
+        : 'Not asked. No reason recorded yet, so this one has not been ruled on either way.',
     },
   }[sel.state];
+
+  // An unreviewed skip is PROVISIONAL, not an error — a dashed outline says "nobody has
+  // decided this yet" without shouting. The actual to-do list lives in docs/min_attr_sets.md.
+  const provisional = sel.state === 'not_asked' && sel.needsReview;
 
   return (
     <Tooltip title={chip.tip}>
@@ -82,7 +96,14 @@ function SelectionChip({ sel }: { sel: SelectionStateInfo | null }) {
         size="small"
         color={chip.color}
         variant="outlined"
-        sx={{ height: 18, fontSize: '0.6rem', opacity: sel.state === 'not_asked' && !sel.needsReview ? 0.6 : 1 }}
+        sx={{
+          height: 18,
+          fontSize: '0.6rem',
+          ...(sel.state === 'not_asked' && {
+            opacity: 0.7,
+            borderStyle: provisional ? 'dashed' : 'solid',
+          }),
+        }}
       />
     </Tooltip>
   );
