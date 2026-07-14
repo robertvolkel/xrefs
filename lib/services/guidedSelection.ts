@@ -144,6 +144,8 @@ const MIN_SPLIT_QUALITY = 0.35;
 /** Buckets a numeric spec's observed range is divided into — both to MEASURE the split and to
  *  OFFER it (the buckets become the buttons). Four keeps the choice legible. */
 const NUM_BUCKETS = 4;
+/** Cap on buttons for a CATEGORICAL narrowing spec (a numeric one is capped by NUM_BUCKETS). */
+const MAX_CHOICE_OPTIONS = 6;
 
 export interface NarrowingQuestion {
   attributeId: string;
@@ -170,13 +172,16 @@ function normalizedEntropy(buckets: number[]): number {
   return h / Math.log2(used.length);
 }
 
-/** Round to 2 significant figures so bucket labels read like specs ("210") and not like
- *  floating-point noise ("207.33333"). */
-function sig2(n: number): number {
-  if (n === 0 || !Number.isFinite(n)) return 0;
-  const mag = Math.floor(Math.log10(Math.abs(n)));
-  const f = Math.pow(10, mag - 1);
-  return Math.round(n / f) * f;
+/** Round to 2 significant figures for a bucket LABEL, as a string.
+ *
+ *  Returns a string, not a number, on purpose: these land straight on a button a user reads.
+ *  Arithmetic rounding reintroduces float noise at the last step — `Math.round(0.7/0.01)*0.01`
+ *  is `0.7000000000000001`, and `Math.round(2.9/0.1)*0.1` is `2.9000000000000004`, both of which
+ *  would render verbatim. `toPrecision` formats the decimal representation instead, so the label
+ *  is what it says it is. */
+function sig2(n: number): string {
+  if (n === 0 || !Number.isFinite(n)) return '0';
+  return String(Number(n.toPrecision(2)));
 }
 
 /** Split a numeric spec's observed values into equal-WIDTH buckets — deliberately not
@@ -246,7 +251,11 @@ export function pickNarrowingQuestion(
       const byValue = new Map<string, number>();
       for (const v of raw) byValue.set(v.trim(), (byValue.get(v.trim()) ?? 0) + 1);
       if (byValue.size < 2) continue;
-      const sortedByFreq = [...byValue.entries()].sort((a, b) => b[1] - a[1]);
+      // Cap the buttons. A numeric spec is bounded to NUM_BUCKETS by construction; a categorical
+      // one is bounded by whatever the catalog happens to contain, which can be 25 package codes —
+      // an unusable wall of chips. Keep the most common (the pool is already sorted by count), so
+      // the options shown are the ones most of the parts actually are.
+      const sortedByFreq = [...byValue.entries()].sort((a, b) => b[1] - a[1]).slice(0, MAX_CHOICE_OPTIONS);
       counts = sortedByFreq.map(([, n]) => n);
       options = sortedByFreq.map(([v]) => v);
     } else {

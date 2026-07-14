@@ -718,9 +718,10 @@ export async function searchParts(
           // explicitly stated is a mismatch against what they asked for, so it counts as one.
           const statedBands = parseStatedBands(constraints, logicTable);
           const attrsByMpnLower = new Map(scorable.map(a => [a.part.mpn.toLowerCase(), a]));
+          const bandRuleIndex = new Map(logicTable.rules.map(r => [r.attributeId, r]));
           const effectiveFails = (rec: XrefRecommendation): number => {
             const attrs = attrsByMpnLower.get(rec.part.mpn.toLowerCase());
-            const bandFails = attrs ? countStatedBandViolations(statedBands, logicTable, attrs) : 0;
+            const bandFails = attrs ? countStatedBandViolations(statedBands, logicTable, attrs, bandRuleIndex) : 0;
             return countRealMismatches(rec) + bandFails;
           };
 

@@ -180,9 +180,17 @@ export function buildFiltersForCategory(
     const facet = findFacetForAttribute(spec.parameterId, facets, sample);
     if (!facet) continue; // no facet in this category → defer to vetting
     const rule = ruleById.get(spec.parameterId);
-    const band = bands?.get(spec.parameterId);
     const categorical = !!rule && CATEGORICAL_TYPES.has(rule.logicType) && spec.numericValue === undefined;
+    // CATEGORICAL WINS OVER A BAND. A band is meaningless for a code like "SOT-23" or "X7R", and
+    // one can still be produced by accident: the range regex matches any `digits SEP digits` run,
+    // so a package such as "TO-220-3" parses as the "range" 220-to-3. Consulting the band first
+    // would then filter a categorical facet ("0805 (2012 Metric)") numerically and select packages
+    // at random. If the synthetic source decided this spec is a code, it is a code.
+    const band = categorical ? undefined : bands?.get(spec.parameterId);
     const valueIds = band
+      // The band already carries its direction (parseStatedBands drops the free end on a
+      // max-rating or limit rule), so it can be used as-is — no direction logic here, which is
+      // exactly how this consumer got it wrong before.
       ? pickNumericValueIds(facet, spec.numericValue ?? band.lo, rule, widenBandForFetch(band))
       : categorical
         ? pickCategoricalValueIds(facet, spec.value)

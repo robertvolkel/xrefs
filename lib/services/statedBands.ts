@@ -1,7 +1,6 @@
-import type { LogicTable, SearchConstraint } from '../types';
+import type { LogicTable, PartAttributes, SearchConstraint } from '../types';
 import { resolveAttributeId, toBaseSI, leadingMagnitudeToBaseSI } from './searchConstraints';
-import { ruleCanCompare } from './matchingEngine';
-import type { PartAttributes } from '../types';
+import { ruleCanCompare, effectiveThresholdDirection } from './matchingEngine';
 
 /**
  * STATED BANDS — the numeric range a user actually asked for.
@@ -126,6 +125,8 @@ export function parseStatedBands(
     acc.set(attrId, e);
   }
 
+  const ruleById = new Map(logicTable.rules.map(r => [r.attributeId, r]));
+
   for (const [attributeId, e] of acc) {
     const explicitLo = e.mins.length ? Math.min(...e.mins) : undefined;
     const explicitHi = e.maxs.length ? Math.max(...e.maxs) : undefined;
@@ -139,6 +140,27 @@ export function parseStatedBands(
     else continue; // one plain value → direction unknowable → NOT a band (rule 1)
 
     if (lo == null || hi == null || Number.isNaN(lo) || Number.isNaN(hi) || hi < lo) continue;
+
+    // ⚠️⚠️ THE BAND CARRIES ITS OWN DIRECTION — and that is why this is resolved HERE, at the one
+    // place that knows the rule, instead of at each consumer.
+    //
+    // The SAME misreading has now come back three times through three different doors: a stated
+    // "1-2 mA" is what the user's CIRCUIT DRAWS, not a rating they want the part limited to.
+    // Applying it as a two-sided band asks the catalog for transistors *rated* 1-2 mA and throws
+    // away every ordinary part — the original bug (#271), then the `vceo_max` name misread, then
+    // the fetch consuming this band without a direction check. Each time the guarding rule was
+    // written in a COMMENT and each time a new consumer failed to obey it.
+    //
+    // So the band is no longer a raw pair of numbers a caller must know how to interpret. On a
+    // MAXIMUM-RATING rule (`gte`) the upper bound is dropped — headroom is free. On a LIMIT rule
+    // (`lte`/`fit`) the lower bound is dropped — being further under a limit is free. Only rules
+    // where BOTH ends genuinely bind (an exact identity like capacitance, or a spec the engine
+    // cannot compare at all, like gain) keep a two-sided band. A consumer can now use `band`
+    // directly and cannot get it wrong.
+    const dir = effectiveThresholdDirection(ruleById.get(attributeId));
+    if (dir === 'gte') hi = Infinity;
+    else if (dir === 'lte') lo = -Infinity;
+
     out.set(attributeId, { attributeId, lo, hi, stated: e.stated.join(', ') });
   }
   return out;
@@ -164,9 +186,12 @@ export function countStatedBandViolations(
   bands: Map<string, StatedBand>,
   logicTable: LogicTable,
   candidate: PartAttributes,
+  /** Optional pre-built rule index — this runs once per candidate, so a caller scoring a 50-part
+   *  pool would otherwise rebuild the same map 50 times. */
+  ruleIndex?: Map<string, LogicTable['rules'][number]>,
 ): number {
   if (bands.size === 0) return 0;
-  const ruleById = new Map(logicTable.rules.map(r => [r.attributeId, r]));
+  const ruleById = ruleIndex ?? new Map(logicTable.rules.map(r => [r.attributeId, r]));
   let violations = 0;
   for (const [attributeId, band] of bands) {
     const rule = ruleById.get(attributeId);

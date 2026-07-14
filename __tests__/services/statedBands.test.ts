@@ -35,12 +35,16 @@ describe('parseStatedBands — the shapes a stated range actually arrives in', (
     }
   });
 
+  // These assert PARSING (how a bound arrives), so they use a spec where BOTH ends bind. The
+  // earlier version of this suite asserted a two-sided band on `id_max` / `vds_max` — which are
+  // MAX-RATING rules, where a two-sided band is the bug. Those tests PASSED and pinned it.
+  // Direction is now asserted separately, below.
   it('separate min/max constraints → one two-sided band', () => {
     const bands = parseStatedBands(
-      [{ attribute: 'drain current min', value: 1, unit: 'A' }, { attribute: 'drain current max', value: 5, unit: 'A' }],
-      B5,
+      [{ attribute: 'hfe min', value: 200 }, { attribute: 'hfe max', value: 400 }],
+      B6,
     );
-    expect(bands.get('id_max')).toMatchObject({ lo: 1, hi: 5 });
+    expect(bands.get('hfe')).toMatchObject({ lo: 200, hi: 400 });
   });
 
   it('UNDERSCORE-delimited min/max labels (hFE_min / hFE_max) — `\\b` does not break before `_`, so a naive word-boundary test misses these entirely', () => {
@@ -56,20 +60,19 @@ describe('parseStatedBands — the shapes a stated range actually arrives in', (
     expect(parseStatedBands([{ attribute: 'hfe max', value: 400 }], B6).get('hfe')).toMatchObject({ lo: -Infinity, hi: 400 });
   });
 
-  it('normalizes SI prefixes to base units (5000 mA ≡ 5 A)', () => {
-    const bands = parseStatedBands(
-      [{ attribute: 'drain current min', value: 1000, unit: 'mA' }, { attribute: 'drain current max', value: 5, unit: 'A' }],
-      B5,
-    );
-    expect(bands.get('id_max')).toMatchObject({ lo: 1, hi: 5 });
+  it('normalizes SI prefixes to base units (1000 mA ≡ 1 A)', () => {
+    // `capacitance` is an identity spec — both ends bind — so this isolates unit normalization.
+    const bands = parseStatedBands([{ attribute: 'capacitance', value: '100-1000', unit: 'nF' }], getLogicTable('12')!);
+    expect(bands.get('capacitance')!.lo).toBeCloseTo(1e-7, 12);
+    expect(bands.get('capacitance')!.hi).toBeCloseTo(1e-6, 12);
   });
 
   it('two plain values for the same attribute → an implicit range', () => {
     const bands = parseStatedBands(
-      [{ attribute: 'drain-source voltage', value: 12, unit: 'V' }, { attribute: 'drain-source voltage', value: 30, unit: 'V' }],
-      B5,
+      [{ attribute: 'hfe', value: 200 }, { attribute: 'hfe', value: 400 }],
+      B6,
     );
-    expect(bands.get('vds_max')).toMatchObject({ lo: 12, hi: 30 });
+    expect(bands.get('hfe')).toMatchObject({ lo: 200, hi: 400 });
   });
 
   // ⚠️ THE LOAD-BEARING NEGATIVE. A bare value's DIRECTION is unknowable: "gain 200" means at
@@ -106,6 +109,69 @@ describe('parseStatedBands — the shapes a stated range actually arrives in', (
     expect(parseStatedBands([{ attribute: 'warp core flux', value: '1-2' }], B5).size).toBe(0);
     expect(parseStatedBands([], B5).size).toBe(0);
     expect(parseStatedBands(undefined, B5).size).toBe(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// A BAND CARRIES ITS OWN DIRECTION.
+//
+// The same misreading has come back THREE times through three different doors: a stated "1-2 mA"
+// is what the user's CIRCUIT DRAWS, not a ceiling they want the part limited to. Twice the
+// guarding rule was written in a COMMENT, and twice a new consumer failed to obey it — most
+// recently the catalog fetch, which took the raw [lo, hi] pair and asked Digikey for transistors
+// RATED 1-2 mA, excluding every ordinary transistor. So direction is now resolved at PARSE time,
+// where the rule is known, and a consumer cannot get it wrong.
+//
+// ⚠️ These fixtures use the shape the REAL extractor emits — measured: it reports "1-2mA" as the
+// STRING "1-2", not the scalar 2. The first version of this suite used scalars, which produce no
+// band at all, so the entire threshold-band path went untested and the bug shipped.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+describe('band direction — resolved at parse time, from the rule', () => {
+  const MLCC = getLogicTable('12')!;
+
+  it('gte (a MAXIMUM RATING): "1-2 mA" of collector current → [1mA, ∞) — headroom is FREE', () => {
+    // THE BUG. A two-sided [1mA, 2mA] band here asks the catalog for parts *rated* 1-2 mA.
+    // Every ordinary small-signal NPN is rated 100 mA. All of them would be excluded.
+    const band = parseStatedBands([{ attribute: 'ic_max', value: '1-2', unit: 'mA' }], B6).get('ic_max');
+    expect(band).toMatchObject({ lo: 0.001, hi: Infinity });
+  });
+
+  it('gte: the upper bound is dropped even when the user states it explicitly as a max', () => {
+    const band = parseStatedBands(
+      [{ attribute: 'drain-source voltage min', value: 12, unit: 'V' }, { attribute: 'drain-source voltage max', value: 30, unit: 'V' }],
+      B5,
+    ).get('vds_max');
+    expect(band).toMatchObject({ lo: 12, hi: Infinity }); // a 60 V part is a fine answer to "12-30 V"
+  });
+
+  it('lte / fit (a LIMIT): the LOWER bound is dropped — being further under a limit is free', () => {
+    // `height` is a `fit` rule: the part must be no TALLER than this. A part half the height fits.
+    const band = parseStatedBands([{ attribute: 'height', value: '1-2', unit: 'mm' }], R52).get('height');
+    expect(band).toMatchObject({ lo: -Infinity, hi: 2 });
+  });
+
+  // The regression the direction fix must NOT cause: for a spec where BOTH ends genuinely bind,
+  // the two-sided band has to survive. A 10 µF cap is not an acceptable answer to "1-2 µF".
+  it('identity (an EXACT value): both ends bind — a stated capacitance range stays two-sided', () => {
+    const band = parseStatedBands([{ attribute: 'capacitance', value: '1-10', unit: 'uF' }], MLCC).get('capacitance');
+    expect(band!.lo).toBeCloseTo(1e-6, 12);
+    expect(band!.hi).toBeCloseTo(1e-5, 12);
+  });
+
+  it('uncomparable (gain): both ends bind — the engine scores it 50% either way, so this IS the check', () => {
+    expect(parseStatedBands([{ attribute: 'hfe', value: '200-400' }], B6).get('hfe')).toMatchObject({ lo: 200, hi: 400 });
+  });
+
+  it('the FULL real extractor payload for the canonical query yields exactly the right two bands', () => {
+    const bands = parseStatedBands([
+      { attribute: 'polarity', value: 'NPN' },              // categorical → no band
+      { attribute: 'vceo_max', value: '9', unit: 'V' },     // bare value → no band (no direction)
+      { attribute: 'ic_max', value: '1-2', unit: 'mA' },    // gte → headroom preserved
+      { attribute: 'hfe', value: '200-400' },               // uncomparable → two-sided
+    ], B6);
+    expect([...bands.keys()].sort()).toEqual(['hfe', 'ic_max']);
+    expect(bands.get('ic_max')).toMatchObject({ hi: Infinity });
+    expect(bands.get('hfe')).toMatchObject({ lo: 200, hi: 400 });
   });
 });
 

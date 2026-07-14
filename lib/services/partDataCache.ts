@@ -165,8 +165,12 @@ export const RECS_CACHE_SCHEMA_VERSION = 'v20';
  *  specs the pool can support, not by the best entropy score (which flips with the enrichment path
  *  — see guidedSelection.MIN_SPLIT_QUALITY). v11 rows carry a `narrowing` naming whichever spec the
  *  old ranker picked. There is one Supabase instance and no separate prod DB, so rows written while
- *  developing this ARE live rows. */
-export const SEARCH_CACHE_SCHEMA_VERSION = 'v12';
+ *  developing this ARE live rows.
+ *  v12→v13 on 2026-07-14: a stated band now carries its DIRECTION (statedBands.parseStatedBands).
+ *  v12 banded the catalog FETCH two-sided on max-rating rules, so a user's "1-2 mA" asked Digikey
+ *  for parts RATED 1-2 mA — the Decision #271 misread, restored in the fetch. v12 pools were
+ *  fetched under that band and are wrong wherever the band fired. */
+export const SEARCH_CACHE_SCHEMA_VERSION = 'v13';
 
 /** Not-found sentinel: 24 hours */
 export const TTL_NOT_FOUND_MS = 24 * 60 * 60 * 1000;
