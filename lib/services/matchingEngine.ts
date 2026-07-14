@@ -10,6 +10,7 @@ import {
   XrefRecommendation,
   MatchDetail,
   MissingAttributeInfo,
+  ThresholdDirection,
 } from '../types';
 
 // ============================================================
@@ -667,14 +668,35 @@ function evaluateThreshold(
   };
 }
 
+/**
+ * WHICH WAY DOES THIS RULE COMPARE? The single definition — the engine and the greenfield
+ * parametric FETCH must both read it from here.
+ *
+ * They used to each hold their own copy, and they disagreed. `fit` (component height, diameter
+ * — "the part must be no BIGGER than this") is evaluated `lte` below, but the fetch banded it
+ * with the `gte` branch: ask for "height ≤ 1 mm" and it went to Digikey for parts 1–10 mm tall,
+ * i.e. exactly the parts that cannot fit. 31 rules across 25 families. The fetch's own doc
+ * comment said "lte/fit → [0, v]" — the comment was right and the code was wrong, which is what
+ * a second copy of a truth always eventually becomes.
+ *
+ * Returns null for a rule that is not a numeric comparison at all.
+ */
+export function effectiveThresholdDirection(
+  rule: Pick<MatchingRule, 'logicType' | 'thresholdDirection'> | undefined,
+): ThresholdDirection | null {
+  if (!rule) return null;
+  if (rule.logicType === 'fit') return 'lte';
+  if (rule.logicType === 'threshold') return rule.thresholdDirection ?? 'gte';
+  return null;
+}
+
 function evaluateFit(
   rule: MatchingRule,
   sourceParam: ParametricAttribute | undefined,
   candidateParam: ParametricAttribute | undefined
 ): RuleEvaluationResult {
-  // Fit rules are threshold with lte direction
   return evaluateThreshold(
-    { ...rule, thresholdDirection: 'lte' },
+    { ...rule, thresholdDirection: effectiveThresholdDirection(rule) ?? 'lte' },
     sourceParam,
     candidateParam
   );

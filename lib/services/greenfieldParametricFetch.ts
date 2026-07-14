@@ -11,6 +11,7 @@ import { findFacetForAttribute } from './digikeyMapper';
 import { getTaxonomyPatternsForFamily } from './digikeyParamMap';
 import type { LogicTable, ParametricAttribute, SearchConstraint } from '../types';
 import { buildSyntheticSource, toBaseSI } from './searchConstraints';
+import { effectiveThresholdDirection } from './matchingEngine';
 
 /**
  * Greenfield parametric pool fetch (the foundational greenfield search).
@@ -103,9 +104,30 @@ export function pickCategoricalValueIds(facet: DigikeyParametricFilter, userValu
     .map(v => v.ValueId);
 }
 
-/** Numeric facet ValueIds in-band for a stated spec. Band shape by rule type: gte threshold →
- *  [v, v×OVERSPEC]; lte/fit → [0, v]; identity (exact, e.g. capacitance) → v ±IDENTITY_TOL.
- *  Skips bare-integer facets (count-facet trap). */
+/**
+ * Numeric facet ValueIds in-band for a stated spec.
+ *
+ * Band shape, by how the ENGINE compares the rule (`effectiveThresholdDirection` — one shared
+ * definition, so the fetch and the engine cannot drift apart again):
+ *
+ *   gte  ("must be RATED for at least X")  → [X, ∞)
+ *   lte / fit ("must be no more than X")   → [0, X]
+ *   range_superset                         → [X, X×OVERSPEC]  (unchanged — see BACKLOG)
+ *   identity ("must BE X", e.g. 1 µF)      → X ± IDENTITY_TOL
+ *
+ * ⚠️ THE gte BAND HAS NO UPPER BOUND, AND THAT IS THE WHOLE POINT. It used to be [X, X×10],
+ * which quietly encoded a false idea: that a part rated far above what you need is a worse
+ * answer. It isn't — HEADROOM ON A MAXIMUM RATING IS FREE. Ask for a transistor for a circuit
+ * drawing 2 mA and the old band fetched only parts *rated* 2–20 mA: 19 exotic products, while
+ * every ordinary small-signal NPN (rated 100 mA, e.g. the BC847) was excluded BY CONSTRUCTION.
+ * Un-banded, the same search returns 50 sensible parts with the BC847 third.
+ *
+ * The pool stays bounded by MAX_VALUES_PER_SPEC taken ProductCount-DESC, which selects the
+ * MAINSTREAM ratings — verified: a 12 V MOSFET ask fetches 12–60 V parts and admits zero parts
+ * rated ≥100 V, so removing the ceiling does not let exotic high-voltage parts in.
+ *
+ * Skips bare-integer facets (count-facet trap).
+ */
 export function pickNumericValueIds(
   facet: DigikeyParametricFilter,
   required: number,
@@ -115,9 +137,10 @@ export function pickNumericValueIds(
   if (fvs.length === 0 || fvs.every(v => isBareInt(v.ValueName))) return [];
   let lo: number;
   let hi: number;
-  const dir = rule?.thresholdDirection ?? 'gte';
-  if (rule?.logicType === 'threshold' && dir === 'lte') { lo = 0; hi = required; }
-  else if (rule?.logicType === 'threshold' || rule?.logicType === 'fit') { lo = required; hi = required * OVERSPEC_FACTOR; }
+  const dir = effectiveThresholdDirection(rule);
+  if (dir === 'lte') { lo = 0; hi = required; }
+  else if (dir === 'gte') { lo = required; hi = Infinity; }
+  else if (dir === 'range_superset') { lo = required; hi = required * OVERSPEC_FACTOR; }
   else { lo = required * (1 - IDENTITY_TOL); hi = required * (1 + IDENTITY_TOL); } // identity exact-ish
   return fvs
     .map(v => ({ v, n: facetValueToBaseSI(v.ValueName) }))

@@ -142,8 +142,14 @@ export const RECS_CACHE_SCHEMA_VERSION = 'v19';
  *  wrong-family pool (gate-driver ICs for a MOSFET search) mislabelled "Fits".
  *  v8→v9 on 2026-06-30: searchParts now resolves PartSummary.mfrOrigin per match (atlas/western/
  *  unknown) so the deterministic Chinese/Western search-card filter works. A v8 entry's matches
- *  lack mfrOrigin, so the Western filter would wrongly come back empty. */
-export const SEARCH_CACHE_SCHEMA_VERSION = 'v9';
+ *  lack mfrOrigin, so the Western filter would wrongly come back empty.
+ *  v9→v10 on 2026-07-13: the greenfield parametric fetch no longer caps a "must be rated at least
+ *  X" band at X×10 (headroom on a maximum rating is free), and `fit` specs now band DOWNWARD as
+ *  the engine has always evaluated them. A v9 entry holds the POISONED pool this fixed — for a
+ *  small-signal-NPN search that is 18 exotic parts rated 2–20 mA with every ordinary transistor
+ *  excluded. Without this bump the fix is invisible: the fetch is corrected but the stale pool is
+ *  served straight from cache, which reads exactly like the fix not working. */
+export const SEARCH_CACHE_SCHEMA_VERSION = 'v10';
 
 /** Not-found sentinel: 24 hours */
 export const TTL_NOT_FOUND_MS = 24 * 60 * 60 * 1000;
