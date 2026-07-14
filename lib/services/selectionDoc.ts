@@ -297,6 +297,26 @@ export interface LogicTypeDivergence {
 /** Scores every candidate a flat 50% — it cannot separate two parts, whatever the user says. */
 const CANNOT_COMPARE = new Set(['application_review', 'operational']);
 
+/**
+ * How a rule is compared = its logicType AND, for a numeric comparison, which WAY it compares.
+ *
+ * The direction is a hand-set label too (`thresholdDirection`), with exactly the provenance that
+ * made `application_review` wrong five times — so it gets the same cross-family guard. It matters:
+ * a "must be rated at least X" band has no upper bound (headroom on a rating is free), while a
+ * "must be at most X" band runs [0, X]. Mislabel one and the fetch hunts the wrong half of the
+ * catalogue.
+ *
+ * The distinction is CAPABILITY vs COST, not big-number vs small-number: ripple-current and
+ * saturation-current are RATINGS the part can withstand (more is free ⇒ gte), while ESR, leakage
+ * and dropout are LOSSES (less is better ⇒ lte).
+ */
+function comparisonKey(rule: MatchingRule): string {
+  const dir = rule.logicType === 'fit' ? 'lte' : rule.thresholdDirection;
+  return rule.logicType === 'threshold' || rule.logicType === 'fit'
+    ? `${rule.logicType}:${dir ?? 'gte'}`
+    : rule.logicType;
+}
+
 export function findLogicTypeDivergences(
   doc: ParsedDoc,
   registry: Record<string, LogicTable> = logicTableRegistry,
@@ -306,7 +326,8 @@ export function findLogicTypeDivergences(
   for (const [familyId, table] of Object.entries(registry)) {
     for (const rule of table.rules) {
       const e = byAttr.get(rule.attributeId) ?? { name: rule.attributeName, byType: new Map() };
-      e.byType.set(rule.logicType, [...(e.byType.get(rule.logicType) ?? []), familyId]);
+      const key = comparisonKey(rule);
+      e.byType.set(key, [...(e.byType.get(key) ?? []), familyId]);
       byAttr.set(rule.attributeId, e);
     }
   }

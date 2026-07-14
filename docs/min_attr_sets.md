@@ -138,23 +138,23 @@ you for the spec and then scores it with a rule that cannot compare anything.
 
 | | Spec | id | How it is compared |
 |---|---|---|---|
-| ⚠ | PSRR (Power Supply Rejection Ratio) | `psrr` | `application_review` (C1) · `threshold` (C4) |
-|  | Thermal Resistance, Junction-to-Ambient (Rtheta_ja) | `rth_ja` | `threshold` (B1, B2, B3, B4, C1, C2, C3) · `application_review` (B5) |
+| ⚠ | PSRR (Power Supply Rejection Ratio) | `psrr` | `application_review` (C1) · `threshold:gte` (C4) |
+|  | Thermal Resistance, Junction-to-Ambient (Rtheta_ja) | `rth_ja` | `threshold:lte` (B1, B2, B3, B4, C1, C2, C3) · `application_review` (B5) |
 |  | Architecture (Integrated Switch / Controller-Only / Half-Bridge / Full-Bridge) | `architecture` | `identity` (C2, C6, C9) · `identity_flag` (C10) |
 |  | Output Type (Fixed / Adjustable / Tracking / Negative) | `output_type` | `identity` (C1, C4, C10) · `identity_flag` (C5) |
-|  | Number of Channels | `channel_count` | `threshold` (C9, C10) · `identity` (E1) |
-|  | Junction Capacitance (Cj) | `cj` | `application_review` (B1, B3) · `threshold` (B2, B4) |
-|  | Forward Voltage Drop (Vf) | `vf` | `threshold` (B1, B2) · `application_review` (B3) |
+|  | Number of Channels | `channel_count` | `threshold:gte` (C9, C10) · `identity` (E1) |
+|  | Junction Capacitance (Cj) | `cj` | `application_review` (B1, B3) · `threshold:lte` (B2, B4) |
+|  | Forward Voltage Drop (Vf) | `vf` | `threshold:lte` (B1, B2) · `application_review` (B3) |
 |  | Core Material | `core_material` | `identity_upgrade` (71) · `identity` (72) |
 |  | Dielectric / Temperature Characteristic | `dielectric` | `identity_upgrade` (12) · `identity` (13) |
-|  | Hold Current (Ihold) | `hold_current` | `identity` (66) · `threshold` (68) |
+|  | Hold Current (Ihold) | `hold_current` | `identity` (66) · `threshold:gte` (68) |
 |  | Isolation Type (Non-Isolated Bootstrap / Transformer / Optocoupler / Digital Isolator) | `isolation_type` | `identity` (C3) · `identity_flag` (C7) |
 |  | Output Polarity (Positive / Negative / Isolated) | `output_polarity` | `identity` (C2) · `identity_flag` (C3) |
 |  | Package / Case | `package_type` | `identity_flag` (D1) · `identity` (E1) |
 |  | Shielding | `shielding` | `identity_upgrade` (71) · `application_review` (72) |
 |  | Technology / Chemistry | `technology` | `identity_upgrade` (61) · `identity_flag` (B5) |
-|  | Thermal Shutdown | `thermal_shutdown` | `identity_flag` (C1) · `threshold` (C2) |
-|  | Trip Current (Itrip) | `trip_current` | `threshold` (66) · `identity` (68) |
+|  | Thermal Shutdown | `thermal_shutdown` | `identity_flag` (C1) · `threshold:gte` (C2) |
+|  | Trip Current (Itrip) | `trip_current` | `threshold:lte` (66) · `identity` (68) |
 
 ---
 
