@@ -701,13 +701,40 @@ export async function searchParts(
           // genuinely meet the request — without rejecting anything (Decision #243 invariant).
           const constrainedIds = new Set(synthetic.source.parameters.map(p => p.parameterId));
           const confirmedByMpn = new Map<string, number>();
+
+          // ── How many of the user's stated specs we could even READ on this part ──
+          //
+          // ⚠️ NOT the same as "how many passed", and the difference is a LIE the app was telling.
+          // A rule only FAILS when a value DISAGREES; a value we cannot read never disagrees. So a
+          // part whose specs are unreadable collects zero failures and presents as a flawless match.
+          //
+          // Measured, for "a 30V N-channel MOSFET that can handle 1 to 5 amps": 20 of the 50 results
+          // were DUAL MOSFETs rated 0.115–0.95 A — parts that physically cannot carry the 1 A asked
+          // for — and every one was labelled "Fits your specs". Digikey names a dual's parameters
+          // differently, our map doesn't recognise them, so no rule could read anything and nothing
+          // could fail.
+          //
+          // Two labels ("fits" / "below spec") for THREE realities:
+          //     read it and it satisfies the ask   → fits
+          //     read it and it violates the ask    → below spec
+          //     COULD NOT READ IT                  → was silently reported as "fits"
+          //
+          // Counting what we READ (any verdict, as long as there is a real value) is what makes the
+          // third state expressible. Teaching the map the dual's parameter names would fix these 20
+          // parts; it would NOT fix the next shape we haven't seen. This does.
+          const readByMpn = new Map<string, number>();
+
           for (const rec of recs) {
             let n = 0;
+            let read = 0;
             for (const d of rec.matchDetails ?? []) {
               if (!constrainedIds.has(d.parameterId)) continue;
               const v = (d.replacementValue ?? '').toString().trim();
-              if (d.ruleResult === 'pass' && v && v !== 'N/A' && v !== '-') n++;
+              const hasRealValue = !!v && v !== 'N/A' && v !== '-';
+              if (hasRealValue) read++;
+              if (d.ruleResult === 'pass' && hasRealValue) n++;
             }
+            readByMpn.set(rec.part.mpn.toLowerCase(), read);
             confirmedByMpn.set(rec.part.mpn.toLowerCase(), n);
           }
           // A spec the ENGINE cannot compare (`application_review` / `operational`) scores a flat
@@ -756,6 +783,21 @@ export async function searchParts(
             summary.matchScore = rec.matchPercentage;
             summary.failCount = fails;
             summary.hardFail = fails > 0;
+
+            // The honest three-state verdict. `hardFail` cannot express "we never checked" — it is
+            // false both when a part passes every stated spec AND when we could not read a single
+            // one of them. Decide it ONCE, here, and put it in the data: two separate surfaces (the
+            // card's chip and the "meets spec" filter) were each re-deriving it from `hardFail`, and
+            // each was therefore telling the same lie independently.
+            const stated = constrainedIds.size;
+            const read = readByMpn.get(key) ?? 0;
+            summary.specsStated = stated;
+            summary.specsRead = read;
+            summary.specFit = fails > 0
+              ? 'below_spec'          // we read a value and it disagrees with the ask — definitely wrong
+              : read >= stated
+                ? 'fits'              // we read every spec asked for, and none disagree — genuinely fits
+                : 'unconfirmed';      // we could not read some of what was asked — we DO NOT KNOW
             reordered.push(summary);
             placed.add(key);
           }

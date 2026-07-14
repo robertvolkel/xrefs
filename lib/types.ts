@@ -389,8 +389,31 @@ export interface PartSummary {
    *  synthetic source built from the user's stated specs. Absent on MPN lookups
    *  and unvetted searches. Display/ranking only. */
   matchScore?: number;   // 0-100 vs the synthetic spec (most valid parts ≈100 — spec is sparse, so use ordering not the raw %)
-  failCount?: number;    // real mismatches (candidate value known & disagrees) — 0 = fits all stated specs
+  failCount?: number;    // real mismatches (candidate value known & disagrees) — NOT "everything checked out"
   hardFail?: boolean;    // failCount > 0 — below spec or wrong identity (kept, but sunk)
+
+  /**
+   * THE HONEST VERDICT. Read this, not `hardFail`, to tell the user how a part stands.
+   *
+   * ⚠️ `hardFail === false` DOES NOT MEAN "it fits". A rule only fails when a value DISAGREES, and a
+   * value we cannot read never disagrees — so a part whose specs are unreadable collects zero
+   * failures and looks like a flawless match. Measured, for "a 30V N-channel MOSFET that can handle
+   * 1 to 5 amps": 20 of 50 results were dual MOSFETs rated 0.115–0.95 A — parts that physically
+   * cannot carry 1 A — and every one was labelled "Fits your specs".
+   *
+   *   'fits'         we read every spec the user stated, and none of them disagree
+   *   'below_spec'   we read a value and it violates what they asked for
+   *   'unconfirmed'  we could NOT READ some of what they asked for — we do not know
+   *
+   * `undefined` = no spec-vetted search ran (a part-number lookup, or a description with no stated
+   * specs). That is different from 'unconfirmed', and callers must keep it different: there is
+   * nothing to be unconfirmed ABOUT when the user stated nothing.
+   */
+  specFit?: 'fits' | 'below_spec' | 'unconfirmed';
+  /** How many of the specs the user stated we could actually READ on this part. */
+  specsRead?: number;
+  /** How many specs the user stated. `specsRead < specsStated` ⇒ we did not check everything. */
+  specsStated?: number;
 }
 
 export type SearchDataSource = 'digikey' | 'atlas' | 'partsio' | 'mouser';

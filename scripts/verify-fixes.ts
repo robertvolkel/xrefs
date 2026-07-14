@@ -39,6 +39,7 @@
  */
 import { createClient } from '@supabase/supabase-js';
 import { chat } from '@/lib/services/llmOrchestrator';
+import { searchParts } from '@/lib/services/partDataService';
 
 interface Match {
   mpn: string;
@@ -46,6 +47,9 @@ interface Match {
   description: string;
   status?: string;
   hardFail?: boolean;
+  specFit?: 'fits' | 'below_spec' | 'unconfirmed';
+  specsRead?: number;
+  specsStated?: number;
 }
 
 interface Check {
@@ -60,6 +64,22 @@ interface Check {
   /** Replies to any follow-up question the agent asks, in order. Falls back to "any" — which is
    *  what a real user does when they don't care, and what happened on the bench. */
   answers?: string[];
+
+  /**
+   * WHICH LAYER THIS CHECK DRIVES. Default 'chat'.
+   *
+   * 'chat'   — the whole app: routing, guided questions, spec extraction, search. Use it for any bug
+   *            that could live in how the user's SENTENCE is read. That is most of them, and calling
+   *            the search engine directly instead is how the first version of this file scored 4/4 on
+   *            the broken code.
+   * 'search' — call `searchParts` with the specs the chat produces. ONLY legitimate when the bug
+   *            provably lives BELOW the chat (in scoring or labelling), so the chat cannot mask or
+   *            cause it. Say WHY in the check. The specs must be the ones the real chat actually
+   *            emitted, copied from a recorded run — never invented, or this stops testing anything.
+   */
+  via?: 'chat' | 'search';
+  /** For `via: 'search'` — the specs, exactly as the real chat emitted them. */
+  search?: { query: string; partType: string; familyId: string; constraints: Array<Record<string, unknown>> };
   /** >1 ⇒ RELIABILITY check. Each rep runs in a FRESH PROCESS (see coldRep). A single run cannot
    *  detect a coin flip — diagnosing one from a single sample is how the last regression call went
    *  wrong. */
@@ -84,6 +104,20 @@ const ampsIn = (d: string) => {
  *  "at least 300" ask is that the C bins (gain 420–800) must survive and the A bins (110–220) must
  *  not be presented as fits. */
 const isHighGainBin = (mpn: string) => /BC8(4[78]|5[0-9])C/i.test(mpn);
+
+/**
+ * DOES THE CARD PRESENT THIS PART AS MEETING THE SPEC?
+ *
+ * ⚠️ Must work on BOTH the old and the new shape, or the check is worthless. The pre-fix code has no
+ * `specFit` field at all — so asserting on `specFit` alone would make this check FAIL on the old
+ * commit merely because a field is missing, not because the bug is there. That is a check that can
+ * never be wrong, which is the same as a check that proves nothing.
+ *
+ * Before: two states, derived from `hardFail` (false ⇒ the green "Fits your specs" chip).
+ * After:  three states, read from `specFit`.
+ * Either way, this answers the only question that matters: is the user being told it fits?
+ */
+const presentsAsFitting = (m: Match) => (m.specFit ? m.specFit === 'fits' : m.hardFail === false);
 
 // ── THE CHECKS — each one is a sentence a user actually typed ────────────────────────────────────
 
@@ -175,6 +209,59 @@ const CHECKS: Check[] = [
         : `${dualsAbove.length} dual NPN/PNP parts outrank the real NPNs (${dualsAbove.slice(0, 3).map(m => m.mpn).join(', ')}) — you asked for an NPN`;
     },
   },
+
+  {
+    id: '5 · never say "fits" without checking',
+    claim: 'A part whose specs we could not READ is no longer presented as a perfect match.',
+    before: '20 of the 50 results for a 1-5 A MOSFET were DUAL MOSFETs rated 0.115-0.95 A — parts '
+          + 'that physically cannot carry 1 A — and EVERY ONE was labelled "Fits your specs". A rule '
+          + 'only fails when a value DISAGREES, and Digikey names a dual\'s parameters differently, '
+          + 'so no rule could read anything, nothing could fail, and the part sailed through. Being '
+          + 'unreadable was an advantage.',
+    say: 'I need a 30V N-channel MOSFET that can handle 1 to 5 amps',
+    // ⚠️ 'search', deliberately. This bug lives BELOW the chat — in how a scored candidate gets
+    // LABELLED — so the search layer is where it can be isolated. (Every other check must go through
+    // chat(); see the `via` doc. It also means this one check still runs when the Anthropic key is
+    // out of credit, which is how it got proven the day it was written.)
+    via: 'search',
+    search: {
+      // Not invented. These are the specs the real chat emitted for the sentence above, copied from
+      // a recorded run:  [greenfield] specs [channel_type, vds_max, id_max] · constraints=3 · bands=1
+      query: 'N-channel MOSFET',
+      partType: 'N-channel MOSFET',
+      familyId: 'B5',
+      constraints: [
+        { attribute: 'channel type', value: 'N-Channel' },
+        { attribute: 'drain-source voltage', value: 30, unit: 'V' },
+        { attribute: 'continuous drain current', value: '1-5', unit: 'A' },
+      ],
+    },
+    judge: ([ms]) => {
+      if (!ms.length) return 'the search returned nothing at all';
+      if (!ms.some(m => m.specFit || typeof m.hardFail === 'boolean')) return 'no fit verdict on any card — the search was never spec-vetted, so this check tests nothing';
+
+      // THE LIE: a part rated below 1 A cannot carry the 1 A that was asked for. It must never be
+      // presented as meeting the spec. (`presentsAsFitting` reads whichever shape the commit has, so
+      // this same line catches the bug on the old code and passes on the new.)
+      const lying = ms.filter(m => {
+        const a = ampsIn(m.description);
+        return a !== null && a < 1 && presentsAsFitting(m);
+      });
+      if (lying.length) {
+        return `${lying.length} parts that CANNOT carry 1 A are presented as fitting (${lying.slice(0, 3).map(m => `${m.mpn} @ ${ampsIn(m.description)}A`).join(', ')})`;
+      }
+
+      // The converse must hold too, or "never say fits" would pass. A part we DID read, that DOES
+      // meet the ask, must still say so — otherwise the fix has just relabelled everything as
+      // unconfirmed and made the app useless in a quieter way.
+      const fits = ms.filter(presentsAsFitting);
+      if (fits.length < 10) return `only ${fits.length} parts read as fitting — the fix has gone too far and is hiding good parts`;
+      const overclaimed = fits.filter(m => typeof m.specsRead === 'number' && typeof m.specsStated === 'number' && m.specsRead < m.specsStated);
+      return overclaimed.length === 0
+        ? null
+        : `${overclaimed.length} parts say "fits" while we read fewer specs than were asked for (${overclaimed[0].mpn}: ${overclaimed[0].specsRead}/${overclaimed[0].specsStated})`;
+    },
+  },
 ];
 
 // ── plumbing ────────────────────────────────────────────────────────────────────────────────────
@@ -202,6 +289,21 @@ async function purge(cold = false) {
     const { error: e2 } = await sb.from('part_data_cache').delete().eq('service', 'digikey').eq('variant', 'facets').select('id');
     if (e2) { console.error(`  ✗ ABORT: could not purge the catalogue-filter cache: ${e2.message}`); process.exit(2); }
   }
+}
+
+/** Run one check and return the parts the user ends up looking at. */
+async function run(c: Check, cold: boolean): Promise<Match[]> {
+  if (c.via === 'search') {
+    await purge(cold);
+    const r: any = await searchParts(c.search!.query, 'USD', undefined, {
+      skipFindchips: true,
+      partType: c.search!.partType,
+      familyId: c.search!.familyId,
+      constraints: c.search!.constraints,
+    } as any);
+    return (r?.matches ?? []) as Match[];
+  }
+  return askChat(c, cold);
 }
 
 /** Type the sentence into the chat, answer any follow-up question, and return the parts the user
@@ -256,7 +358,7 @@ async function main() {
   const si = process.argv.indexOf('--single');
   if (si >= 0) {
     let ms: Match[] = [];
-    try { ms = await askChat(CHECKS[Number(process.argv[si + 1])], process.argv.includes('--cold')); } catch { /* an error IS the result: no parts */ }
+    try { ms = await run(CHECKS[Number(process.argv[si + 1])], process.argv.includes('--cold')); } catch { /* an error IS the result: no parts */ }
     console.log(`__MATCHES__${JSON.stringify(ms)}`);
     process.exit(0);
   }
@@ -268,8 +370,12 @@ async function main() {
 
   const results: Array<{ id: string; claim: string; pass: boolean; why: string | null }> = [];
 
+  const oi = process.argv.indexOf('--only');
+  const only = oi >= 0 ? Number(process.argv[oi + 1]) : null;
+
   for (const [idx, c] of CHECKS.entries()) {
-    console.log(`\n\n┌─ CHECK ${c.id}`);
+    if (only !== null && idx + 1 !== only) continue;
+    console.log(`\n\n┌─ CHECK ${c.id}${c.via === 'search' ? '   [search layer — see `via`]' : ''}`);
     console.log(`│  YOU TYPE: "${c.say}"`);
     console.log(`│  CLAIM:    ${c.claim}`);
     console.log(`│  BEFORE:   ${c.before}`);
@@ -282,7 +388,7 @@ async function main() {
         runs.push(ms);
         console.log(`   cold run ${i + 1} of ${c.reps} (fresh process): ${ms.length} parts`);
       } else {
-        try { runs.push(await askChat(c, false)); }
+        try { runs.push(await run(c, false)); }
         catch (e: any) { console.log(`   ERROR — ${e?.message ?? e}`); runs.push([]); }
       }
     }
@@ -297,7 +403,11 @@ async function main() {
     else {
       console.log(`     ${pad('#', 3)}${pad('PART', 22)}${pad('MAKER', 16)}${pad('WHAT IT IS', 42)}VERDICT`);
       ms.slice(0, 10).forEach((m, i) => {
-        const v = m.hardFail === true ? 'Below spec' : m.hardFail === false ? 'fits' : '—';
+        // Falls back to the pre-fix shape so the SAME table is readable on the old commit.
+        const v = m.specFit === 'below_spec' ? 'Below spec'
+          : m.specFit === 'fits' ? 'fits'
+          : m.specFit === 'unconfirmed' ? `unconfirmed (${m.specsRead ?? '?'}/${m.specsStated ?? '?'} read)`
+          : m.hardFail === true ? 'Below spec' : m.hardFail === false ? 'fits' : '—';
         console.log(`     ${pad(String(i + 1), 3)}${pad(m.mpn ?? '?', 22)}${pad(m.manufacturer ?? '?', 16)}${pad(m.description ?? '?', 42)}${v}`);
       });
     }

@@ -169,8 +169,15 @@ export const RECS_CACHE_SCHEMA_VERSION = 'v20';
  *  v12→v13 on 2026-07-14: a stated band now carries its DIRECTION (statedBands.parseStatedBands).
  *  v12 banded the catalog FETCH two-sided on max-rating rules, so a user's "1-2 mA" asked Digikey
  *  for parts RATED 1-2 mA — the Decision #271 misread, restored in the fetch. v12 pools were
- *  fetched under that band and are wrong wherever the band fired. */
-export const SEARCH_CACHE_SCHEMA_VERSION = 'v13';
+ *  fetched under that band and are wrong wherever the band fired.
+ *  v13→v14 on 2026-07-14: PartSummary gained `specFit` / `specsRead` / `specsStated` — the honest
+ *  three-state fit verdict. `hardFail === false` meant BOTH "meets every stated spec" AND "we could
+ *  not read a single one of them", so unreadable parts rendered as "Fits your specs" (measured: 20 of
+ *  50 results for a 1–5 A MOSFET ask were duals rated 0.115–0.95 A, all shown as fitting). A v13 row
+ *  has no `specFit`, and the chip keys off it — so a cached card would show NO chip at all. Exactly
+ *  the v9→v10 and v10→v11 lesson a third time: a new FIELD on a cached shape needs a bump, and the
+ *  failure looks identical to the feature never having been wired up. */
+export const SEARCH_CACHE_SCHEMA_VERSION = 'v14';
 
 /** Not-found sentinel: 24 hours */
 export const TTL_NOT_FOUND_MS = 24 * 60 * 60 * 1000;
