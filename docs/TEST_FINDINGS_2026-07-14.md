@@ -41,6 +41,13 @@ cd /tmp/pre && node --env-file=.env.local --import tsx scripts/verify-fixes.ts -
 transistor was still labelled "Below spec" and dual NPN/PNP parts outranked it — the assertion was
 just too weak to say so.
 
+**A fourth, from the F5 fix: a check must detect the bug on the OLD shape.** Check 5 first asserted on
+the new `specFit` field. That field doesn't exist on the pre-fix commit — so the check would have
+"failed" there because a field was missing, not because the bug was present. A check that cannot be
+wrong is a check that proves nothing. It now reads `specFit` when present and falls back to `hardFail`
+when it isn't, so the same line catches the lie on both commits. **And it asserts the converse** (≥10
+parts must still read "fits") — otherwise a build that labelled *everything* "unconfirmed" would pass.
+
 ---
 
 ## Status
@@ -55,7 +62,8 @@ just too weak to say so.
 | **F15** | Guided search uses the family DISPLAY NAME as the keyword | ✅ **Fixed & proven** — "10 ohm resistor" now returns 10 ohm resistors (was 0 of 10) |
 | **F16** | The extractor cannot represent a RANGE — "1 to 5 amps" → "any" | ✅ **Fixed & proven** — 50 parts (was 3) |
 | — | A package is an alias list, not a name (`"TO-236-3, SC-59, SOT-23-3"`) | ✅ **Fixed & proven** — found by the verifier, not on the original list |
-| **F5** | 🔴 A part whose specs we cannot read scores a PASSING grade | ❌ **Open — the deepest one.** Being unreadable is an advantage |
+| **F5** | A part whose specs we cannot read was labelled "Fits your specs" | ✅ **Fixed & proven** — 20 of 50 results for a 1–5 A ask were duals rated 0.115–0.95 A, all shown as fitting. Now "Specs unconfirmed" |
+| **F5b** | The parameter map doesn't recognise Digikey's DUAL/array shape | ❌ **Open** — the *cause* of the 20 unreadable parts. F5's fix makes every unmapped shape honest; this would make *this* shape readable. Worth doing, no longer urgent |
 | **F10** | Polarity called "channel type" → the NPN requirement is dropped | ❌ Open |
 | **F2** | Search results have no ranking of our own | ❌ Open (a product decision) |
 | **F1** | 🇨🇳 flag on search cards keys off the wrong field | ❌ Open (one line) |
