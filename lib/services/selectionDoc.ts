@@ -204,30 +204,45 @@ export interface Contradiction {
   maxWeight: number;
   askedIn: string[];
   skippedIn: string[];
+  /**
+   * Families that skip this spec WITHOUT recording a reason, while a sibling asks for it.
+   * These are the actionable ones — an unreasoned skip is not a decision, it is an absence.
+   * A skip that carries a reason is a deliberate divergence and needs no action.
+   */
+  unreasonedSkips: string[];
 }
 
 export function findContradictions(
   doc: ParsedDoc,
   registry: Record<string, LogicTable> = logicTableRegistry,
 ): Contradiction[] {
-  const byAttr = new Map<string, { name: string; maxWeight: number; asked: string[]; skipped: string[] }>();
+  const byAttr = new Map<
+    string,
+    { name: string; maxWeight: number; asked: string[]; skipped: string[]; unreasoned: string[] }
+  >();
 
   for (const [familyId, table] of Object.entries(registry)) {
     const rows = doc.families.get(familyId);
     if (!rows) continue;
-    const stateById = new Map(rows.map(r => [r.attributeId, r.state]));
+    const rowById = new Map(rows.map(r => [r.attributeId, r]));
 
     for (const rule of table.rules) {
-      const state = stateById.get(rule.attributeId);
-      if (!state) continue;
+      const row = rowById.get(rule.attributeId);
+      if (!row) continue;
       const entry = byAttr.get(rule.attributeId) ?? {
         name: rule.attributeName,
         maxWeight: 0,
         asked: [],
         skipped: [],
+        unreasoned: [],
       };
       entry.maxWeight = Math.max(entry.maxWeight, rule.weight);
-      (state === 'not_asked' ? entry.skipped : entry.asked).push(familyId);
+      if (row.state === 'not_asked') {
+        entry.skipped.push(familyId);
+        if (!row.reason) entry.unreasoned.push(familyId);
+      } else {
+        entry.asked.push(familyId);
+      }
       byAttr.set(rule.attributeId, entry);
     }
   }
@@ -240,8 +255,15 @@ export function findContradictions(
       maxWeight: e.maxWeight,
       askedIn: e.asked,
       skippedIn: e.skipped,
+      unreasonedSkips: e.unreasoned,
     }))
-    .sort((a, b) => b.maxWeight - a.maxWeight || a.attributeId.localeCompare(b.attributeId));
+    // Unreasoned skips first — those are the ones that still need a human.
+    .sort(
+      (a, b) =>
+        (b.unreasonedSkips.length > 0 ? 1 : 0) - (a.unreasonedSkips.length > 0 ? 1 : 0) ||
+        b.maxWeight - a.maxWeight ||
+        a.attributeId.localeCompare(b.attributeId),
+    );
 }
 
 // ─── Merge (the audit refresh) ────────────────────────────────────────────────
@@ -377,21 +399,32 @@ export function renderSelectionDoc(
   const contradictions = findContradictions(doc, registry);
   out.push('## Review items — cross-family contradictions');
   out.push('');
+  const actionable = contradictions.filter(c => c.unreasonedSkips.length > 0);
   if (contradictions.length === 0) {
     out.push('None. Every spec is treated consistently across the families that score it.');
   } else {
     out.push(
-      `The same spec is **asked** in one family and **silently skipped** in another that also scores it.`,
-      `At least one of the two decisions is wrong. ${contradictions.length} found.`,
+      'The same spec is **asked** in one family and **not asked** in another that also scores it.',
       '',
-      '| Spec | id | Max weight | Asked in | Silently skipped in |',
-      '|---|---|---|---|---|',
+      `**${actionable.length} need a decision** — the family that skips the spec records no reason, so nobody`,
+      'has actually ruled on it. Those are listed first, marked **⚠**.',
+      '',
+      `The other **${contradictions.length - actionable.length}** are **deliberate divergences**: the skip carries a`,
+      'reason, so the two families genuinely differ (a through-hole resistor really does key off lead spacing',
+      'rather than package size). They are listed for transparency, not as work. Read the Reason column in the',
+      'family table before changing one.',
+      '',
+      '| | Spec | id | Max weight | Asked in | Not asked in |',
+      '|---|---|---|---|---|---|',
     );
     for (const c of contradictions) {
       const asked = c.askedIn.length > 6 ? `${c.askedIn.length} families` : c.askedIn.join(', ');
+      const skipped = c.skippedIn
+        .map(f => (c.unreasonedSkips.includes(f) ? `**${f}**` : f))
+        .join(', ');
       out.push(
-        `| ${escapePipes(c.attributeName)} | \`${c.attributeId}\` | ${c.maxWeight} | ${asked} | ` +
-          `${c.skippedIn.join(', ')} |`,
+        `| ${c.unreasonedSkips.length ? '⚠' : ''} | ${escapePipes(c.attributeName)} | \`${c.attributeId}\` | ` +
+          `${c.maxWeight} | ${asked} | ${skipped} |`,
       );
     }
   }

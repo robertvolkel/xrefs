@@ -63,49 +63,51 @@ decisions is wrong.
 
 ## Review items — cross-family contradictions
 
-The same spec is **asked** in one family and **silently skipped** in another that also scores it.
-At least one of the two decisions is wrong. 38 found.
+The same spec is **asked** in one family and **not asked** in another that also scores it.
 
-| Spec | id | Max weight | Asked in | Silently skipped in |
-|---|---|---|---|---|
-| Architecture (Integrated Switch / Controller-Only / Half-Bridge / Full-Bridge) | `architecture` | 10 | C2, C9 | C6, C10 |
-| Channel Type (N-Channel / P-Channel) | `channel_type` | 10 | B5, B9 | B7 |
-| Maximum Voltage (Vmax) | `max_voltage` | 10 | 66 | 68 |
-| Output Type (Fixed / Adjustable / Tracking / Negative) | `output_type` | 10 | C1, C10 | C4, C5 |
-| Package / Case | `package_case` | 10 | 34 families | 53, 55 |
-| Pin Configuration / Polarity Marking | `pin_configuration` | 10 | B3 | B1, B2, B4, B5 |
-| Vces Max (Collector-Emitter Voltage, shorted base) | `vces_max` | 10 | B7 | B6 |
-| Drain-Source Voltage (Vds Max) | `vds_max` | 10 | B5 | B9 |
-| Number of Channels | `channel_count` | 9 | C9, E1 | C10 |
-| ESR | `esr` | 9 | 58, 59, 60, 61 | 12, 13, 64 |
-| Mounting Style | `mounting_style` | 9 | 53, 55 | B1, B2, B3, B4, B5, B7 |
-| Mounting Type | `mounting_type` | 9 | 58, 60, F1, F2 | D1, D2 |
-| Power Dissipation (Pd) | `pd` | 9 | B3 | B1, B2, B4, B5, B6, B7 |
-| Ripple Current | `ripple_current` | 9 | 58, 60 | 59, 64 |
-| Safety Rating (X/Y Class) | `safety_rating` | 9 | 64, 65 | 66, 69 |
-| Saturation Current (Isat) | `saturation_current` | 9 | 71 | 72 |
-| Tolerance | `tolerance` | 9 | 8 families | 58, 59, 61, 70, 71, 72 |
-| Forward Voltage Drop (Vf) | `vf` | 9 | B1, B2 | B3 |
-| Voltage Rating | `voltage_rated` | 9 | 12, 13, 58, 59, 60, 61 | 52, 53, 54, 55, 69, 70 |
-| Junction Capacitance (Cj) | `cj` | 8 | B4 | B1, B2, B3 |
-| Lead Spacing / Pitch | `lead_spacing` | 8 | 53, 58, 64 | 60, 65 |
-| Package Footprint | `package_footprint` | 8 | F1 | F2 |
-| Shielding | `shielding` | 8 | 71 | 72 |
-| Self-Resonant Frequency (SRF) | `srf` | 8 | 72 | 71 |
-| Supply Voltage Range | `supply_voltage_range` | 8 | C8 | C9, C10 |
-| Temperature Coefficient (TC / αVz) | `tc` | 8 | C6 | B3 |
-| Temperature Coefficient (TCR) | `tcr` | 8 | 52, 54 | 53, 55 |
-| Maximum Input Voltage (Vin Max) | `vin_max` | 8 | C2 | C1 |
-| Capacitor Type / Series | `capacitor_type` | 7 | 59 | 58, 60 |
-| DC Resistance (DCR) | `dcr` | 7 | 69, 70, 71 | 72 |
-| Reverse Leakage Current (Ir) | `ir_leakage` | 7 | B2 | B1, B3, B4 |
-| Lifetime / Endurance | `lifetime` | 7 | 58 | 61 |
-| Propagation Delay tpd (Input Edge to Output Edge) | `propagation_delay` | 7 | C3 | C7 |
-| Diameter | `diameter` | 6 | 58 | 60, 61 |
-| Leakage Current | `leakage_current` | 6 | 61 | 58, 59, 60, 65 |
-| R25 Tolerance | `r25_tolerance` | 6 | 67 | 68 |
-| Composition / Technology | `composition` | 5 | 53 | 52, 54, 55 |
-| Core Material | `core_material` | 5 | 72 | 71 |
+**0 need a decision** — the family that skips the spec records no reason, so nobody
+has actually ruled on it. Those are listed first, marked **⚠**.
+
+The other **33** are **deliberate divergences**: the skip carries a
+reason, so the two families genuinely differ (a through-hole resistor really does key off lead spacing
+rather than package size). They are listed for transparency, not as work. Read the Reason column in the
+family table before changing one.
+
+| | Spec | id | Max weight | Asked in | Not asked in |
+|---|---|---|---|---|---|
+|  | Architecture (Integrated Switch / Controller-Only / Half-Bridge / Full-Bridge) | `architecture` | 10 | C2, C9, C10 | C6 |
+|  | Channel Type (N-Channel / P-Channel) | `channel_type` | 10 | B5, B9 | B7 |
+|  | Output Polarity (Positive / Negative / Isolated) | `output_polarity` | 10 | C3 | C2 |
+|  | Output Type (Fixed / Adjustable / Tracking / Negative) | `output_type` | 10 | C1, C4, C10 | C5 |
+|  | Package / Case | `package_case` | 10 | 35 families | 53 |
+|  | Vces Max (Collector-Emitter Voltage, shorted base) | `vces_max` | 10 | B7 | B6 |
+|  | ESR | `esr` | 9 | 58, 59, 60, 61 | 12, 13, 64 |
+|  | Mounting Style | `mounting_style` | 9 | 53, 55 | B1, B2, B3, B4, B5, B7 |
+|  | Mounting Type | `mounting_type` | 9 | 58, 60, F1, F2 | D1, D2 |
+|  | Power Dissipation (Pd) | `pd` | 9 | B3 | B1, B2, B4, B5, B6, B7 |
+|  | Ripple Current | `ripple_current` | 9 | 58, 59, 60 | 64 |
+|  | Saturation Current (Isat) | `saturation_current` | 9 | 71 | 72 |
+|  | Tolerance | `tolerance` | 9 | 9 families | 58, 59, 61, 70, 72 |
+|  | Forward Voltage Drop (Vf) | `vf` | 9 | B1, B2 | B3 |
+|  | Voltage Rating | `voltage_rated` | 9 | 10 families | 54, 70 |
+|  | Junction Capacitance (Cj) | `cj` | 8 | B4 | B1, B2, B3 |
+|  | Operating Temp Range | `operating_temp` | 8 | 16 families | 12, 52, 53, 54, 55, 68, 70, B1, B2, B3, B4 |
+|  | Total Gate Charge (Qg) | `qg` | 8 | B5 | B7 |
+|  | Shielding | `shielding` | 8 | 71 | 72 |
+|  | Self-Resonant Frequency (SRF) | `srf` | 8 | 72 | 71 |
+|  | Temperature Coefficient (TC / αVz) | `tc` | 8 | C6 | B3 |
+|  | Anti-Sulfur | `anti_sulfur` | 7 | 52, 54 | 53, 55 |
+|  | Capacitor Type / Series | `capacitor_type` | 7 | 59 | 58, 60 |
+|  | DC Bias Derating | `dc_bias_derating` | 7 | 12 | 59 |
+|  | dV/dt Rating | `dv_dt` | 7 | 64 | B8 |
+|  | Transition Frequency (ft) | `ft` | 7 | B6 | B9 |
+|  | Reverse Leakage Current (Ir) | `ir_leakage` | 7 | B2 | B1, B3, B4 |
+|  | Minimum Input Voltage (Vin Min / Dropout) | `vin_min` | 7 | C2 | C1 |
+|  | Height (Seated Max) | `height` | 6 | 58, 59, 60, 64, 71 | 12, 13, 52, 53, 54, 55, 61, 66, 67, 68, 69, 70, 72, B1, B2, B3, B4, B5, B7 |
+|  | Leakage Current | `leakage_current` | 6 | 61 | 58, 59, 60, 65 |
+|  | PSRR (Power Supply Rejection Ratio) | `psrr` | 6 | C1 | C4 |
+|  | R25 Tolerance | `r25_tolerance` | 6 | 67 | 68 |
+|  | Core Material | `core_material` | 5 | 72 | 71 |
 
 ---
 
@@ -113,7 +115,7 @@ At least one of the two decisions is wrong. 38 found.
 
 ### 12 — Ceramic Capacitors – MLCC (Surface Mount)
 
-Currently asks **6 of 14** scored specs.
+Currently asks **8 of 14** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -123,18 +125,18 @@ Currently asks **6 of 14** scored specs.
 | Dielectric / Temperature Characteristic | `dielectric` | 9 | Required for Search |  |
 | Tolerance | `tolerance` | 7 | Narrows Results |  |
 | Flexible Termination | `flexible_termination` | 8 | Narrows Results |  |
-| Operating Temp Range | `operating_temp` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q200 Qualification | `aec_q200` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| DC Bias Derating | `dc_bias_derating` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height (Seated Max) | `height` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| ESR | `esr` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| ESL | `esl` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Moisture Sensitivity Level | `msl` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| AEC-Q200 Qualification | `aec_q200` | 8 | Narrows Results |  |
+| DC Bias Derating | `dc_bias_derating` | 7 | Narrows Results |  |
+| Operating Temp Range | `operating_temp` | 8 | Not Asked | Encoded by dielectric class (e.g., X7R = -55 to +125C) |
+| Height (Seated Max) | `height` | 6 | Not Asked | Tracks EIA case size |
+| ESR | `esr` | 5 | Not Asked | Class ceramics are selected by dielectric class, not ESR |
+| ESL | `esl` | 5 | Not Asked | Not user-answerable; tracks case size |
+| Moisture Sensitivity Level | `msl` | 4 | Not Asked | Procurement/assembly attribute, not a selection criterion |
+| Packaging | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### 13 — Mica Capacitors (Silver Mica)
 
-Currently asks **6 of 13** scored specs.
+Currently asks **8 of 13** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -144,17 +146,17 @@ Currently asks **6 of 13** scored specs.
 | Dielectric Material | `dielectric` | 9 | Required for Search |  |
 | Tolerance | `tolerance` | 7 | Narrows Results |  |
 | Temperature Coefficient | `temperature_coefficient` | 7 | Narrows Results |  |
-| Operating Temp Range | `operating_temp` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q200 Qualification | `aec_q200` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height (Seated Max) | `height` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| ESR | `esr` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| ESL | `esl` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Moisture Sensitivity Level | `msl` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| Operating Temp Range | `operating_temp` | 8 | Narrows Results |  |
+| AEC-Q200 Qualification | `aec_q200` | 8 | Narrows Results |  |
+| Height (Seated Max) | `height` | 6 | Not Asked | Tracks package |
+| ESR | `esr` | 5 | Not Asked | Not a mica selection criterion users state |
+| ESL | `esl` | 5 | Not Asked | Not user-answerable |
+| Moisture Sensitivity Level | `msl` | 4 | Not Asked | Procurement/assembly attribute, not a selection criterion |
+| Packaging | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### 52 — Chip Resistors (Surface Mount)
 
-Currently asks **5 of 13** scored specs.
+Currently asks **9 of 13** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -163,18 +165,18 @@ Currently asks **5 of 13** scored specs.
 | Power Rating | `power_rating` | 9 | Required for Search |  |
 | Tolerance | `tolerance` | 7 | Narrows Results |  |
 | Temperature Coefficient (TCR) | `tcr` | 6 | Narrows Results |  |
-| Voltage Rating | `voltage_rated` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q200 Qualification | `aec_q200` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temp Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Anti-Sulfur | `anti_sulfur` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Composition / Technology | `composition` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height (Seated Max) | `height` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Moisture Sensitivity Level | `msl` | 3 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| Voltage Rating | `voltage_rated` | 8 | Narrows Results |  |
+| AEC-Q200 Qualification | `aec_q200` | 8 | Narrows Results |  |
+| Anti-Sulfur | `anti_sulfur` | 7 | Narrows Results |  |
+| Composition / Technology | `composition` | 5 | Narrows Results |  |
+| Operating Temp Range | `operating_temp` | 7 | Not Asked | Near-uniform (-55 to +155C) across chip resistors |
+| Height (Seated Max) | `height` | 5 | Not Asked | Tracks case size |
+| Moisture Sensitivity Level | `msl` | 3 | Not Asked | Procurement/assembly attribute, not a selection criterion |
+| Packaging | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### 53 — Through-Hole Resistors
 
-Currently asks **6 of 16** scored specs.
+Currently asks **10 of 16** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -184,20 +186,20 @@ Currently asks **6 of 16** scored specs.
 | Power Rating | `power_rating` | 9 | Required for Search |  |
 | Tolerance | `tolerance` | 7 | Narrows Results |  |
 | Composition / Technology | `composition` | 5 | Narrows Results |  |
-| Package / Case | `package_case` | 10 | Not Asked | ⚠️ NEEDS REVIEW |
-| Voltage Rating | `voltage_rated` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q200 Qualification | `aec_q200` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temp Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Anti-Sulfur | `anti_sulfur` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Temperature Coefficient (TCR) | `tcr` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height (Seated Max) | `height` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Body Length × Diameter | `body_dimensions` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Moisture Sensitivity Level | `msl` | 3 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| Voltage Rating | `voltage_rated` | 8 | Narrows Results |  |
+| AEC-Q200 Qualification | `aec_q200` | 8 | Narrows Results |  |
+| Temperature Coefficient (TCR) | `tcr` | 6 | Narrows Results |  |
+| Body Length × Diameter | `body_dimensions` | 5 | Narrows Results |  |
+| Package / Case | `package_case` | 10 | Not Asked | Axial THT parts have no standard case code; fit is captured by mounting_style + lead_spacing + body_dimensions |
+| Operating Temp Range | `operating_temp` | 7 | Not Asked | Near-uniform across THT resistors |
+| Anti-Sulfur | `anti_sulfur` | 7 | Not Asked | Sulfur failure mode is specific to SMD thick-film terminations |
+| Height (Seated Max) | `height` | 5 | Not Asked | Captured by body_dimensions |
+| Moisture Sensitivity Level | `msl` | 3 | Not Asked | MSL applies to reflow-mounted SMD parts |
+| Packaging | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### 54 — Current Sense Resistors
 
-Currently asks **6 of 16** scored specs.
+Currently asks **11 of 16** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -207,20 +209,20 @@ Currently asks **6 of 16** scored specs.
 | Kelvin (4-Terminal) Sensing | `kelvin_sensing` | 8 | Required for Search |  |
 | Tolerance | `tolerance` | 9 | Narrows Results |  |
 | Temperature Coefficient (TCR) | `tcr` | 8 | Narrows Results |  |
-| Voltage Rating | `voltage_rated` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q200 Qualification | `aec_q200` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temp Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Anti-Sulfur | `anti_sulfur` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Power Rating (Pulse) | `power_rating_pulse` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Composition / Technology | `composition` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height (Seated Max) | `height` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Inductance (Parasitic) | `parasitic_inductance` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Moisture Sensitivity Level | `msl` | 3 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| AEC-Q200 Qualification | `aec_q200` | 8 | Narrows Results |  |
+| Anti-Sulfur | `anti_sulfur` | 7 | Narrows Results |  |
+| Power Rating (Pulse) | `power_rating_pulse` | 7 | Narrows Results |  |
+| Composition / Technology | `composition` | 5 | Narrows Results |  |
+| Inductance (Parasitic) | `parasitic_inductance` | 5 | Narrows Results |  |
+| Voltage Rating | `voltage_rated` | 8 | Not Asked | Milliohm-class parts; voltage rating never binds |
+| Operating Temp Range | `operating_temp` | 7 | Not Asked | Near-uniform across current-sense resistors |
+| Height (Seated Max) | `height` | 5 | Not Asked | Tracks case size |
+| Moisture Sensitivity Level | `msl` | 3 | Not Asked | Procurement/assembly attribute, not a selection criterion |
+| Packaging | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### 55 — Chassis Mount / High Power Resistors
 
-Currently asks **6 of 16** scored specs.
+Currently asks **11 of 16** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -230,20 +232,20 @@ Currently asks **6 of 16** scored specs.
 | Heatsink Interface Dimensions | `heatsink_dimensions` | 8 | Required for Search |  |
 | Tolerance | `tolerance` | 7 | Narrows Results |  |
 | Thermal Resistance (°C/W) | `thermal_resistance` | 7 | Narrows Results |  |
-| Package / Case | `package_case` | 10 | Not Asked | ⚠️ NEEDS REVIEW |
-| Voltage Rating | `voltage_rated` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q200 Qualification | `aec_q200` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temp Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Anti-Sulfur | `anti_sulfur` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Temperature Coefficient (TCR) | `tcr` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Composition / Technology | `composition` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height (Seated Max) | `height` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Moisture Sensitivity Level | `msl` | 3 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| Package / Case | `package_case` | 10 | Narrows Results |  |
+| Voltage Rating | `voltage_rated` | 8 | Narrows Results |  |
+| AEC-Q200 Qualification | `aec_q200` | 8 | Narrows Results |  |
+| Temperature Coefficient (TCR) | `tcr` | 6 | Narrows Results |  |
+| Composition / Technology | `composition` | 5 | Narrows Results |  |
+| Operating Temp Range | `operating_temp` | 7 | Not Asked | Near-uniform for chassis-mount parts |
+| Anti-Sulfur | `anti_sulfur` | 7 | Not Asked | Wirewound/chassis construction is not the sulfur failure mode |
+| Height (Seated Max) | `height` | 5 | Not Asked | Captured by heatsink_dimensions/package |
+| Moisture Sensitivity Level | `msl` | 3 | Not Asked | Chassis-mount; MSL not applicable |
+| Packaging | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### 58 — Aluminum Electrolytic Capacitors
 
-Currently asks **9 of 17** scored specs.
+Currently asks **12 of 17** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -256,18 +258,18 @@ Currently asks **9 of 17** scored specs.
 | ESR | `esr` | 7 | Narrows Results |  |
 | Ripple Current | `ripple_current` | 8 | Narrows Results |  |
 | Lifetime / Endurance | `lifetime` | 7 | Narrows Results |  |
-| AEC-Q200 Qualification | `aec_q200` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temp Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height | `height` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Tolerance | `tolerance` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Impedance | `impedance` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Leakage Current | `leakage_current` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Capacitor Type / Series | `capacitor_type` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| AEC-Q200 Qualification | `aec_q200` | 8 | Narrows Results |  |
+| Operating Temp Range | `operating_temp` | 7 | Narrows Results |  |
+| Height | `height` | 6 | Narrows Results |  |
+| Tolerance | `tolerance` | 5 | Not Asked | +/-20% is the de-facto standard for electrolytics; rarely differentiating |
+| Impedance | `impedance` | 5 | Not Asked | ESR is the asked proxy |
+| Leakage Current | `leakage_current` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Capacitor Type / Series | `capacitor_type` | 4 | Not Asked | Manufacturer series is not a cross-vendor attribute |
+| Packaging | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### 59 — Tantalum Capacitors
 
-Currently asks **6 of 17** scored specs.
+Currently asks **10 of 17** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -277,21 +279,21 @@ Currently asks **6 of 17** scored specs.
 | Capacitor Type | `capacitor_type` | 7 | Required for Search |  |
 | ESR | `esr` | 7 | Narrows Results |  |
 | Failure Mode (Benign) | `failure_mode` | 8 | Narrows Results |  |
-| AEC-Q200 Qualification | `aec_q200` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Ripple Current | `ripple_current` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temp Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Tolerance | `tolerance` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Surge / Inrush Voltage | `surge_voltage` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| DC Bias Derating | `dc_bias_derating` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Leakage Current | `leakage_current` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Dissipation Factor | `dissipation_factor` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height (Seated Max) | `height` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Moisture Sensitivity Level | `msl` | 3 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| AEC-Q200 Qualification | `aec_q200` | 8 | Narrows Results |  |
+| Ripple Current | `ripple_current` | 7 | Narrows Results |  |
+| Operating Temp Range | `operating_temp` | 7 | Narrows Results |  |
+| Height (Seated Max) | `height` | 5 | Narrows Results |  |
+| Tolerance | `tolerance` | 6 | Not Asked | +/-10/20% standard; rarely differentiating |
+| Surge / Inrush Voltage | `surge_voltage` | 6 | Not Asked | Handled by voltage-derating guidance, not a question |
+| DC Bias Derating | `dc_bias_derating` | 6 | Not Asked | Bias derating is a class-II ceramic phenomenon; minimal for tantalum |
+| Leakage Current | `leakage_current` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Dissipation Factor | `dissipation_factor` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Moisture Sensitivity Level | `msl` | 3 | Not Asked | Procurement/assembly attribute, not a selection criterion |
+| Packaging | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### 60 — Aluminum Polymer Capacitors
 
-Currently asks **7 of 17** scored specs.
+Currently asks **12 of 17** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -302,20 +304,20 @@ Currently asks **7 of 17** scored specs.
 | ESR | `esr` | 9 | Required for Search |  |
 | Ripple Current | `ripple_current` | 9 | Narrows Results |  |
 | Tolerance | `tolerance` | 5 | Narrows Results |  |
-| AEC-Q200 Qualification | `aec_q200` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Lead Spacing | `lead_spacing` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temp Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Diameter | `diameter` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height | `height` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Impedance | `impedance` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Leakage Current | `leakage_current` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Conductive Polymer Type | `polymer_type` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Capacitor Type / Series | `capacitor_type` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| AEC-Q200 Qualification | `aec_q200` | 8 | Narrows Results |  |
+| Lead Spacing | `lead_spacing` | 7 | Narrows Results | THT polymer only; irrelevant when mounting_type = SMD |
+| Operating Temp Range | `operating_temp` | 7 | Narrows Results |  |
+| Diameter | `diameter` | 6 | Narrows Results |  |
+| Height | `height` | 6 | Narrows Results |  |
+| Impedance | `impedance` | 5 | Not Asked | ESR is the asked proxy |
+| Leakage Current | `leakage_current` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Conductive Polymer Type | `polymer_type` | 5 | Not Asked | Manufacturer construction detail |
+| Capacitor Type / Series | `capacitor_type` | 4 | Not Asked | Manufacturer series is not a cross-vendor attribute |
+| Packaging | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### 61 — Supercapacitors (EDLC / Ultracapacitors)
 
-Currently asks **6 of 18** scored specs.
+Currently asks **12 of 18** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -325,22 +327,22 @@ Currently asks **6 of 18** scored specs.
 | ESR | `esr` | 8 | Required for Search |  |
 | Leakage Current | `leakage_current` | 6 | Narrows Results |  |
 | Peak Current | `peak_current` | 6 | Narrows Results |  |
-| AEC-Q200 Qualification | `aec_q200` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Technology / Chemistry | `technology` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Cycle Life | `cycle_life` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Lifetime / Endurance | `lifetime` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temp Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Self-Discharge | `self_discharge` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Diameter | `diameter` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height | `height` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Capacitance Aging | `cap_aging` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| ESR Aging | `esr_aging` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Tolerance | `tolerance` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| AEC-Q200 Qualification | `aec_q200` | 8 | Narrows Results |  |
+| Technology / Chemistry | `technology` | 7 | Narrows Results |  |
+| Cycle Life | `cycle_life` | 7 | Narrows Results |  |
+| Lifetime / Endurance | `lifetime` | 7 | Narrows Results |  |
+| Operating Temp Range | `operating_temp` | 7 | Narrows Results |  |
+| Diameter | `diameter` | 5 | Narrows Results |  |
+| Self-Discharge | `self_discharge` | 5 | Not Asked | Leakage current is the asked proxy |
+| Height | `height` | 5 | Not Asked | Diameter is the binding dimension for radial cans |
+| Capacitance Aging | `cap_aging` | 5 | Not Asked | Not user-answerable |
+| ESR Aging | `esr_aging` | 5 | Not Asked | Not user-answerable |
+| Tolerance | `tolerance` | 4 | Not Asked | +/-20% standard; rarely differentiating |
+| Packaging | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### 64 — Film Capacitors
 
-Currently asks **8 of 19** scored specs.
+Currently asks **12 of 19** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -352,21 +354,21 @@ Currently asks **8 of 19** scored specs.
 | Voltage Rating (AC) | `voltage_rated_ac` | 8 | Narrows Results |  |
 | Tolerance | `tolerance` | 6 | Narrows Results |  |
 | Dielectric Type | `dielectric_type` | 7 | Narrows Results |  |
-| AEC-Q200 Qualification | `aec_q200` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Self-Healing | `self_healing` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temp Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Flammability Rating (UL94) | `flammability` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| dV/dt Rating | `dv_dt` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Ripple Current | `ripple_current` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Dissipation Factor (tan δ) | `dissipation_factor` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| ESR | `esr` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height | `height` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Body Length | `body_length` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| AEC-Q200 Qualification | `aec_q200` | 8 | Narrows Results |  |
+| Operating Temp Range | `operating_temp` | 7 | Narrows Results |  |
+| dV/dt Rating | `dv_dt` | 6 | Narrows Results |  |
+| Height | `height` | 5 | Narrows Results |  |
+| Self-Healing | `self_healing` | 7 | Not Asked | Metallized construction implies self-healing; film/foil is niche |
+| Flammability Rating (UL94) | `flammability` | 7 | Not Asked | safety_rating gates mains use; UL94 rarely differentiates further |
+| Ripple Current | `ripple_current` | 6 | Not Asked | Relevant only to DC-link/snubber use; application review |
+| Dissipation Factor (tan δ) | `dissipation_factor` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| ESR | `esr` | 5 | Not Asked | Not a film-cap selection criterion users state |
+| Body Length | `body_length` | 5 | Not Asked | Lead spacing + case capture fit |
+| Packaging | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### 65 — Varistors / Metal Oxide Varistors (MOVs)
 
-Currently asks **6 of 16** scored specs.
+Currently asks **10 of 16** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -376,20 +378,20 @@ Currently asks **6 of 16** scored specs.
 | Energy Rating (Joules) | `energy_rating` | 8 | Narrows Results |  |
 | Peak Surge Current (8/20µs) | `peak_surge_current` | 8 | Narrows Results |  |
 | Safety Rating (UL, IEC) | `safety_rating` | 8 | Narrows Results |  |
-| Clamping Voltage (Vc) | `clamping_voltage` | 9 | Not Asked | ⚠️ NEEDS REVIEW |
-| Thermal Disconnect / Fuse | `thermal_disconnect` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q200 Qualification | `aec_q200` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Lead Spacing / Pitch | `lead_spacing` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temp Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Disc Diameter (Radial) | `disc_diameter` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Number of Surge Pulses (Lifetime) | `surge_pulse_lifetime` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Response Time | `response_time` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Leakage Current | `leakage_current` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| Thermal Disconnect / Fuse | `thermal_disconnect` | 8 | Narrows Results |  |
+| AEC-Q200 Qualification | `aec_q200` | 8 | Narrows Results |  |
+| Lead Spacing / Pitch | `lead_spacing` | 7 | Narrows Results |  |
+| Operating Temp Range | `operating_temp` | 7 | Narrows Results |  |
+| Clamping Voltage (Vc) | `clamping_voltage` | 9 | Not Asked | Tracks varistor_voltage; energy and surge current are the asked differentiators |
+| Disc Diameter (Radial) | `disc_diameter` | 6 | Not Asked | Disc size is encoded in package_case |
+| Number of Surge Pulses (Lifetime) | `surge_pulse_lifetime` | 6 | Not Asked | Not user-answerable |
+| Response Time | `response_time` | 5 | Not Asked | Effectively uniform for MOVs |
+| Leakage Current | `leakage_current` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Packaging | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### 66 — PTC Resettable Fuses (PolyFuses)
 
-Currently asks **6 of 15** scored specs.
+Currently asks **10 of 15** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -399,19 +401,19 @@ Currently asks **6 of 15** scored specs.
 | Package / Form Factor | `package_case` | 10 | Required for Search |  |
 | Initial Resistance (R₁) | `initial_resistance` | 6 | Narrows Results |  |
 | Time-to-Trip | `time_to_trip` | 7 | Narrows Results |  |
-| Maximum Fault Current (Imax) | `max_fault_current` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Safety Rating (UL, TUV, CSA) | `safety_rating` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q200 Qualification | `aec_q200` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temp Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Endurance (Trip/Reset Cycles) | `endurance_cycles` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Post-Trip Resistance (R1max) | `post_trip_resistance` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Power Dissipation (Tripped State) | `power_dissipation` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height (Seated Max) | `height` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| Maximum Fault Current (Imax) | `max_fault_current` | 8 | Narrows Results |  |
+| Safety Rating (UL, TUV, CSA) | `safety_rating` | 8 | Narrows Results |  |
+| AEC-Q200 Qualification | `aec_q200` | 8 | Narrows Results |  |
+| Operating Temp Range | `operating_temp` | 7 | Narrows Results |  |
+| Endurance (Trip/Reset Cycles) | `endurance_cycles` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Post-Trip Resistance (R1max) | `post_trip_resistance` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Power Dissipation (Tripped State) | `power_dissipation` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Height (Seated Max) | `height` | 5 | Not Asked | Tracks package |
+| Packaging | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### 67 — NTC Thermistors
 
-Currently asks **5 of 15** scored specs.
+Currently asks **8 of 15** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -420,20 +422,20 @@ Currently asks **5 of 15** scored specs.
 | Package / Case | `package_case` | 9 | Required for Search |  |
 | R25 Tolerance | `r25_tolerance` | 6 | Narrows Results |  |
 | B-Value Tolerance | `b_value_tolerance` | 5 | Narrows Results |  |
-| R-T Curve Matching | `rt_curve` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q200 Qualification | `aec_q200` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temp Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Curve Interchangeability | `interchangeability` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Maximum Power | `max_power` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Thermal Time Constant | `thermal_time_constant` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Dissipation Constant | `dissipation_constant` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Application Category | `application_category` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height | `height` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| AEC-Q200 Qualification | `aec_q200` | 8 | Narrows Results |  |
+| Operating Temp Range | `operating_temp` | 7 | Narrows Results |  |
+| Application Category | `application_category` | 5 | Narrows Results |  |
+| R-T Curve Matching | `rt_curve` | 8 | Not Asked | Vendor-table-specific; R25 + B-value capture it for substitution |
+| Curve Interchangeability | `interchangeability` | 7 | Not Asked | Sensing-grade niche; tolerance questions cover accuracy |
+| Maximum Power | `max_power` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Thermal Time Constant | `thermal_time_constant` | 5 | Not Asked | Not user-answerable |
+| Dissipation Constant | `dissipation_constant` | 5 | Not Asked | Not user-answerable (thermal-resistance-like) |
+| Height | `height` | 4 | Not Asked | Tracks package |
+| Packaging | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### 68 — PTC Thermistors
 
-Currently asks **5 of 15** scored specs.
+Currently asks **8 of 15** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -442,20 +444,20 @@ Currently asks **5 of 15** scored specs.
 | Package / Case | `package_case` | 9 | Required for Search |  |
 | Trip Current | `trip_current` | 8 | Narrows Results |  |
 | Hold Current | `hold_current` | 7 | Narrows Results |  |
-| R-T Curve Matching | `rt_curve` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q200 Qualification | `aec_q200` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Maximum Voltage | `max_voltage` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Maximum Current | `max_current` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temp Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Curve Interchangeability | `interchangeability` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| R25 Tolerance | `r25_tolerance` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Maximum Power | `max_power` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height | `height` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| AEC-Q200 Qualification | `aec_q200` | 8 | Narrows Results |  |
+| Maximum Voltage | `max_voltage` | 7 | Narrows Results |  |
+| Maximum Current | `max_current` | 7 | Narrows Results |  |
+| R-T Curve Matching | `rt_curve` | 8 | Not Asked | Vendor-table-specific; R25 + Curie temp capture it for substitution |
+| Operating Temp Range | `operating_temp` | 7 | Not Asked | Curie temperature is the thermal question for PTCs |
+| Curve Interchangeability | `interchangeability` | 7 | Not Asked | Sensing-grade niche |
+| R25 Tolerance | `r25_tolerance` | 6 | Not Asked | Protection PTCs don't require sensing-grade tolerance |
+| Maximum Power | `max_power` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Height | `height` | 4 | Not Asked | Tracks package |
+| Packaging | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### 69 — Common Mode Chokes / Filters
 
-Currently asks **6 of 17** scored specs.
+Currently asks **11 of 17** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -465,21 +467,21 @@ Currently asks **6 of 17** scored specs.
 | Number of Lines | `number_of_lines` | 7 | Required for Search |  |
 | DC Resistance (DCR) | `dcr` | 7 | Narrows Results |  |
 | Application Type | `application_type` | 5 | Narrows Results |  |
-| Common Mode Inductance | `cm_inductance` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Impedance vs Frequency Curve | `impedance_curve` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q200 Qualification | `aec_q200` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Voltage Rating | `voltage_rated` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Interface Compliance | `interface_compliance` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Safety Rating (UL/TUV) | `safety_rating` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Differential Mode Leakage Inductance | `dm_leakage` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Insulation Voltage | `insulation_voltage` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temp Range | `operating_temp` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height (Seated Max) | `height` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| Common Mode Inductance | `cm_inductance` | 8 | Narrows Results | Mains chokes are quoted in mH, signal chokes in ohms; accept either |
+| AEC-Q200 Qualification | `aec_q200` | 8 | Narrows Results |  |
+| Voltage Rating | `voltage_rated` | 7 | Narrows Results |  |
+| Safety Rating (UL/TUV) | `safety_rating` | 7 | Narrows Results |  |
+| Operating Temp Range | `operating_temp` | 6 | Narrows Results |  |
+| Impedance vs Frequency Curve | `impedance_curve` | 8 | Not Asked | Curve, not a scalar; not answerable |
+| Interface Compliance | `interface_compliance` | 7 | Not Asked | Overlaps application_type |
+| Differential Mode Leakage Inductance | `dm_leakage` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Insulation Voltage | `insulation_voltage` | 6 | Not Asked | safety_rating covers |
+| Height (Seated Max) | `height` | 5 | Not Asked | Tracks package |
+| Packaging | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### 70 — Ferrite Beads (Surface Mount)
 
-Currently asks **5 of 14** scored specs.
+Currently asks **6 of 14** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -488,19 +490,19 @@ Currently asks **5 of 14** scored specs.
 | Rated Current | `rated_current` | 9 | Required for Search |  |
 | DC Resistance (DCR) | `dcr` | 7 | Narrows Results |  |
 | Number of Lines | `number_of_lines` | 6 | Narrows Results |  |
-| Impedance vs Frequency Curve | `impedance_curve` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q200 Qualification | `aec_q200` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Signal Integrity (S-Parameters) | `signal_integrity` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temp Range | `operating_temp` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Tolerance | `tolerance` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height (Seated Max) | `height` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Voltage Rating | `voltage_rated` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Resistance Type | `resistance_type` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| AEC-Q200 Qualification | `aec_q200` | 8 | Narrows Results |  |
+| Impedance vs Frequency Curve | `impedance_curve` | 8 | Not Asked | Curve, not a scalar; not answerable |
+| Signal Integrity (S-Parameters) | `signal_integrity` | 7 | Not Asked | S-parameters are not answerable |
+| Operating Temp Range | `operating_temp` | 6 | Not Asked | Near-uniform for ferrite beads |
+| Tolerance | `tolerance` | 5 | Not Asked | +/-25% impedance is standard |
+| Height (Seated Max) | `height` | 5 | Not Asked | Tracks case size |
+| Voltage Rating | `voltage_rated` | 5 | Not Asked | Beads are current-rated; voltage rarely specified |
+| Resistance Type | `resistance_type` | 4 | Not Asked | Ambiguous canonical; overlaps dcr -- schema cleanup candidate |
+| Packaging | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### 71 — Power Inductors (Surface Mount)
 
-Currently asks **6 of 17** scored specs.
+Currently asks **10 of 17** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -510,21 +512,21 @@ Currently asks **6 of 17** scored specs.
 | Rated Current (Irms) | `rated_current` | 9 | Required for Search |  |
 | DC Resistance (DCR) | `dcr` | 7 | Narrows Results |  |
 | Shielding | `shielding` | 8 | Narrows Results |  |
-| AEC-Q200 Qualification | `aec_q200` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temp Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Inductance vs DC Bias | `inductance_vs_dc_bias` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Tolerance | `tolerance` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Core Material | `core_material` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Self-Resonant Frequency (SRF) | `srf` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height (Seated Max) | `height` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| AC Resistance (ACR) | `acr` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Construction Type | `construction_type` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Moisture Sensitivity Level | `msl` | 3 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| AEC-Q200 Qualification | `aec_q200` | 8 | Narrows Results |  |
+| Operating Temp Range | `operating_temp` | 7 | Narrows Results |  |
+| Tolerance | `tolerance` | 6 | Narrows Results |  |
+| Height (Seated Max) | `height` | 5 | Narrows Results |  |
+| Inductance vs DC Bias | `inductance_vs_dc_bias` | 7 | Not Asked | Curve; Isat is the asked proxy |
+| Core Material | `core_material` | 5 | Not Asked | Captured indirectly by Isat / soft-saturation behavior |
+| Self-Resonant Frequency (SRF) | `srf` | 5 | Not Asked | SMPS selection is by Isat/Irms; SRF is secondary |
+| AC Resistance (ACR) | `acr` | 4 | Not Asked | Datasheet-derived; not user-answerable |
+| Construction Type | `construction_type` | 4 | Not Asked | Manufacturer construction detail |
+| Moisture Sensitivity Level | `msl` | 3 | Not Asked | Procurement/assembly attribute, not a selection criterion |
+| Packaging | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### 72 — RF / Signal Inductors
 
-Currently asks **6 of 19** scored specs.
+Currently asks **10 of 19** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -534,23 +536,23 @@ Currently asks **6 of 19** scored specs.
 | Self-Resonant Frequency (SRF) | `srf` | 8 | Required for Search |  |
 | Q Factor (Quality Factor) | `q_factor` | 9 | Narrows Results |  |
 | Core Material | `core_material` | 5 | Narrows Results |  |
-| Shielding | `shielding` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q200 Qualification | `aec_q200` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| DC Resistance (DCR) | `dcr` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temp Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Inductance vs DC Bias | `inductance_vs_dc_bias` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Inductance Tolerance | `inductance_tolerance` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Tolerance | `tolerance` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Saturation Current (Isat) | `saturation_current` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height (Seated Max) | `height` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| AC Resistance (ACR) | `acr` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Construction Type | `construction_type` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Moisture Sensitivity Level | `msl` | 3 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| AEC-Q200 Qualification | `aec_q200` | 8 | Narrows Results |  |
+| DC Resistance (DCR) | `dcr` | 7 | Narrows Results |  |
+| Operating Temp Range | `operating_temp` | 7 | Narrows Results |  |
+| Inductance Tolerance | `inductance_tolerance` | 7 | Narrows Results |  |
+| Shielding | `shielding` | 8 | Not Asked | RF/signal inductors are predominantly unshielded; core_material captures construction |
+| Inductance vs DC Bias | `inductance_vs_dc_bias` | 7 | Not Asked | Curve; not answerable |
+| Tolerance | `tolerance` | 6 | Not Asked | Duplicate of inductance_tolerance -- schema cleanup candidate |
+| Saturation Current (Isat) | `saturation_current` | 5 | Not Asked | RF/signal inductors run far below saturation; not a selection criterion |
+| Height (Seated Max) | `height` | 5 | Not Asked | Tracks case size |
+| AC Resistance (ACR) | `acr` | 4 | Not Asked | Datasheet-derived; not user-answerable |
+| Construction Type | `construction_type` | 4 | Not Asked | Manufacturer construction detail |
+| Moisture Sensitivity Level | `msl` | 3 | Not Asked | Procurement/assembly attribute, not a selection criterion |
+| Packaging | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### B1 — Rectifier Diodes — Standard, Fast, and Ultrafast Recovery
 
-Currently asks **7 of 23** scored specs.
+Currently asks **9 of 23** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -561,26 +563,26 @@ Currently asks **7 of 23** scored specs.
 | Package / Form Factor | `package_case` | 10 | Required for Search |  |
 | Forward Voltage Drop (Vf) | `vf` | 8 | Narrows Results |  |
 | Reverse Recovery Time (trr) | `trr` | 8 | Narrows Results |  |
-| Pin Configuration / Polarity Marking | `pin_configuration` | 10 | Not Asked | ⚠️ NEEDS REVIEW |
-| Mounting Style | `mounting_style` | 9 | Not Asked | ⚠️ NEEDS REVIEW |
-| Max DC Blocking Voltage (Vdc) | `vdc` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q101 Qualification | `aec_q101` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Max Surge Forward Current (Ifsm) | `ifsm` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Reverse Recovery Charge (Qrr) | `qrr` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Max Junction Temperature (Tj_max) | `tj_max` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temperature Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Recovery Behavior (Soft vs. Snappy) | `recovery_behavior` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Thermal Resistance, Junction-to-Case (Rtheta_jc) | `rth_jc` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Power Dissipation (Pd) | `pd` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Reverse Leakage Current (Ir) | `ir_leakage` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Thermal Resistance, Junction-to-Ambient (Rtheta_ja) | `rth_ja` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height (Seated Max) | `height` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Junction Capacitance (Cj) | `cj` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging (Tape & Reel / Tube / Bulk) | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| AEC-Q101 Qualification | `aec_q101` | 8 | Narrows Results |  |
+| Max Surge Forward Current (Ifsm) | `ifsm` | 7 | Narrows Results |  |
+| Pin Configuration / Polarity Marking | `pin_configuration` | 10 | Not Asked | Pin compatibility is verified against the original part's datasheet, not asked |
+| Mounting Style | `mounting_style` | 9 | Not Asked | Implied by package_case |
+| Max DC Blocking Voltage (Vdc) | `vdc` | 8 | Not Asked | Tracks Vrrm |
+| Reverse Recovery Charge (Qrr) | `qrr` | 7 | Not Asked | trr is the asked proxy |
+| Max Junction Temperature (Tj_max) | `tj_max` | 7 | Not Asked | Thermal metric; not user-answerable |
+| Operating Temperature Range | `operating_temp` | 7 | Not Asked | Tj-rated parts; near-uniform |
+| Recovery Behavior (Soft vs. Snappy) | `recovery_behavior` | 6 | Not Asked | Application review |
+| Thermal Resistance, Junction-to-Case (Rtheta_jc) | `rth_jc` | 6 | Not Asked | Thermal metric; not user-answerable |
+| Power Dissipation (Pd) | `pd` | 6 | Not Asked | Sized by Io; Pd is derived |
+| Reverse Leakage Current (Ir) | `ir_leakage` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Thermal Resistance, Junction-to-Ambient (Rtheta_ja) | `rth_ja` | 5 | Not Asked | Thermal metric; not user-answerable |
+| Height (Seated Max) | `height` | 5 | Not Asked | Tracks package |
+| Junction Capacitance (Cj) | `cj` | 4 | Not Asked | Datasheet-derived; not user-answerable |
+| Packaging (Tape & Reel / Tube / Bulk) | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### B2 — Schottky Barrier Diodes
 
-Currently asks **7 of 22** scored specs.
+Currently asks **9 of 22** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -591,21 +593,21 @@ Currently asks **7 of 22** scored specs.
 | Semiconductor Material (Si vs SiC) | `semiconductor_material` | 9 | Required for Search |  |
 | Forward Voltage Drop (Vf) | `vf` | 9 | Narrows Results |  |
 | Reverse Leakage Current (Ir) | `ir_leakage` | 7 | Narrows Results |  |
-| Schottky Technology | `schottky_technology` | 10 | Not Asked | ⚠️ NEEDS REVIEW |
-| Pin Configuration / Polarity Marking | `pin_configuration` | 10 | Not Asked | ⚠️ NEEDS REVIEW |
-| Mounting Style | `mounting_style` | 9 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q101 Qualification | `aec_q101` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Max Surge Forward Current (Ifsm) | `ifsm` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Thermal Resistance, Junction-to-Case (Rtheta_jc) | `rth_jc` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Max Junction Temperature (Tj_max) | `tj_max` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temperature Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Junction Capacitance (Cj) | `cj` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Thermal Resistance, Junction-to-Ambient (Rtheta_ja) | `rth_ja` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Power Dissipation (Pd) | `pd` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Vf Temperature Coefficient | `vf_tempco` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height (Seated Max) | `height` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Technology (Trench vs Planar) | `technology_trench_planar` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging (Tape & Reel / Tube / Bulk) | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| AEC-Q101 Qualification | `aec_q101` | 8 | Narrows Results |  |
+| Max Surge Forward Current (Ifsm) | `ifsm` | 7 | Narrows Results |  |
+| Schottky Technology | `schottky_technology` | 10 | Not Asked | Overlaps semiconductor_material -- schema cleanup candidate |
+| Pin Configuration / Polarity Marking | `pin_configuration` | 10 | Not Asked | Pin compatibility is verified against the original part's datasheet, not asked |
+| Mounting Style | `mounting_style` | 9 | Not Asked | Implied by package_case |
+| Thermal Resistance, Junction-to-Case (Rtheta_jc) | `rth_jc` | 7 | Not Asked | Thermal metric; not user-answerable |
+| Max Junction Temperature (Tj_max) | `tj_max` | 7 | Not Asked | Thermal metric; not user-answerable |
+| Operating Temperature Range | `operating_temp` | 7 | Not Asked | Tj-rated parts; near-uniform |
+| Junction Capacitance (Cj) | `cj` | 6 | Not Asked | Matters only in RF/detector use; application review |
+| Thermal Resistance, Junction-to-Ambient (Rtheta_ja) | `rth_ja` | 6 | Not Asked | Thermal metric; not user-answerable |
+| Power Dissipation (Pd) | `pd` | 6 | Not Asked | Sized by Io; Pd is derived |
+| Vf Temperature Coefficient | `vf_tempco` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Height (Seated Max) | `height` | 5 | Not Asked | Tracks package |
+| Technology (Trench vs Planar) | `technology_trench_planar` | 4 | Not Asked | Manufacturer construction detail |
+| Packaging (Tape & Reel / Tube / Bulk) | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### B3 — Zener Diodes / Voltage Reference Diodes
 
@@ -616,59 +618,59 @@ Currently asks **7 of 22** scored specs.
 | Zener Voltage (Vz) | `vz` | 10 | Required for Search |  |
 | Power Dissipation (Pd) | `pd` | 9 | Required for Search |  |
 | Configuration | `configuration` | 9 | Required for Search |  |
-| Pin Configuration / Polarity Marking | `pin_configuration` | 10 | Required for Search |  |
 | Package / Form Factor | `package_case` | 10 | Required for Search |  |
 | Zener Voltage Tolerance | `vz_tolerance` | 8 | Narrows Results |  |
 | Dynamic / Differential Impedance (Zzt) | `zzt` | 7 | Narrows Results |  |
-| Mounting Style | `mounting_style` | 9 | Not Asked | ⚠️ NEEDS REVIEW |
-| Zener Test Current (Izt) | `izt` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q101 Qualification | `aec_q101` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Temperature Coefficient (TC / αVz) | `tc` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temperature Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Maximum Zener Current (Izm) | `izm` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Thermal Resistance, Junction-to-Ambient (Rθja) | `rth_ja` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Max Junction Temperature (Tj_max) | `tj_max` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Reverse Leakage Current (Ir) | `ir_leakage` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height (Seated Max) | `height` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Knee Impedance (Zzk) | `zzk` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Junction Capacitance (Cj) | `cj` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Forward Voltage (Vf) | `vf` | 3 | Not Asked | ⚠️ NEEDS REVIEW |
-| Regulation Type (Zener vs. Avalanche) | `regulation_type` | 3 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging (Tape & Reel / Tube / Bulk) | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| AEC-Q101 Qualification | `aec_q101` | 8 | Narrows Results |  |
+| Pin Configuration / Polarity Marking | `pin_configuration` | 10 | Not Asked | Two-terminal part; polarity handling is a datasheet-verification step, not a question |
+| Mounting Style | `mounting_style` | 9 | Not Asked | Implied by package_case |
+| Zener Test Current (Izt) | `izt` | 8 | Not Asked | Test condition, not a requirement users state |
+| Temperature Coefficient (TC / αVz) | `tc` | 7 | Not Asked | Matters only for reference-grade use; the Voltage References family (C6) covers that |
+| Operating Temperature Range | `operating_temp` | 7 | Not Asked | Tj-rated parts; near-uniform |
+| Maximum Zener Current (Izm) | `izm` | 6 | Not Asked | Derived from Pd and Vz |
+| Thermal Resistance, Junction-to-Ambient (Rθja) | `rth_ja` | 6 | Not Asked | Thermal metric; not user-answerable |
+| Max Junction Temperature (Tj_max) | `tj_max` | 6 | Not Asked | Thermal metric; not user-answerable |
+| Reverse Leakage Current (Ir) | `ir_leakage` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Height (Seated Max) | `height` | 5 | Not Asked | Tracks package |
+| Knee Impedance (Zzk) | `zzk` | 4 | Not Asked | Datasheet-derived; not user-answerable |
+| Junction Capacitance (Cj) | `cj` | 4 | Not Asked | Datasheet-derived; not user-answerable |
+| Forward Voltage (Vf) | `vf` | 3 | Not Asked | Zeners are used in reverse; Vf is immaterial |
+| Regulation Type (Zener vs. Avalanche) | `regulation_type` | 3 | Not Asked | Implied by Vz (<5V Zener, >5V avalanche) |
+| Packaging (Tape & Reel / Tube / Bulk) | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### B4 — TVS Diodes — Transient Voltage Suppressors
 
-Currently asks **8 of 23** scored specs.
+Currently asks **11 of 23** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
+| Number of Channels / Lines | `num_channels` | 10 | Required for Search |  |
+| Configuration / Topology | `configuration` | 10 | Required for Search |  |
 | Polarity (Unidirectional vs. Bidirectional) | `polarity` | 10 | Required for Search |  |
 | Standoff Voltage (Vrwm) | `vrwm` | 10 | Required for Search |  |
 | Clamping Voltage (Vc) | `vc` | 10 | Required for Search |  |
-| Number of Channels / Lines | `num_channels` | 10 | Required for Search |  |
-| Configuration / Topology | `configuration` | 10 | Required for Search |  |
 | Package / Form Factor | `package_case` | 10 | Required for Search |  |
 | Peak Pulse Power (Ppk) | `ppk` | 9 | Narrows Results |  |
 | Junction Capacitance (Cj) | `cj` | 8 | Narrows Results |  |
-| Pin Configuration / Pinout | `pin_configuration` | 10 | Not Asked | ⚠️ NEEDS REVIEW |
-| Breakdown Voltage (Vbr) | `vbr` | 9 | Not Asked | ⚠️ NEEDS REVIEW |
-| Mounting Style | `mounting_style` | 9 | Not Asked | ⚠️ NEEDS REVIEW |
-| Peak Pulse Current (Ipp) | `ipp` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q101 Qualification | `aec_q101` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Surge Standard Compliance (IEC 61000-4-5 / ISO 7637) | `surge_standard` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| ESD Rating (IEC 61000-4-2) | `esd_rating` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temperature Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Response Time | `response_time` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Max Junction Temperature (Tj_max) | `tj_max` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Reverse Leakage Current (Ir) | `ir_leakage` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Thermal Resistance, Junction-to-Ambient (Rθja) | `rth_ja` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Steady-State Power Dissipation (Pd) | `pd` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height (Seated Max) | `height` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging (Tape & Reel / Tube / Bulk) | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| AEC-Q101 Qualification | `aec_q101` | 8 | Narrows Results |  |
+| Surge Standard Compliance (IEC 61000-4-5 / ISO 7637) | `surge_standard` | 8 | Narrows Results |  |
+| ESD Rating (IEC 61000-4-2) | `esd_rating` | 7 | Narrows Results |  |
+| Pin Configuration / Pinout | `pin_configuration` | 10 | Not Asked | Pin compatibility is verified against the original part's datasheet, not asked |
+| Breakdown Voltage (Vbr) | `vbr` | 9 | Not Asked | Bracketed by Vrwm and Vc |
+| Mounting Style | `mounting_style` | 9 | Not Asked | Implied by package_case |
+| Peak Pulse Current (Ipp) | `ipp` | 8 | Not Asked | Ppk is the asked proxy |
+| Operating Temperature Range | `operating_temp` | 7 | Not Asked | Tj-rated parts; near-uniform |
+| Response Time | `response_time` | 6 | Not Asked | Effectively uniform for silicon TVS |
+| Max Junction Temperature (Tj_max) | `tj_max` | 6 | Not Asked | Thermal metric; not user-answerable |
+| Reverse Leakage Current (Ir) | `ir_leakage` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Thermal Resistance, Junction-to-Ambient (Rθja) | `rth_ja` | 5 | Not Asked | Thermal metric; not user-answerable |
+| Steady-State Power Dissipation (Pd) | `pd` | 5 | Not Asked | Transient part; sized by Ppk, not steady-state Pd |
+| Height (Seated Max) | `height` | 5 | Not Asked | Tracks package |
+| Packaging (Tape & Reel / Tube / Bulk) | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### B5 — MOSFETs — N-Channel & P-Channel
 
-Currently asks **6 of 27** scored specs.
+Currently asks **9 of 27** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -678,31 +680,31 @@ Currently asks **6 of 27** scored specs.
 | Package / Footprint | `package_case` | 10 | Required for Search |  |
 | On-State Resistance (Rds(on)) | `rds_on` | 9 | Narrows Results |  |
 | Gate Threshold Voltage (Vgs(th)) | `vgs_th` | 6 | Narrows Results |  |
-| Pin Configuration (G-D-S Order, Tab Assignment) | `pin_configuration` | 10 | Not Asked | ⚠️ NEEDS REVIEW |
-| Technology (Si / SiC / GaN) | `technology` | 9 | Not Asked | ⚠️ NEEDS REVIEW |
-| Mounting Style | `mounting_style` | 9 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q101 Qualification | `aec_q101` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Gate-Source Voltage (Vgs Max) | `vgs_max` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Total Gate Charge (Qg) | `qg` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Body Diode Reverse Recovery Time (trr) | `body_diode_trr` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Peak Pulsed Drain Current (Id Pulse) | `id_pulse` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Avalanche Energy (Eas) | `avalanche_energy` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Gate-Drain Charge / Miller Charge (Qgd) | `qgd` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Output Capacitance (Coss) | `coss` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Reverse Transfer Capacitance (Crss) | `crss` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Thermal Resistance Junction-to-Case (Rθjc) | `rth_jc` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Safe Operating Area (SOA) Curves | `soa` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Power Dissipation (Pd Max) | `pd` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Gate-Source Charge (Qgs) | `qgs` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Input Capacitance (Ciss) | `ciss` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Body Diode Forward Voltage (Vf) | `body_diode_vf` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Thermal Resistance Junction-to-Ambient (Rθja) | `rth_ja` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height / Profile | `height` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging Format (Tape/Reel, Tube, Tray) | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| Technology (Si / SiC / GaN) | `technology` | 9 | Narrows Results | Critical above ~650V but noise for the majority of Si searches; ask only to narrow |
+| AEC-Q101 Qualification | `aec_q101` | 8 | Narrows Results |  |
+| Total Gate Charge (Qg) | `qg` | 8 | Narrows Results |  |
+| Pin Configuration (G-D-S Order, Tab Assignment) | `pin_configuration` | 10 | Not Asked | Pin compatibility is verified against the original part's datasheet, not asked |
+| Mounting Style | `mounting_style` | 9 | Not Asked | Implied by package_case |
+| Gate-Source Voltage (Vgs Max) | `vgs_max` | 8 | Not Asked | Logic-level compatibility is asked via Vgs(th) |
+| Body Diode Reverse Recovery Time (trr) | `body_diode_trr` | 8 | Not Asked | Application review |
+| Peak Pulsed Drain Current (Id Pulse) | `id_pulse` | 7 | Not Asked | Datasheet-derived; not user-answerable |
+| Avalanche Energy (Eas) | `avalanche_energy` | 7 | Not Asked | Application review |
+| Gate-Drain Charge / Miller Charge (Qgd) | `qgd` | 7 | Not Asked | Datasheet-derived; not user-answerable |
+| Output Capacitance (Coss) | `coss` | 7 | Not Asked | Datasheet-derived; not user-answerable |
+| Reverse Transfer Capacitance (Crss) | `crss` | 7 | Not Asked | Datasheet-derived; not user-answerable |
+| Thermal Resistance Junction-to-Case (Rθjc) | `rth_jc` | 7 | Not Asked | Thermal metric; not user-answerable |
+| Safe Operating Area (SOA) Curves | `soa` | 7 | Not Asked | Curve; not answerable |
+| Power Dissipation (Pd Max) | `pd` | 6 | Not Asked | Sized by Id; Pd is derived |
+| Gate-Source Charge (Qgs) | `qgs` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Input Capacitance (Ciss) | `ciss` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Body Diode Forward Voltage (Vf) | `body_diode_vf` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Thermal Resistance Junction-to-Ambient (Rθja) | `rth_ja` | 5 | Not Asked | Thermal metric; not user-answerable |
+| Height / Profile | `height` | 5 | Not Asked | Tracks package |
+| Packaging Format (Tape/Reel, Tube, Tray) | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### B6 — BJTs — NPN & PNP
 
-Currently asks **6 of 18** scored specs.
+Currently asks **8 of 18** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -712,22 +714,22 @@ Currently asks **6 of 18** scored specs.
 | Package / Footprint | `package_case` | 10 | Required for Search |  |
 | DC Current Gain (hFE) | `hfe` | 8 | Narrows Results |  |
 | Vce(sat) Max (Collector-Emitter Saturation Voltage) | `vce_sat` | 8 | Narrows Results |  |
-| Storage Time (tst) | `tst` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q101 (Automotive Qualification) | `aec_q101` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Vces Max (Collector-Emitter Voltage, shorted base) | `vces_max` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Transition Frequency (ft) | `ft` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Turn-Off Time (toff) | `toff` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Power Dissipation (Pd Max) | `pd` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Junction-to-Case Thermal Resistance (Rθjc) | `rth_jc` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Safe Operating Area (SOA Curves) | `soa` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Vbe(sat) Max (Base-Emitter Saturation Voltage) | `vbe_sat` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Turn-On Time (ton) | `ton` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Maximum Junction Temperature (Tj Max) | `tj_max` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging Format (Tape/Reel, Tube, Ammo) | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| AEC-Q101 (Automotive Qualification) | `aec_q101` | 8 | Narrows Results |  |
+| Transition Frequency (ft) | `ft` | 7 | Narrows Results |  |
+| Storage Time (tst) | `tst` | 8 | Not Asked | Datasheet-derived; not user-answerable |
+| Vces Max (Collector-Emitter Voltage, shorted base) | `vces_max` | 7 | Not Asked | Vceo is the number users know and quote; Vces adds little |
+| Turn-Off Time (toff) | `toff` | 7 | Not Asked | Datasheet-derived; not user-answerable |
+| Power Dissipation (Pd Max) | `pd` | 7 | Not Asked | Sized by Ic; Pd is derived |
+| Junction-to-Case Thermal Resistance (Rθjc) | `rth_jc` | 7 | Not Asked | Thermal metric; not user-answerable |
+| Safe Operating Area (SOA Curves) | `soa` | 7 | Not Asked | Curve; not answerable |
+| Vbe(sat) Max (Base-Emitter Saturation Voltage) | `vbe_sat` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Turn-On Time (ton) | `ton` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Maximum Junction Temperature (Tj Max) | `tj_max` | 6 | Not Asked | Thermal metric; not user-answerable |
+| Packaging Format (Tape/Reel, Tube, Ammo) | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### B7 — IGBTs — Insulated Gate Bipolar Transistors
 
-Currently asks **6 of 25** scored specs.
+Currently asks **8 of 25** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -737,29 +739,29 @@ Currently asks **6 of 25** scored specs.
 | Co-Packaged Antiparallel Diode | `co_packaged_diode` | 10 | Required for Search |  |
 | Collector-Emitter Saturation Voltage (Vce(sat)) | `vce_sat` | 9 | Narrows Results |  |
 | Turn-Off Energy Loss (Eoff) | `eoff` | 9 | Narrows Results |  |
-| Channel Type (N-Channel / P-Channel) | `channel_type` | 10 | Not Asked | ⚠️ NEEDS REVIEW |
-| IGBT Technology (PT / NPT / FS) | `igbt_technology` | 9 | Not Asked | ⚠️ NEEDS REVIEW |
-| Mounting Style | `mounting_style` | 9 | Not Asked | ⚠️ NEEDS REVIEW |
-| Short-Circuit Withstand Time (tsc) | `tsc` | 9 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q101 Qualification | `aec_q101` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Gate-Emitter Voltage (Vge Max) | `vge_max` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Turn-On Energy Loss (Eon) | `eon` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Peak Pulsed Collector Current (Ic Pulse) | `ic_pulse` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Total Gate Charge (Qg) | `qg` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Junction-to-Case Thermal Resistance (Rth_jc) | `rth_jc` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Safe Operating Area (SOA Curves) | `soa` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Power Dissipation (Pd Max) | `pd` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Gate Threshold Voltage (Vge(th)) | `vge_th` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Turn-On Delay Time (td(on)) | `td_on` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Turn-Off Delay Time (td(off)) | `td_off` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Fall Time (tf) | `tf` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Maximum Junction Temperature (Tj Max) | `tj_max` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Height / Profile | `height` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging Format (Tube, Tray) | `packaging` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| Short-Circuit Withstand Time (tsc) | `tsc` | 9 | Narrows Results |  |
+| AEC-Q101 Qualification | `aec_q101` | 8 | Narrows Results |  |
+| Channel Type (N-Channel / P-Channel) | `channel_type` | 10 | Not Asked | Effectively all IGBTs are N-channel; a zero-information question |
+| IGBT Technology (PT / NPT / FS) | `igbt_technology` | 9 | Not Asked | Users don't select by PT/NPT/FS; Vce(sat)/Eoff capture the tradeoff |
+| Mounting Style | `mounting_style` | 9 | Not Asked | Implied by package_case |
+| Gate-Emitter Voltage (Vge Max) | `vge_max` | 8 | Not Asked | Datasheet-derived; not user-answerable |
+| Turn-On Energy Loss (Eon) | `eon` | 8 | Not Asked | Eoff is the asked switching-loss proxy |
+| Peak Pulsed Collector Current (Ic Pulse) | `ic_pulse` | 7 | Not Asked | Datasheet-derived; not user-answerable |
+| Total Gate Charge (Qg) | `qg` | 7 | Not Asked | Datasheet-derived; not user-answerable |
+| Junction-to-Case Thermal Resistance (Rth_jc) | `rth_jc` | 7 | Not Asked | Thermal metric; not user-answerable |
+| Safe Operating Area (SOA Curves) | `soa` | 7 | Not Asked | Curve; not answerable |
+| Power Dissipation (Pd Max) | `pd` | 6 | Not Asked | Sized by Ic; Pd is derived |
+| Gate Threshold Voltage (Vge(th)) | `vge_th` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Turn-On Delay Time (td(on)) | `td_on` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Turn-Off Delay Time (td(off)) | `td_off` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Fall Time (tf) | `tf` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Maximum Junction Temperature (Tj Max) | `tj_max` | 6 | Not Asked | Thermal metric; not user-answerable |
+| Height / Profile | `height` | 5 | Not Asked | Tracks package |
+| Packaging Format (Tube, Tray) | `packaging` | 2 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### B8 — Thyristors / TRIACs / SCRs
 
-Currently asks **6 of 22** scored specs.
+Currently asks **9 of 22** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -769,26 +771,26 @@ Currently asks **6 of 22** scored specs.
 | Package / Footprint | `package_case` | 8 | Required for Search |  |
 | Gate Trigger Current (IGT) | `igt` | 7 | Narrows Results |  |
 | Holding Current (IH) | `ih` | 7 | Narrows Results |  |
-| Gate Sensitivity Class (Standard / Sensitive / Logic-Level) | `gate_sensitivity` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Quadrant Operation (TRIAC Only: I+, I-, III+, III-) | `quadrant_operation` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Non-Repetitive Surge Current (ITSM) | `itsm` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Critical Rate of Rise of Off-State Voltage (dV/dt) | `dv_dt` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Surge Current Integral (I²t) for Fuse Coordination | `i2t` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Latching Current (IL) | `il` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Critical Rate of Rise of On-State Current (di/dt) | `di_dt` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Snubberless Rating (TRIAC Only) | `snubberless` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Non-Repetitive Peak Off-State Voltage (VDSM / VRSM) | `vdsm` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Gate Trigger Voltage (VGT) | `vgt` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Circuit-Commutated Turn-Off Time (tq) — SCR Only | `tq` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Junction-to-Case Thermal Resistance (Rth_jc) | `rth_jc` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Gate-Triggered Turn-On Time (tgt) | `tgt` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Maximum Junction Temperature (Tj Max) | `tj_max` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q101 Qualification | `aec_q101` | 3 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging Format (Tape/Reel, Tube, Tray) | `packaging` | 1 | Not Asked | ⚠️ NEEDS REVIEW |
+| Gate Sensitivity Class (Standard / Sensitive / Logic-Level) | `gate_sensitivity` | 8 | Narrows Results |  |
+| Snubberless Rating (TRIAC Only) | `snubberless` | 6 | Narrows Results |  |
+| AEC-Q101 Qualification | `aec_q101` | 3 | Narrows Results |  |
+| Quadrant Operation (TRIAC Only: I+, I-, III+, III-) | `quadrant_operation` | 8 | Not Asked | Drive-design detail; the sensitive-gate question covers MCU triggering |
+| Non-Repetitive Surge Current (ITSM) | `itsm` | 7 | Not Asked | Datasheet-derived; not user-answerable |
+| Critical Rate of Rise of Off-State Voltage (dV/dt) | `dv_dt` | 7 | Not Asked | Application review |
+| Surge Current Integral (I²t) for Fuse Coordination | `i2t` | 6 | Not Asked | Fuse-coordination detail; application review |
+| Latching Current (IL) | `il` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Critical Rate of Rise of On-State Current (di/dt) | `di_dt` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Non-Repetitive Peak Off-State Voltage (VDSM / VRSM) | `vdsm` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Gate Trigger Voltage (VGT) | `vgt` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Circuit-Commutated Turn-Off Time (tq) — SCR Only | `tq` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Junction-to-Case Thermal Resistance (Rth_jc) | `rth_jc` | 5 | Not Asked | Thermal metric; not user-answerable |
+| Gate-Triggered Turn-On Time (tgt) | `tgt` | 4 | Not Asked | Datasheet-derived; not user-answerable |
+| Maximum Junction Temperature (Tj Max) | `tj_max` | 4 | Not Asked | Thermal metric; not user-answerable |
+| Packaging Format (Tape/Reel, Tube, Tray) | `packaging` | 1 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### B9 — JFETs — Junction Field-Effect Transistors
 
-Currently asks **6 of 17** scored specs.
+Currently asks **9 of 17** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -798,21 +800,21 @@ Currently asks **6 of 17** scored specs.
 | Package / Footprint | `package_case` | 10 | Required for Search |  |
 | Forward Transconductance gfs / gm | `gfs` | 7 | Narrows Results |  |
 | Gate Leakage Current Igss | `igss` | 9 | Narrows Results |  |
-| Noise Figure NF | `noise_figure` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Drain-Source Breakdown Voltage Vds | `vds_max` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| 1/f Noise Corner Frequency | `fc_1f_corner` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Gate-Source Breakdown Voltage Vgs | `vgs_max` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Unity-Gain Frequency ft | `ft` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Input Capacitance Ciss (Cgs + Cgd) | `ciss` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Reverse Transfer Capacitance Crss (Cgd) | `crss` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q101 Automotive Qualification | `aec_q101` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Maximum Power Dissipation | `pd_max` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Maximum Junction Temperature | `tj_max` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Matched Pair Suitability | `matched_pair_review` | 0 | Not Asked | ⚠️ NEEDS REVIEW |
+| Noise Figure NF | `noise_figure` | 8 | Narrows Results |  |
+| Drain-Source Breakdown Voltage Vds | `vds_max` | 8 | Narrows Results |  |
+| AEC-Q101 Automotive Qualification | `aec_q101` | 5 | Narrows Results |  |
+| 1/f Noise Corner Frequency | `fc_1f_corner` | 7 | Not Asked | Not user-answerable |
+| Gate-Source Breakdown Voltage Vgs | `vgs_max` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Unity-Gain Frequency ft | `ft` | 6 | Not Asked | Niche; application review |
+| Input Capacitance Ciss (Cgs + Cgd) | `ciss` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Reverse Transfer Capacitance Crss (Cgd) | `crss` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Maximum Power Dissipation | `pd_max` | 4 | Not Asked | Datasheet-derived; not user-answerable |
+| Maximum Junction Temperature | `tj_max` | 4 | Not Asked | Thermal metric; not user-answerable |
+| Matched Pair Suitability | `matched_pair_review` | 0 | Not Asked | Zero-weight placeholder -- schema cleanup candidate |
 
 ### C1 — Linear Voltage Regulators (LDOs)
 
-Currently asks **7 of 22** scored specs.
+Currently asks **13 of 22** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -820,28 +822,28 @@ Currently asks **7 of 22** scored specs.
 | Polarity (Positive / Negative) | `polarity` | 10 | Required for Search |  |
 | Output Voltage Vout | `output_voltage` | 10 | Required for Search |  |
 | Maximum Output Current (Iout Max) | `iout_max` | 9 | Required for Search |  |
+| Maximum Input Voltage (Vin Max) | `vin_max` | 8 | Required for Search | Input rail is always known and a hard safety constraint |
 | Package / Footprint | `package_case` | 10 | Required for Search |  |
 | Dropout Voltage (Vdropout Max) | `vdropout` | 7 | Narrows Results |  |
 | Output Capacitor ESR Compatibility (Ceramic Stable) | `output_cap_compatibility` | 8 | Narrows Results |  |
-| Maximum Input Voltage (Vin Max) | `vin_max` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Enable Pin (Active High / Active Low / Absent) | `enable_pin` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q100 Qualification | `aec_q100` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Minimum Input Voltage (Vin Min / Dropout) | `vin_min` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Output Voltage Accuracy (Initial Tolerance) | `vout_accuracy` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Maximum Junction Temperature (Tj Max) | `tj_max` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| PSRR (Power Supply Rejection Ratio) | `psrr` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Power-Good / Flag Pin | `power_good` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Thermal Shutdown | `thermal_shutdown` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Thermal Resistance (Rθja / Rθjc) | `rth_ja` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Quiescent Current (Iq / Ground Current) | `iq` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Load Regulation (ΔVout / ΔIout) | `load_regulation` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Soft-Start | `soft_start` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Line Regulation (ΔVout / ΔVin) | `line_regulation` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging Format (Tape/Reel, Tube, Tray) | `packaging` | 1 | Not Asked | ⚠️ NEEDS REVIEW |
+| Enable Pin (Active High / Active Low / Absent) | `enable_pin` | 8 | Narrows Results |  |
+| AEC-Q100 Qualification | `aec_q100` | 8 | Narrows Results |  |
+| Output Voltage Accuracy (Initial Tolerance) | `vout_accuracy` | 7 | Narrows Results |  |
+| PSRR (Power Supply Rejection Ratio) | `psrr` | 6 | Narrows Results |  |
+| Quiescent Current (Iq / Ground Current) | `iq` | 5 | Narrows Results |  |
+| Minimum Input Voltage (Vin Min / Dropout) | `vin_min` | 7 | Not Asked | The dropout question covers the low end |
+| Maximum Junction Temperature (Tj Max) | `tj_max` | 7 | Not Asked | Thermal metric; not user-answerable |
+| Power-Good / Flag Pin | `power_good` | 6 | Not Asked | Pin-level feature; verified at datasheet level |
+| Thermal Shutdown | `thermal_shutdown` | 6 | Not Asked | Near-universal in modern LDOs |
+| Thermal Resistance (Rθja / Rθjc) | `rth_ja` | 6 | Not Asked | Thermal metric; not user-answerable |
+| Load Regulation (ΔVout / ΔIout) | `load_regulation` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Soft-Start | `soft_start` | 5 | Not Asked | Feature detail; application review |
+| Line Regulation (ΔVout / ΔVin) | `line_regulation` | 4 | Not Asked | Datasheet-derived; not user-answerable |
+| Packaging Format (Tape/Reel, Tube, Tray) | `packaging` | 1 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### C2 — Switching Regulators (DC-DC Converters & Controllers)
 
-Currently asks **9 of 22** scored specs.
+Currently asks **11 of 22** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -854,23 +856,23 @@ Currently asks **9 of 22** scored specs.
 | Switching Frequency (fsw) | `fsw` | 8 | Narrows Results |  |
 | Control Mode (Peak Current / Voltage / Hysteretic / COT / Average Current) | `control_mode` | 9 | Narrows Results |  |
 | Feedback Reference Voltage (Vref) | `vref` | 9 | Narrows Results |  |
-| Output Polarity (Positive / Negative / Isolated) | `output_polarity` | 10 | Not Asked | ⚠️ NEEDS REVIEW |
-| Compensation Type (Internal / External Type-II / Type-III / No-Comp) | `compensation_type` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q100 Qualification | `aec_q100` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Minimum Input Voltage (Vin Min) | `vin_min` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Minimum On-Time / Off-Time (ton_min, toff_min) | `ton_min` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Gate Drive Voltage / Current (Controller-Only) | `gate_drive_current` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Enable / UVLO Pin (Active High / Active Low / Threshold) | `enable_uvlo` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Maximum Junction Temperature (Tj Max) | `tj_max` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Soft-Start (Internal Fixed / External Css / Absent) | `soft_start` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Overcurrent Protection Mode (Hiccup / Foldback / Latch / Constant Current) | `ocp_mode` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Thermal Shutdown Threshold | `thermal_shutdown` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Thermal Resistance (Rθja / Rθjc) | `rth_ja` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging Format (Tape/Reel, Tube, Tray) | `packaging` | 1 | Not Asked | ⚠️ NEEDS REVIEW |
+| AEC-Q100 Qualification | `aec_q100` | 8 | Narrows Results |  |
+| Minimum Input Voltage (Vin Min) | `vin_min` | 7 | Narrows Results |  |
+| Output Polarity (Positive / Negative / Isolated) | `output_polarity` | 10 | Not Asked | Captured by topology (Inverting/Flyback imply polarity/isolation) |
+| Compensation Type (Internal / External Type-II / Type-III / No-Comp) | `compensation_type` | 8 | Not Asked | Design-stage detail; control_mode is the asked proxy |
+| Minimum On-Time / Off-Time (ton_min, toff_min) | `ton_min` | 7 | Not Asked | Derived constraint from Vin/Vout/fsw |
+| Gate Drive Voltage / Current (Controller-Only) | `gate_drive_current` | 7 | Not Asked | Controller-only detail; application review |
+| Enable / UVLO Pin (Active High / Active Low / Threshold) | `enable_uvlo` | 7 | Not Asked | Pin-level detail; verified at datasheet level |
+| Maximum Junction Temperature (Tj Max) | `tj_max` | 7 | Not Asked | Thermal metric; not user-answerable |
+| Soft-Start (Internal Fixed / External Css / Absent) | `soft_start` | 6 | Not Asked | Feature detail; application review |
+| Overcurrent Protection Mode (Hiccup / Foldback / Latch / Constant Current) | `ocp_mode` | 6 | Not Asked | Application review |
+| Thermal Shutdown Threshold | `thermal_shutdown` | 6 | Not Asked | Near-universal |
+| Thermal Resistance (Rθja / Rθjc) | `rth_ja` | 6 | Not Asked | Thermal metric; not user-answerable |
+| Packaging Format (Tape/Reel, Tube, Tray) | `packaging` | 1 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### C3 — Gate Drivers (MOSFET / IGBT / SiC / GaN)
 
-Currently asks **8 of 22** scored specs.
+Currently asks **12 of 22** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -882,24 +884,24 @@ Currently asks **8 of 22** scored specs.
 | Package / Footprint | `package_case` | 10 | Required for Search |  |
 | Propagation Delay tpd (Input Edge to Output Edge) | `propagation_delay` | 7 | Narrows Results |  |
 | Dead-Time Control (Internal Fixed / Adjustable Rdt / External / None) | `dead_time_control` | 7 | Narrows Results |  |
-| Output Polarity (Non-Inverting / Inverting) | `output_polarity` | 9 | Not Asked | ⚠️ NEEDS REVIEW |
-| Isolation Withstand Voltage (kVrms) | `isolation_voltage` | 9 | Not Asked | ⚠️ NEEDS REVIEW |
-| Input Logic Threshold (VDD-referenced / 3.3V / 5V / Differential) | `input_logic_threshold` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q100 Qualification | `aec_q100` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Dead-Time Duration | `dead_time` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Under-Voltage Lockout Threshold (UVLO) | `uvlo` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Maximum Junction Temperature (Tj Max) | `tj_max` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Rise / Fall Time tr/tf (Output Transition into Load Capacitance) | `rise_fall_time` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Shutdown / Enable Pin (Active High / Active Low / Absent) | `shutdown_enable` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Bootstrap Diode (Internal / External Required) | `bootstrap_diode` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Thermal Resistance Rθja (Junction-to-Ambient) | `rth_ja` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Fault Reporting / FAULT Pin (Present / Absent) | `fault_reporting` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Input-Side Logic Supply Range (VCCI / VDDI) | `input_vdd_range` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging Format (Tape/Reel, Tube, Tray) | `packaging` | 1 | Not Asked | ⚠️ NEEDS REVIEW |
+| Output Polarity (Non-Inverting / Inverting) | `output_polarity` | 9 | Narrows Results |  |
+| Isolation Withstand Voltage (kVrms) | `isolation_voltage` | 9 | Narrows Results |  |
+| Input Logic Threshold (VDD-referenced / 3.3V / 5V / Differential) | `input_logic_threshold` | 8 | Narrows Results |  |
+| AEC-Q100 Qualification | `aec_q100` | 8 | Narrows Results |  |
+| Dead-Time Duration | `dead_time` | 7 | Not Asked | dead_time_control is the asked question |
+| Under-Voltage Lockout Threshold (UVLO) | `uvlo` | 7 | Not Asked | Tracks the driven-switch technology; application review |
+| Maximum Junction Temperature (Tj Max) | `tj_max` | 7 | Not Asked | Thermal metric; not user-answerable |
+| Rise / Fall Time tr/tf (Output Transition into Load Capacitance) | `rise_fall_time` | 6 | Not Asked | Peak source/sink currents are the asked drive-strength proxy |
+| Shutdown / Enable Pin (Active High / Active Low / Absent) | `shutdown_enable` | 6 | Not Asked | Pin-level detail; verified at datasheet level |
+| Bootstrap Diode (Internal / External Required) | `bootstrap_diode` | 6 | Not Asked | Verified at datasheet level |
+| Thermal Resistance Rθja (Junction-to-Ambient) | `rth_ja` | 6 | Not Asked | Thermal metric; not user-answerable |
+| Fault Reporting / FAULT Pin (Present / Absent) | `fault_reporting` | 5 | Not Asked | Feature detail; application review |
+| Input-Side Logic Supply Range (VCCI / VDDI) | `input_vdd_range` | 5 | Not Asked | Follows input_logic_threshold |
+| Packaging Format (Tape/Reel, Tube, Tray) | `packaging` | 1 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### C4 — Op-Amps / Comparators / Instrumentation Amplifiers
 
-Currently asks **8 of 24** scored specs.
+Currently asks **15 of 24** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -911,26 +913,26 @@ Currently asks **8 of 24** scored specs.
 | Gain Bandwidth Product (GBW) | `gain_bandwidth` | 8 | Narrows Results |  |
 | Input Common-Mode Voltage Range (VICM) | `vicm_range` | 9 | Narrows Results |  |
 | Input Bias Current Ib (Max) | `input_bias_current` | 7 | Narrows Results |  |
-| Output Type (Push-Pull / Open-Drain / Open-Collector) | `output_type` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Rail-to-Rail Input (RRI) | `rail_to_rail_input` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Rail-to-Rail Output (RRO) | `rail_to_rail_output` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Minimum Stable Gain (V/V) | `min_stable_gain` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q100 Qualification | `aec_q100` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Slew Rate (V/µs) | `slew_rate` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Input Offset Voltage Vos (Max) | `input_offset_voltage` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Response Time / Propagation Delay (Comparator) | `response_time` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temperature Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Input Noise Voltage Density en (nV/√Hz) | `input_noise_voltage` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Output Current Drive (Short-Circuit) | `output_current` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Open-Loop Voltage Gain Avol (dB) | `avol` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Common-Mode Rejection Ratio CMRR (dB) | `cmrr` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Power Supply Rejection Ratio PSRR (dB) | `psrr` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Quiescent Current per Channel (Iq) | `iq` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging Format (Tape/Reel, Tube, Tray) | `packaging` | 1 | Not Asked | ⚠️ NEEDS REVIEW |
+| Output Type (Push-Pull / Open-Drain / Open-Collector) | `output_type` | 8 | Narrows Results | Critical for comparators (open-drain vs push-pull) |
+| Rail-to-Rail Output (RRO) | `rail_to_rail_output` | 8 | Narrows Results |  |
+| AEC-Q100 Qualification | `aec_q100` | 8 | Narrows Results |  |
+| Slew Rate (V/µs) | `slew_rate` | 7 | Narrows Results |  |
+| Input Offset Voltage Vos (Max) | `input_offset_voltage` | 7 | Narrows Results |  |
+| Operating Temperature Range | `operating_temp` | 7 | Narrows Results |  |
+| Quiescent Current per Channel (Iq) | `iq` | 5 | Narrows Results |  |
+| Rail-to-Rail Input (RRI) | `rail_to_rail_input` | 8 | Not Asked | Captured by the VICM-range question |
+| Minimum Stable Gain (V/V) | `min_stable_gain` | 8 | Not Asked | Decompensated amps are niche; application review |
+| Response Time / Propagation Delay (Comparator) | `response_time` | 7 | Not Asked | Comparator-only; speed covered in application review |
+| Input Noise Voltage Density en (nV/√Hz) | `input_noise_voltage` | 6 | Not Asked | Precision-niche; application review |
+| Output Current Drive (Short-Circuit) | `output_current` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Open-Loop Voltage Gain Avol (dB) | `avol` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Common-Mode Rejection Ratio CMRR (dB) | `cmrr` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Power Supply Rejection Ratio PSRR (dB) | `psrr` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Packaging Format (Tape/Reel, Tube, Tray) | `packaging` | 1 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### C5 — Logic ICs — 74-Series Standard Logic
 
-Currently asks **7 of 24** scored specs.
+Currently asks **10 of 24** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -941,27 +943,27 @@ Currently asks **7 of 24** scored specs.
 | Logic Family (HC / HCT / AC / ACT / LVC / AHC / ALVC / AUP) | `logic_family` | 7 | Narrows Results |  |
 | Input High Threshold (VIH) | `vih` | 7 | Narrows Results |  |
 | Propagation Delay (tpd) | `tpd` | 7 | Narrows Results |  |
-| 3-State Output Enable (OE) Polarity | `oe_polarity` | 9 | Not Asked | ⚠️ NEEDS REVIEW |
-| Output Type (Totem-pole / Open-drain / 3-state) | `output_type` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q100 Automotive Qualification | `aec_q100` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Output High Voltage (VOH) | `voh` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Output Drive Current (IOH / IOL) | `drive_current` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Schmitt Trigger Input | `schmitt_trigger` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temperature Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Output Low Voltage (VOL) | `vol` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Input Low Threshold (VIL) | `vil` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Maximum Operating Frequency (fmax) | `fmax` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Setup Time / Hold Time (tsu / th) | `setup_hold_time` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Bus Hold / Weak Pull-up | `bus_hold` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Max I2C Bus Clock Speed (kHz) | `i2c_bus_speed_max_khz` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Input Clamp Diodes | `input_clamp_diodes` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Input Leakage Current (IIH / IIL) | `input_leakage` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Output Transition Time (tr / tf) | `transition_time` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging Format (Tape & Reel / Tube / Tray) | `packaging` | 1 | Not Asked | ⚠️ NEEDS REVIEW |
+| AEC-Q100 Automotive Qualification | `aec_q100` | 8 | Narrows Results |  |
+| Operating Temperature Range | `operating_temp` | 7 | Narrows Results |  |
+| Maximum Operating Frequency (fmax) | `fmax` | 6 | Narrows Results |  |
+| 3-State Output Enable (OE) Polarity | `oe_polarity` | 9 | Not Asked | Part-number-level detail; captured by logic_function ('241 vs '244) |
+| Output Type (Totem-pole / Open-drain / 3-state) | `output_type` | 8 | Not Asked | Captured by the logic_function suffix (e.g., '07 is open-drain) |
+| Output High Voltage (VOH) | `voh` | 7 | Not Asked | VIH is the asked interface-compatibility check (see Engineering Notes) |
+| Output Drive Current (IOH / IOL) | `drive_current` | 7 | Not Asked | Fanout detail; application review |
+| Schmitt Trigger Input | `schmitt_trigger` | 7 | Not Asked | Encoded in the function number ('14 vs '04) |
+| Output Low Voltage (VOL) | `vol` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Input Low Threshold (VIL) | `vil` | 6 | Not Asked | VIH covers the threshold question |
+| Setup Time / Hold Time (tsu / th) | `setup_hold_time` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Bus Hold / Weak Pull-up | `bus_hold` | 5 | Not Asked | Family-level detail; application review |
+| Max I2C Bus Clock Speed (kHz) | `i2c_bus_speed_max_khz` | 5 | Not Asked | Misfiled canonical -- I2C bus speed does not apply to 74-series logic; schema cleanup candidate |
+| Input Clamp Diodes | `input_clamp_diodes` | 4 | Not Asked | Datasheet-derived; not user-answerable |
+| Input Leakage Current (IIH / IIL) | `input_leakage` | 4 | Not Asked | Datasheet-derived; not user-answerable |
+| Output Transition Time (tr / tf) | `transition_time` | 4 | Not Asked | Datasheet-derived; not user-answerable |
+| Packaging Format (Tape & Reel / Tube / Tray) | `packaging` | 1 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### C6 — Voltage References
 
-Currently asks **6 of 19** scored specs.
+Currently asks **11 of 19** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -971,23 +973,23 @@ Currently asks **6 of 19** scored specs.
 | Package / Footprint | `package_case` | 5 | Required for Search |  |
 | Initial Accuracy (%) | `initial_accuracy` | 8 | Narrows Results |  |
 | Temperature Coefficient (ppm/°C) | `tc` | 8 | Narrows Results |  |
-| Enable/Shutdown Pin Polarity | `enable_shutdown_polarity` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Reference Architecture (Band-gap / Buried Zener / XFET) | `architecture` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| TC/Accuracy Grade (Suffix) | `tc_accuracy_grade` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Dropout Voltage | `dropout_voltage` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Input Voltage Range | `input_voltage_range` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Output Voltage Noise (0.1–10 Hz µVrms) | `output_noise` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temperature Range | `operating_temp` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Quiescent Current (Iq) | `quiescent_current` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Output Current / Load Current Capability | `output_current` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Long-Term Stability (ppm/1000h) | `long_term_stability` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Output Noise Filtering (NR Pin) | `nr_pin` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q100 Automotive Qualification | `aec_q100` | 3 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging Format (Tape & Reel / Cut Tape / Bulk) | `packaging` | 1 | Not Asked | ⚠️ NEEDS REVIEW |
+| Dropout Voltage | `dropout_voltage` | 7 | Narrows Results |  |
+| Input Voltage Range | `input_voltage_range` | 7 | Narrows Results |  |
+| Output Voltage Noise (0.1–10 Hz µVrms) | `output_noise` | 6 | Narrows Results |  |
+| Operating Temperature Range | `operating_temp` | 6 | Narrows Results |  |
+| AEC-Q100 Automotive Qualification | `aec_q100` | 3 | Narrows Results |  |
+| Enable/Shutdown Pin Polarity | `enable_shutdown_polarity` | 8 | Not Asked | Pin-level detail; verified at datasheet level |
+| Reference Architecture (Band-gap / Buried Zener / XFET) | `architecture` | 7 | Not Asked | Users specify accuracy/TC, not internal architecture |
+| TC/Accuracy Grade (Suffix) | `tc_accuracy_grade` | 7 | Not Asked | Redundant with the initial_accuracy + tc questions |
+| Quiescent Current (Iq) | `quiescent_current` | 5 | Not Asked | Near-duplicate of iq canonical -- schema cleanup candidate; application review |
+| Output Current / Load Current Capability | `output_current` | 5 | Not Asked | The series/shunt configuration question covers the load class |
+| Long-Term Stability (ppm/1000h) | `long_term_stability` | 4 | Not Asked | Precision-niche; application review |
+| Output Noise Filtering (NR Pin) | `nr_pin` | 4 | Not Asked | Feature detail; verified at datasheet level |
+| Packaging Format (Tape & Reel / Cut Tape / Bulk) | `packaging` | 1 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### C7 — Interface ICs (RS-485, CAN, I2C, USB)
 
-Currently asks **7 of 22** scored specs.
+Currently asks **12 of 22** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -998,25 +1000,25 @@ Currently asks **7 of 22** scored specs.
 | Package / Footprint | `package_case` | 5 | Required for Search |  |
 | Galvanic Isolation Type | `isolation_type` | 8 | Narrows Results |  |
 | Bus Fault Protection Voltage | `bus_fault_protection` | 8 | Narrows Results |  |
-| Driver Enable / Direction Control Polarity | `de_polarity` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| CAN Standard Variant / USB Speed Grade | `can_variant` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| TXD Dominant Timeout / Bus Watchdog | `txd_dominant_timeout` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Isolation Working Voltage (VIORM) | `isolation_working_voltage` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| ESD Rating — Bus Pins | `esd_bus_pins` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Input Receiver Threshold & Common-Mode Range | `receiver_threshold_cm` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temperature Range | `operating_temp` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Failsafe Receiver Behavior | `failsafe_receiver` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Differential Output Voltage (VOD) | `vod_differential` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Propagation Delay / Loop Delay | `propagation_delay` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Common-Mode Operating Range | `common_mode_range` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Slew Rate Limiting | `slew_rate_class` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Unit Loads / Bus Loading | `unit_loads` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Shutdown / Low-Power Standby Current | `standby_current` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q100 / Automotive Qualification | `aec_q100` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
+| ESD Rating — Bus Pins | `esd_bus_pins` | 7 | Narrows Results |  |
+| Operating Temperature Range | `operating_temp` | 7 | Narrows Results |  |
+| Propagation Delay / Loop Delay | `propagation_delay` | 6 | Narrows Results |  |
+| Unit Loads / Bus Loading | `unit_loads` | 5 | Narrows Results | RS-485 node count is user-known |
+| AEC-Q100 / Automotive Qualification | `aec_q100` | 4 | Narrows Results |  |
+| Driver Enable / Direction Control Polarity | `de_polarity` | 8 | Not Asked | Pinout detail; verified at datasheet level |
+| CAN Standard Variant / USB Speed Grade | `can_variant` | 8 | Not Asked | Captured by protocol + data_rate (e.g., 5 Mbps implies CAN FD) |
+| TXD Dominant Timeout / Bus Watchdog | `txd_dominant_timeout` | 7 | Not Asked | Feature detail; application review |
+| Isolation Working Voltage (VIORM) | `isolation_working_voltage` | 7 | Not Asked | Follows isolation_type; refined in application review |
+| Input Receiver Threshold & Common-Mode Range | `receiver_threshold_cm` | 7 | Not Asked | Datasheet-derived; not user-answerable |
+| Failsafe Receiver Behavior | `failsafe_receiver` | 6 | Not Asked | Feature detail; application review |
+| Differential Output Voltage (VOD) | `vod_differential` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Common-Mode Operating Range | `common_mode_range` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Slew Rate Limiting | `slew_rate_class` | 6 | Not Asked | Follows data_rate |
+| Shutdown / Low-Power Standby Current | `standby_current` | 5 | Not Asked | Application review |
 
 ### C8 — Timers and Oscillators (555 / XO / MEMS / TCXO / VCXO / OCXO)
 
-Currently asks **7 of 22** scored specs.
+Currently asks **12 of 22** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -1027,25 +1029,25 @@ Currently asks **7 of 22** scored specs.
 | Package / Case | `package_case` | 5 | Required for Search |  |
 | Initial Frequency Tolerance (ppm) | `initial_tolerance_ppm` | 8 | Narrows Results |  |
 | Temperature Stability (ppm over range) | `temp_stability_ppm` | 8 | Narrows Results |  |
-| Output Enable Polarity | `oe_polarity` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| VCXO Pull Range (±ppm) | `vcxo_pull_range_ppm` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Timer Variant (CMOS vs Bipolar) | `timer_variant` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Output VOH/VOL Levels | `output_voh_vol` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Phase Jitter (ps RMS) | `phase_jitter_ps_rms` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temperature Range | `operating_temp_range` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Output Load Capacitance (pF) | `output_drive_cl_pf` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Active Supply Current (mA) | `icc_active_ma` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Aging Rate (ppm/year) | `aging_ppm_per_year` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Output Duty Cycle (%) | `duty_cycle_pct` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Startup Time (ms) | `startup_time_ms` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Standby Current (µA) | `icc_standby_ua` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q100 Qualification | `aec_q100` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Crystal Load Capacitance (pF) | `crystal_load_cap_pf` | 3 | Not Asked | ⚠️ NEEDS REVIEW |
-| Packaging Format | `packaging_format` | 1 | Not Asked | ⚠️ NEEDS REVIEW |
+| VCXO Pull Range (±ppm) | `vcxo_pull_range_ppm` | 8 | Narrows Results |  |
+| Timer Variant (CMOS vs Bipolar) | `timer_variant` | 7 | Narrows Results |  |
+| Phase Jitter (ps RMS) | `phase_jitter_ps_rms` | 7 | Narrows Results |  |
+| Operating Temperature Range | `operating_temp_range` | 7 | Narrows Results |  |
+| AEC-Q100 Qualification | `aec_q100` | 4 | Narrows Results |  |
+| Output Enable Polarity | `oe_polarity` | 8 | Not Asked | Pinout detail; verified at datasheet level |
+| Output VOH/VOL Levels | `output_voh_vol` | 7 | Not Asked | Follows output_signal_type and supply |
+| Output Load Capacitance (pF) | `output_drive_cl_pf` | 6 | Not Asked | Design-point detail; application review |
+| Active Supply Current (mA) | `icc_active_ma` | 6 | Not Asked | Application review |
+| Aging Rate (ppm/year) | `aging_ppm_per_year` | 5 | Not Asked | Precision-niche; application review |
+| Output Duty Cycle (%) | `duty_cycle_pct` | 5 | Not Asked | Near-uniform for XOs |
+| Startup Time (ms) | `startup_time_ms` | 5 | Not Asked | Application review |
+| Standby Current (µA) | `icc_standby_ua` | 5 | Not Asked | Application review |
+| Crystal Load Capacitance (pF) | `crystal_load_cap_pf` | 3 | Not Asked | Crystal-family (D1) attribute misfiled here -- schema cleanup candidate |
+| Packaging Format | `packaging_format` | 1 | Not Asked | Procurement/assembly attribute, not a selection criterion |
 
 ### C9 — ADCs — Analog-to-Digital Converters
 
-Currently asks **9 of 20** scored specs.
+Currently asks **14 of 20** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -1058,50 +1060,50 @@ Currently asks **9 of 20** scored specs.
 | Sample Rate (SPS) | `sample_rate_sps` | 8 | Narrows Results |  |
 | Effective Number of Bits (ENOB) | `enob` | 7 | Narrows Results |  |
 | Simultaneous Sampling | `simultaneous_sampling` | 9 | Narrows Results |  |
-| Integral Non-Linearity (LSB) | `inl_lsb` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Reference Type | `reference_type` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Full-Scale Input Range (V) | `input_voltage_range` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Supply Voltage Range (V) | `supply_voltage_range` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temperature Range (°C) | `operating_temp_range` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Differential Non-Linearity (LSB) | `dnl_lsb` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Total Harmonic Distortion (dBc) | `thd_db` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Conversion Latency (cycles) | `conversion_latency_cycles` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Internal Reference Voltage (V) | `reference_voltage` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Power Consumption (mW) | `power_consumption_mw` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q100 Qualification | `aec_q100` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
+| Reference Type | `reference_type` | 7 | Narrows Results |  |
+| Full-Scale Input Range (V) | `input_voltage_range` | 7 | Narrows Results |  |
+| Supply Voltage Range (V) | `supply_voltage_range` | 7 | Narrows Results |  |
+| Operating Temperature Range (°C) | `operating_temp_range` | 7 | Narrows Results |  |
+| AEC-Q100 Qualification | `aec_q100` | 4 | Narrows Results |  |
+| Integral Non-Linearity (LSB) | `inl_lsb` | 7 | Not Asked | ENOB is the asked precision proxy |
+| Differential Non-Linearity (LSB) | `dnl_lsb` | 6 | Not Asked | ENOB is the asked precision proxy |
+| Total Harmonic Distortion (dBc) | `thd_db` | 6 | Not Asked | ENOB is the asked precision proxy |
+| Conversion Latency (cycles) | `conversion_latency_cycles` | 6 | Not Asked | Architecture implies latency class; application review |
+| Internal Reference Voltage (V) | `reference_voltage` | 5 | Not Asked | Follows reference_type |
+| Power Consumption (mW) | `power_consumption_mw` | 5 | Not Asked | Application review |
 
 ### C10 — DACs — Digital-to-Analog Converters
 
-Currently asks **8 of 22** scored specs.
+Currently asks **15 of 22** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
 | Output Type | `output_type` | 10 | Required for Search |  |
 | Resolution (bits) | `resolution_bits` | 10 | Required for Search |  |
+| Number of DAC Channels | `channel_count` | 7 | Required for Search | Identity-level: single/dual/quad DACs have different pinouts |
 | Interface Type | `interface_type` | 9 | Required for Search |  |
 | Output Buffered | `output_buffered` | 8 | Required for Search |  |
 | Package / Case | `package_case` | 5 | Required for Search |  |
 | Update Rate (SPS) | `update_rate_sps` | 7 | Narrows Results |  |
 | Power-On Reset State | `power_on_reset_state` | 8 | Narrows Results |  |
 | Output Voltage Range (V) | `output_voltage_range` | 8 | Narrows Results |  |
-| DAC Architecture | `architecture` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Number of DAC Channels | `channel_count` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Integral Non-Linearity (LSB) | `inl_lsb` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Differential Non-Linearity (LSB) | `dnl_lsb` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Glitch Energy (nVs) | `glitch_energy_nVs` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Settling Time (µs) | `settling_time_us` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Reference Type | `reference_type` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Supply Voltage Range (V) | `supply_voltage_range` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temperature Range (°C) | `operating_temp_range` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Output Noise Density (nV/√Hz) | `output_noise_density_nvhz` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Output Source Current (mA) | `output_current_source_ma` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Internal Reference Voltage (V) | `reference_voltage` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Power Consumption (mW) | `power_consumption_mw` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q100 Qualification | `aec_q100` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
+| DAC Architecture | `architecture` | 7 | Narrows Results |  |
+| Settling Time (µs) | `settling_time_us` | 7 | Narrows Results |  |
+| Reference Type | `reference_type` | 7 | Narrows Results |  |
+| Supply Voltage Range (V) | `supply_voltage_range` | 7 | Narrows Results |  |
+| Operating Temperature Range (°C) | `operating_temp_range` | 7 | Narrows Results |  |
+| AEC-Q100 Qualification | `aec_q100` | 4 | Narrows Results |  |
+| Integral Non-Linearity (LSB) | `inl_lsb` | 7 | Not Asked | Resolution + settling cover; application review |
+| Differential Non-Linearity (LSB) | `dnl_lsb` | 7 | Not Asked | Resolution + settling cover; application review |
+| Glitch Energy (nVs) | `glitch_energy_nVs` | 7 | Not Asked | Application review |
+| Output Noise Density (nV/√Hz) | `output_noise_density_nvhz` | 6 | Not Asked | Precision-niche; application review |
+| Output Source Current (mA) | `output_current_source_ma` | 6 | Not Asked | The buffered question covers drive class |
+| Internal Reference Voltage (V) | `reference_voltage` | 5 | Not Asked | Follows reference_type |
+| Power Consumption (mW) | `power_consumption_mw` | 5 | Not Asked | Application review |
 
 ### D1 — Crystals — Quartz Resonators
 
-Currently asks **7 of 18** scored specs.
+Currently asks **10 of 18** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -1112,21 +1114,21 @@ Currently asks **7 of 18** scored specs.
 | Overtone Order | `overtone_order` | 9 | Required for Search |  |
 | ESR (Equivalent Series Resistance) | `equivalent_series_resistance_ohm` | 8 | Narrows Results |  |
 | Frequency Tolerance (ppm) | `frequency_tolerance_ppm` | 8 | Narrows Results |  |
-| Frequency Stability (ppm) | `frequency_stability_ppm` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Mounting Type | `mounting_type` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Maximum Drive Level (µW) | `drive_level_uw` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temperature Range | `operating_temp_range` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Pin Count | `package_pins` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Shunt Capacitance (pF) | `shunt_capacitance_pf` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Aging Rate (ppm/year) | `aging_ppm_per_year` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q200 Qualification | `aec_q200` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Frequency vs Temperature Curve | `frequency_vs_temp_curve` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
-| Storage Temperature Range | `storage_temp_range` | 3 | Not Asked | ⚠️ NEEDS REVIEW |
-| Qualification Level | `qualification_level` | 2 | Not Asked | ⚠️ NEEDS REVIEW |
+| Frequency Stability (ppm) | `frequency_stability_ppm` | 8 | Narrows Results |  |
+| Operating Temperature Range | `operating_temp_range` | 7 | Narrows Results |  |
+| AEC-Q200 Qualification | `aec_q200` | 4 | Narrows Results |  |
+| Mounting Type | `mounting_type` | 7 | Not Asked | Implied by package_type |
+| Maximum Drive Level (µW) | `drive_level_uw` | 7 | Not Asked | Datasheet-derived; not user-answerable |
+| Pin Count | `package_pins` | 6 | Not Asked | Implied by package_type |
+| Shunt Capacitance (pF) | `shunt_capacitance_pf` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Aging Rate (ppm/year) | `aging_ppm_per_year` | 6 | Not Asked | Precision-niche; application review |
+| Frequency vs Temperature Curve | `frequency_vs_temp_curve` | 4 | Not Asked | Curve; not answerable |
+| Storage Temperature Range | `storage_temp_range` | 3 | Not Asked | Users cannot state a storage temperature |
+| Qualification Level | `qualification_level` | 2 | Not Asked | Generic catch-all; overlaps aec_q200 -- schema cleanup candidate |
 
 ### D2 — Fuses — Traditional Overcurrent Protection
 
-Currently asks **7 of 14** scored specs.
+Currently asks **10 of 14** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -1137,17 +1139,17 @@ Currently asks **7 of 14** scored specs.
 | Package Format | `package_format` | 9 | Required for Search |  |
 | Voltage Type (AC/DC) | `voltage_type` | 7 | Narrows Results |  |
 | I²t Let-Through Energy (A²·s) | `i2t_rating_a2s` | 8 | Narrows Results |  |
-| Mounting Type | `mounting_type` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Safety Certification | `safety_certification` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Melting I²t (A²·s) | `melting_i2t_a2s` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Body Material | `body_material` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temperature Range | `operating_temp_range` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Derating Factor | `derating_factor` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q200 Qualification | `aec_q200` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
+| Safety Certification | `safety_certification` | 7 | Narrows Results |  |
+| Operating Temperature Range | `operating_temp_range` | 6 | Narrows Results |  |
+| AEC-Q200 Qualification | `aec_q200` | 4 | Narrows Results |  |
+| Mounting Type | `mounting_type` | 8 | Not Asked | Captured by package_format |
+| Melting I²t (A²·s) | `melting_i2t_a2s` | 6 | Not Asked | Clearing I2t is the asked value |
+| Body Material | `body_material` | 6 | Not Asked | Breaking capacity is the functional question; body material is a proxy |
+| Derating Factor | `derating_factor` | 5 | Not Asked | Derived design guidance, not a part attribute |
 
 ### E1 — Optocouplers / Photocouplers
 
-Currently asks **6 of 23** scored specs.
+Currently asks **11 of 23** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -1157,27 +1159,27 @@ Currently asks **6 of 23** scored specs.
 | Package Type | `package_type` | 9 | Required for Search |  |
 | CTR Minimum (%) | `ctr_min_pct` | 9 | Narrows Results |  |
 | Bandwidth (kHz) | `bandwidth_khz` | 8 | Narrows Results |  |
-| Working Voltage (Vrms) | `working_voltage_vrms` | 9 | Not Asked | ⚠️ NEEDS REVIEW |
-| Creepage Distance (mm) | `creepage_distance_mm` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Vce(sat) (V) | `vce_sat_v` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Clearance Distance (mm) | `clearance_distance_mm` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Peak Isolation Voltage (V) | `peak_isolation_voltage_v` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Safety Certification | `safety_certification` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| CTR Maximum (%) | `ctr_max_pct` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| LED Rated Forward Current (mA) | `if_rated_ma` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Input Forward Voltage Vf (V) | `input_forward_voltage_vf` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Propagation Delay (us) | `propagation_delay_us` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Supply Voltage VCC | `supply_voltage_vcc` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temperature Range | `operating_temp_range` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| CTR Class (Rank) | `ctr_class` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| CTR Degradation (%) | `ctr_degradation_pct` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Pollution Degree | `pollution_degree` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Output Leakage ICEO (uA) | `output_leakage_iceo_ua` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q101 Qualification | `aec_q101` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
+| Working Voltage (Vrms) | `working_voltage_vrms` | 9 | Narrows Results |  |
+| Creepage Distance (mm) | `creepage_distance_mm` | 8 | Narrows Results |  |
+| Safety Certification | `safety_certification` | 7 | Narrows Results |  |
+| Operating Temperature Range | `operating_temp_range` | 7 | Narrows Results |  |
+| AEC-Q101 Qualification | `aec_q101` | 4 | Narrows Results |  |
+| Vce(sat) (V) | `vce_sat_v` | 8 | Not Asked | Datasheet-derived; not user-answerable |
+| Clearance Distance (mm) | `clearance_distance_mm` | 7 | Not Asked | Creepage is the binding asked constraint |
+| Peak Isolation Voltage (V) | `peak_isolation_voltage_v` | 7 | Not Asked | isolation_voltage_vrms covers |
+| CTR Maximum (%) | `ctr_max_pct` | 7 | Not Asked | CTR minimum covers |
+| LED Rated Forward Current (mA) | `if_rated_ma` | 7 | Not Asked | Design-point detail; application review |
+| Input Forward Voltage Vf (V) | `input_forward_voltage_vf` | 7 | Not Asked | Datasheet-derived; not user-answerable |
+| Propagation Delay (us) | `propagation_delay_us` | 7 | Not Asked | Bandwidth is the asked speed proxy |
+| Supply Voltage VCC | `supply_voltage_vcc` | 7 | Not Asked | Applies only to IC-output types; application review |
+| CTR Class (Rank) | `ctr_class` | 6 | Not Asked | Manufacturer binning; ctr_min covers |
+| CTR Degradation (%) | `ctr_degradation_pct` | 6 | Not Asked | Lifetime-modeling detail; not answerable |
+| Pollution Degree | `pollution_degree` | 5 | Not Asked | System-level parameter, not a part question |
+| Output Leakage ICEO (uA) | `output_leakage_iceo_ua` | 5 | Not Asked | Datasheet-derived; not user-answerable |
 
 ### F1 — Electromechanical Relays (EMR)
 
-Currently asks **8 of 23** scored specs.
+Currently asks **13 of 23** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -1189,25 +1191,25 @@ Currently asks **8 of 23** scored specs.
 | Contact Current Rating (A) | `contact_current_rating_a` | 9 | Required for Search |  |
 | Package Footprint | `package_footprint` | 8 | Narrows Results |  |
 | Coil Resistance (Ω) | `coil_resistance_ohm` | 7 | Narrows Results |  |
-| Contact Voltage Type (AC/DC) | `contact_voltage_type` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Contact Material | `contact_material` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Must-Operate Voltage (V) | `must_operate_voltage_v` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temperature Range | `operating_temp_range` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Maximum Switching Power (VA) | `max_switching_power_va` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Coil Power (mW) | `coil_power_mw` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operate Time (ms) | `operate_time_ms` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Release Time (ms) | `release_time_ms` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Electrical Life (operations) | `electrical_life_ops` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Coil Suppression Diode | `coil_suppress_diode` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Must-Release Voltage (V) | `must_release_voltage_v` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Mechanical Life (operations) | `mechanical_life_ops` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Contact Bounce (ms) | `contact_bounce_ms` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Sealing Type | `sealing_type` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| AEC-Q200 Qualification | `aec_q200` | 4 | Not Asked | ⚠️ NEEDS REVIEW |
+| Contact Voltage Type (AC/DC) | `contact_voltage_type` | 7 | Narrows Results | AC vs DC load radically changes effective contact rating |
+| Operating Temperature Range | `operating_temp_range` | 7 | Narrows Results |  |
+| Electrical Life (operations) | `electrical_life_ops` | 6 | Narrows Results |  |
+| Coil Suppression Diode | `coil_suppress_diode` | 6 | Narrows Results | Built-in diode changes drive circuit and coil polarity |
+| AEC-Q200 Qualification | `aec_q200` | 4 | Narrows Results |  |
+| Contact Material | `contact_material` | 7 | Not Asked | Load class captured by voltage/current ratings; signal-level relays handled in application review |
+| Must-Operate Voltage (V) | `must_operate_voltage_v` | 7 | Not Asked | Datasheet-derived; not user-answerable |
+| Maximum Switching Power (VA) | `max_switching_power_va` | 6 | Not Asked | Derived from V x I ratings |
+| Coil Power (mW) | `coil_power_mw` | 6 | Not Asked | Follows coil voltage/resistance |
+| Operate Time (ms) | `operate_time_ms` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Release Time (ms) | `release_time_ms` | 6 | Not Asked | Datasheet-derived; not user-answerable |
+| Must-Release Voltage (V) | `must_release_voltage_v` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Mechanical Life (operations) | `mechanical_life_ops` | 5 | Not Asked | Electrical life is the binding number |
+| Contact Bounce (ms) | `contact_bounce_ms` | 5 | Not Asked | Datasheet-derived; not user-answerable |
+| Sealing Type | `sealing_type` | 5 | Not Asked | Assembly-process attribute; application review |
 
 ### F2 — Solid State Relays (SSR)
 
-Currently asks **8 of 23** scored specs.
+Currently asks **13 of 23** scored specs.
 
 | Spec | id | Weight | State | Reason |
 |---|---|---|---|---|
@@ -1219,25 +1221,25 @@ Currently asks **8 of 23** scored specs.
 | Input Voltage Range (V) | `input_voltage_range_v` | 9 | Required for Search |  |
 | On-State Voltage Drop (V) | `on_state_voltage_drop_v` | 7 | Narrows Results |  |
 | Isolation Voltage (Vrms) | `isolation_voltage_vrms` | 8 | Narrows Results |  |
-| Load Voltage Type (AC/DC) | `load_voltage_type` | 8 | Not Asked | ⚠️ NEEDS REVIEW |
-| Off-State Leakage (mA) | `off_state_leakage_ma` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Input Current (mA) | `input_current_ma` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Turn-On Time (ms) | `turn_on_time_ms` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Turn-Off Time (ms) | `turn_off_time_ms` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Safety Certification | `safety_certification` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Operating Temperature Range | `operating_temp_range` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Package Footprint | `package_footprint` | 7 | Not Asked | ⚠️ NEEDS REVIEW |
-| Load Current Min (A) | `load_current_min_a` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| dV/dt Rating (V/µs) | `dv_dt_rating_v_us` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| dI/dt Rating (A/µs) | `di_dt_rating_a_us` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Thermal Resistance Junction-to-Case (°C/W) | `thermal_resistance_jc` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Built-in Snubber | `built_in_snubber` | 6 | Not Asked | ⚠️ NEEDS REVIEW |
-| Input Impedance (Ω) | `input_impedance_ohm` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
-| Built-in Varistor (MOV/TVS) | `built_in_varistor` | 5 | Not Asked | ⚠️ NEEDS REVIEW |
+| Off-State Leakage (mA) | `off_state_leakage_ma` | 7 | Narrows Results | Matters for small AC loads (e.g., LED lamps staying lit) |
+| Safety Certification | `safety_certification` | 7 | Narrows Results |  |
+| Operating Temperature Range | `operating_temp_range` | 7 | Narrows Results |  |
+| Package Footprint | `package_footprint` | 7 | Narrows Results |  |
+| Built-in Snubber | `built_in_snubber` | 6 | Narrows Results |  |
+| Load Voltage Type (AC/DC) | `load_voltage_type` | 8 | Not Asked | Implied by output_switch_type (TRIAC = AC; MOSFET = DC) |
+| Input Current (mA) | `input_current_ma` | 7 | Not Asked | Follows input_voltage_range |
+| Turn-On Time (ms) | `turn_on_time_ms` | 7 | Not Asked | Firing mode captures the switching-behavior class |
+| Turn-Off Time (ms) | `turn_off_time_ms` | 7 | Not Asked | Firing mode captures the switching-behavior class |
+| Load Current Min (A) | `load_current_min_a` | 6 | Not Asked | Datasheet footnote; the leakage question covers small-load risk |
+| dV/dt Rating (V/µs) | `dv_dt_rating_v_us` | 6 | Not Asked | Application review |
+| dI/dt Rating (A/µs) | `di_dt_rating_a_us` | 6 | Not Asked | Application review |
+| Thermal Resistance Junction-to-Case (°C/W) | `thermal_resistance_jc` | 6 | Not Asked | Thermal metric; not user-answerable |
+| Input Impedance (Ω) | `input_impedance_ohm` | 5 | Not Asked | Follows input spec |
+| Built-in Varistor (MOV/TVS) | `built_in_varistor` | 5 | Not Asked | The snubber question covers protection add-ons |
 
 ---
 
-**Total: 823 scored specs across 43 families. 287 asked, 536 not asked.**
+**Total: 823 scored specs across 43 families. 449 asked, 374 not asked.**
 
 ## Engineering Notes
 

@@ -139,6 +139,25 @@ describe('findContradictions — the threshold-free gap detector', () => {
     const registry = { C1: table('C1', rule('iq')), C2: table('C2', rule('iq')) };
     expect(findContradictions(docOf({ C1: [['iq', 'not_asked']], C2: [['iq', 'not_asked']] }), registry)).toEqual([]);
   });
+
+  it('separates an UNREASONED skip (needs a human) from a REASONED divergence (settled)', () => {
+    // Two families can legitimately differ — a through-hole resistor really does key off lead
+    // spacing rather than package size. What makes a divergence actionable is not that it
+    // exists, but that the family skipping the spec never said WHY. An unreasoned skip is not
+    // a decision, it is an absence — which is the entire bug this file exists to prevent.
+    const registry = { A: table('A', rule('spec')), B: table('B', rule('spec')), C: table('C', rule('spec')) };
+    const doc: ParsedDoc = {
+      families: new Map([
+        ['A', [{ attributeId: 'spec', state: 'required' as const, reason: '' }]],
+        ['B', [{ attributeId: 'spec', state: 'not_asked' as const, reason: 'Implied by the package.' }]],
+        ['C', [{ attributeId: 'spec', state: 'not_asked' as const, reason: '' }]],
+      ]),
+      notes: '',
+    };
+    const [found] = findContradictions(doc, registry);
+    expect(found.skippedIn).toEqual(['B', 'C']);
+    expect(found.unreasonedSkips).toEqual(['C']); // B is settled; only C still needs a human
+  });
 });
 
 describe('mergeWithLogicTables', () => {
@@ -200,13 +219,26 @@ describe('the real document', () => {
     expect([...reparsed.families]).toEqual([...doc.families]);
   });
 
-  it('still records the reported bug: an LDO never asks what voltage goes INTO it', () => {
-    // A canary, not an assertion of correctness — it documents the state the review must
-    // fix. When Fable 5 marks C1 vin_max as asked, DELETE this test; do not weaken it.
+  it('asks what voltage goes INTO a voltage regulator — both kinds of them', () => {
+    // The bug that motivated this whole mechanism. The document required `vin_max` for C2
+    // switching regulators but omitted it for C1 LDOs — also a Vin→Vout device — so the app
+    // never asked. Both are Required now. If this ever goes back to `not_asked`, that is the
+    // regression, not a preference: a 60 V rail into a 6 V LDO is a hard safety failure.
     const { doc } = parseSelectionDoc(readDoc());
-    const c1 = doc.families.get('C1')!.find(r => r.attributeId === 'vin_max');
-    const c2 = doc.families.get('C2')!.find(r => r.attributeId === 'vin_max');
-    expect(c1!.state).toBe('not_asked');
-    expect(c2!.state).toBe('required');
+    for (const familyId of ['C1', 'C2']) {
+      const vin = doc.families.get(familyId)!.find(r => r.attributeId === 'vin_max');
+      expect(vin!.state).toBe('required');
+    }
+  });
+
+  it('every unasked spec carries a reason — no silent holes left', () => {
+    // The original state of this file was 536 specs unasked with no reason recorded: not
+    // rejected, never *decided on*. Adding a rule re-opens a hole (it seeds as an unreasoned
+    // "Not Asked"), and this is what makes that visible rather than invisible.
+    const { doc } = parseSelectionDoc(readDoc());
+    const unreasoned = [...doc.families.entries()].flatMap(([familyId, rows]) =>
+      rows.filter(r => r.state === 'not_asked' && !r.reason).map(r => `${familyId}.${r.attributeId}`),
+    );
+    expect(unreasoned).toEqual([]);
   });
 });
