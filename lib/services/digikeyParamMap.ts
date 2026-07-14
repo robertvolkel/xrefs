@@ -7765,26 +7765,49 @@ const familyTaxonomyOverrides: Record<string, string[]> = {
   // C8: Timers and Oscillators — 555 timers + all packaged oscillator types
   // Digikey leaf names: "Programmable Timers and Oscillators" and "Oscillators"
   'C8': ['Programmable Timers and Oscillators', 'Oscillators'],
-  // C9: ADCs — single Digikey category covers all architectures
-  // Digikey leaf name: "Analog to Digital Converters (ADCs)"
-  'C9': ['Analog to Digital Converters (ADCs)'],
-  // C10: DACs — single Digikey category
-  // Digikey leaf name: "Digital to Analog Converters (DACs)"
-  'C10': ['Digital to Analog Converters (DACs)'],
+  // C9: ADCs — single Digikey category covers all architectures.
+  // ⚠️ SINGULAR "(ADC)". The plural "(ADCs)" matched NOTHING (verified against the live tree
+  // 2026-07-14) — and the only leaf carrying the plural is the EVALUATION BOARDS category, which
+  // is dev hardware, not a part. One letter cost this family its entire parametric search.
+  'C9': ['Analog to Digital Converters (ADC)'],
+  // C10: DACs — single Digikey category. Same one-letter bug as C9; same exclusion of
+  // "Digital to Analog Converters (DACs) Evaluation Boards".
+  'C10': ['Digital to Analog Converters (DAC)'],
   // D1: Crystals — Digikey leaf name is just "Crystals" (verified Mar 2026)
   'D1': ['Crystals'],
   // D2: Fuses — TWO Digikey categories (cartridge/SMD + automotive blade)
   // Exact leaf names need verification via discovery script
   'D2': ['Fuses', 'Automotive Fuses'],
-  // E1: Optocouplers — TWO Digikey categories (transistor/photovoltaic + logic output)
-  // Digikey leaf names: "Optoisolators - Transistor, Photovoltaic Output" and "Optoisolators - Logic Output"
-  'E1': ['Optoisolators - Transistor, Photovoltaic Output', 'Optoisolators - Logic Output'],
+  // E1: Optocouplers — TWO Digikey categories (transistor/photovoltaic + logic output).
+  // ⚠️ Digikey puts the noun LAST: "Logic Output Optoisolators", not "Optoisolators - Logic
+  // Output". The old names had the words in the wrong ORDER and matched nothing (verified
+  // against the live tree 2026-07-14).
+  'E1': ['Transistor, Photovoltaic Output Optoisolators', 'Logic Output Optoisolators'],
   // F1: Electromechanical Relays — THREE Digikey categories
   // Exact leaf names need verification via discovery script
   'F1': ['Power Relays, Over 2 Amps', 'Signal Relays, Up to 2 Amps', 'Automotive Relays'],
-  // F2: Solid State Relays — TWO Digikey categories
-  // Exact leaf names need verification via discovery script
-  'F2': ['Solid State Relays', 'Solid State Relays - Industrial Mount'],
+  // F2: Solid State Relays — ONE Digikey leaf, "Solid State Relays (SSR)". The old entry
+  // ("Solid State Relays" + a "- Industrial Mount" leaf that does not exist) matched nothing.
+  'F2': ['Solid State Relays (SSR)'],
+
+  // ── The four below had NO override at all, so they fell through to
+  // `familyToDigikeyCategories` — which holds PARAM-MAP names, not Digikey's taxonomy names.
+  // Every one of them therefore resolved to ZERO categories, and a family with no category
+  // cannot use the parametric (value-based) fetch AT ALL: `fetchGreenfieldParametricProducts`
+  // returns [] on the spot and says nothing. That is why the app could not find a 10 Ω resistor:
+  // keyword search returns POPULAR values (1k, 10k, 100k) and has no idea what "10 ohm" means.
+  //
+  // Names below are copied verbatim from Digikey's live category tree (2026-07-14). Do not
+  // retype them from memory — this whole bug is what happens when someone does.
+
+  // 52: chip resistors. Digikey's leaf is "Chip Resistor - Surface Mount"; we said "Chip Resistor".
+  '52': ['Chip Resistor - Surface Mount'],
+  // 54: current-sense resistors live in the same Digikey leaf as ordinary chip resistors.
+  '54': ['Chip Resistor - Surface Mount'],
+  // 61: supercapacitors. Digikey appends "(EDLC), Supercapacitors".
+  '61': ['Electric Double Layer Capacitors (EDLC), Supercapacitors'],
+  // 65: varistors. Digikey's leaf is "Varistors, MOVs".
+  '65': ['Varistors, MOVs'],
 };
 
 /** Get the Digikey taxonomy patterns for a family (for taxonomy panel matching) */

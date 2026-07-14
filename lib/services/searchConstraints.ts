@@ -433,7 +433,21 @@ export function toBaseSI(numStr: string, unit?: string): number | null {
  * is the highest-blast-radius change in the codebase — it is logged in BACKLOG, not done here.)
  */
 export function leadingMagnitudeToBaseSI(value: string): number | null {
-  const head = (value ?? '').split(/@|~|≤|≥|±/)[0].trim();
+  // ⚠️ STRIP A LEADING ± FIRST, then split.
+  //
+  // `±` is in the split set because it separates a magnitude from a tolerance tail. But when it
+  // comes FIRST — and in Digikey's catalog it very often does: "±1%", "±20V", "±0.1%" — splitting
+  // on it leaves an EMPTY head, the regex finds no digits, and the value is silently discarded.
+  //
+  // Every `±N` value in the catalog was therefore invisible to us. Measured consequence: a search
+  // for a 10 Ω 1% 0402 resistor built a Tolerance filter out of the only values that DID parse
+  // ("0%", "-10%", "-20%") and never selected "±1%" — so the parametric search returned ZERO
+  // parts. Stripping the leading sign takes that same search from 0 results to 45 correct ones.
+  //
+  // A ± prefix means "plus or minus N", so its magnitude is N. The sign carries no information
+  // here (a "±20V" gate rating is a 20 V rating), which is why dropping it is correct and not a
+  // guess.
+  const head = (value ?? '').replace(/^\s*[±+]\s*/, '').split(/@|~|≤|≥|±/)[0].trim();
   const m = head.match(/(-?\d[\d.]*)\s*([a-zA-Zµμ%°/√]+)?/);
   if (!m) return null;
   return toBaseSI(m[1], m[2] || undefined);
