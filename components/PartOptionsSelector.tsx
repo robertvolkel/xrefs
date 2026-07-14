@@ -55,7 +55,7 @@ export default function PartOptionsSelector({ parts, onSelect }: PartOptionsSele
           variant="outlined"
           sx={{
             bgcolor: 'background.default',
-            '&:hover': { borderColor: 'text.primary' },
+            '&:hover': { borderColor: 'primary.main' },
             transition: 'border-color 0.2s ease',
           }}
         >

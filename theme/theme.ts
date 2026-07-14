@@ -10,8 +10,7 @@ const theme = createTheme({
       palette: {
         mode: 'light',
         primary: {
-          // Siemens brand teal — matches the login page + sidebar logo.
-          main: '#3E918C',
+          main: '#1565C0',
           contrastText: '#FFFFFF',
         },
         secondary: {
@@ -41,10 +40,8 @@ const theme = createTheme({
       palette: {
         mode: 'dark',
         primary: {
-          // Siemens bright mint (measured from brand asset = #74FBBE) — ~14.5:1 on the
-          // dark UI vs ~5:1 for the muted teal. Dark text sits on top of primary fills.
-          main: '#74FBBE',
-          contrastText: '#000028',
+          main: '#A0C4FF',
+          contrastText: '#003060',
         },
         secondary: {
           main: '#FFD6A5',
