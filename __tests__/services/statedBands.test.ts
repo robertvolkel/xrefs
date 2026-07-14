@@ -67,12 +67,40 @@ describe('parseStatedBands — the shapes a stated range actually arrives in', (
     expect(bands.get('capacitance')!.hi).toBeCloseTo(1e-6, 12);
   });
 
-  it('two plain values for the same attribute → an implicit range', () => {
+  // ⚠️ THIS TEST USED TO ASSERT THE OPPOSITE, AND IT WAS PINNING A BUG.
+  //
+  // It said "two plain values for the same attribute → an implicit range". That was an invented
+  // heuristic, and it fired on the wrong thing: the orchestrator UNIONS two extractors' output, so
+  // a single stated spec routinely arrives TWICE with the SAME value. "gain of at least 300"
+  // produced plains [300, 300] → band [300, 300] → "gain must be EXACTLY 300" → every candidate in
+  // the catalog marked "Below spec". A whole result set destroyed by a guess.
+  //
+  // Two values for one attribute are a DUPLICATE, not a range. A range must be STATED as a range
+  // ("200-400") or carry an explicit `bound`. We do not infer one.
+  it('two identical values for the same attribute are a DUPLICATE, not a range — no band', () => {
+    const bands = parseStatedBands(
+      [{ attribute: 'DC current gain (hFE)', value: 300 }, { attribute: 'hFE', value: 300 }],
+      B6,
+    );
+    expect(bands.get('hfe')).toBeUndefined();
+  });
+
+  it('two DIFFERENT bare values for the same attribute still make no band — direction is unknowable', () => {
     const bands = parseStatedBands(
       [{ attribute: 'hfe', value: 200 }, { attribute: 'hfe', value: 400 }],
       B6,
     );
+    expect(bands.get('hfe')).toBeUndefined();
+  });
+
+  it('a STATED range does make a band', () => {
+    const bands = parseStatedBands([{ attribute: 'hfe', value: '200-400' }], B6);
     expect(bands.get('hfe')).toMatchObject({ lo: 200, hi: 400 });
+  });
+
+  it('an explicit bound from the user makes a one-sided band', () => {
+    const bands = parseStatedBands([{ attribute: 'hfe', value: 300, bound: 'min' }], B6);
+    expect(bands.get('hfe')).toMatchObject({ lo: 300, hi: Infinity });
   });
 
   // ⚠️ THE LOAD-BEARING NEGATIVE. A bare value's DIRECTION is unknowable: "gain 200" means at
@@ -186,8 +214,9 @@ describe('widenBandForFetch — a NET for the catalog, never the cut', () => {
   it('widens a NEGATIVE bound DOWNWARD, not toward zero', () => {
     // -40..125 °C. A multiplicative `lo * 0.85` would raise -40 to -34 — NARROWING the band and
     // dropping exactly the -40 °C parts the user asked for.
+    // Stated as an explicit range, which is the only way a two-sided band is ever built now.
     const bands = parseStatedBands(
-      [{ attribute: 'operating temp min', value: -40, unit: '°C' }, { attribute: 'operating temp max', value: 125, unit: '°C' }],
+      [{ attribute: 'operating temp', value: '-40 to 125', unit: '°C' }],
       R52,
     );
     const w = widenBandForFetch([...bands.values()][0]);

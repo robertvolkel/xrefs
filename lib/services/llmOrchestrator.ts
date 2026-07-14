@@ -1036,13 +1036,27 @@ const EXTRACT_SPECS_TOOL: Anthropic.Tool = {
       },
       constraints: {
         type: 'array',
-        description: 'One entry per spec the user ACTUALLY stated. Numeric specs carry a number value + unit; categorical specs (channel type, polarity, technology) carry a string value and no unit. Do NOT invent specs the user did not state.',
+        description: 'One entry per spec the user ACTUALLY stated. Numeric specs carry a number value + unit; categorical specs (channel type, polarity, technology) carry a string value and no unit. Do NOT invent specs the user did not state. Report each stated spec ONCE.',
         items: {
           type: 'object',
           properties: {
             attribute: { type: 'string' },
-            value: { type: ['string', 'number'] },
+            value: {
+              type: ['string', 'number'],
+              // A RANGE and a BOUND are different things and both used to be lost here. A range
+              // arrives as a hyphenated string; a bound arrives as a number plus `bound`.
+              description: 'A single number for a plain value (9). A RANGE as a hyphenated string ("200-400" for "gain 200 to 400", "1-5" for "1 to 5 amps") — never collapse a range to one end. The literal string for a categorical ("N-Channel", "X7R", "SOT-23").',
+            },
             unit: { type: 'string' },
+            bound: {
+              type: 'string',
+              enum: ['min', 'max'],
+              // ⚠️ Without this the direction was simply lost: "gain of at least 300" arrived as a
+              // bare 300, and a bare number cannot say which way it binds. The downstream refuses
+              // to GUESS a direction (guessing one is the mistake this codebase has made most
+              // often), so the requirement silently did nothing.
+              description: 'Set ONLY when the user stated a direction: "at least" / "minimum" / "or more" → "min"; "at most" / "no more than" / "under" / "maximum" → "max". OMIT for a plain value or a range.',
+            },
           },
           required: ['attribute', 'value'],
         },

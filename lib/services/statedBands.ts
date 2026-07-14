@@ -94,14 +94,17 @@ export function parseStatedBands(
     // "drain current min"), which is the one case where it really is a one-sided bound.
     const direct = resolveAttributeId(c.attribute, logicTable);
     let attrId: string | null;
-    let isMin = false;
-    let isMax = false;
+    // An EXPLICIT bound from the user ("at least 300") always wins. Only when there isn't one do
+    // we fall back to reading a min/max out of the attribute's NAME — and even then, only if the
+    // name doesn't resolve as-is (see the warning below).
+    let isMin = c.bound === 'min';
+    let isMax = c.bound === 'max';
     if (direct) {
       attrId = direct;
     } else {
       const normAttr = c.attribute.replace(/[_-]+/g, ' '); // `\b` does not break before `_`
-      isMin = /\bmin(imum)?\b/i.test(normAttr);
-      isMax = /\bmax(imum)?\b/i.test(normAttr);
+      isMin = isMin || /\bmin(imum)?\b/i.test(normAttr);
+      isMax = isMax || /\bmax(imum)?\b/i.test(normAttr);
       const term = normAttr.replace(/\b(min|max|minimum|maximum)\b/gi, ' ').replace(/\s+/g, ' ').trim();
       attrId = term ? resolveAttributeId(term, logicTable) : null;
     }
@@ -136,8 +139,29 @@ export function parseStatedBands(
     if (explicitLo != null && explicitHi != null) { lo = explicitLo; hi = explicitHi; }
     else if (explicitLo != null) { lo = explicitLo; hi = Infinity; }
     else if (explicitHi != null) { lo = -Infinity; hi = explicitHi; }
-    else if (e.plains.length >= 2) { lo = Math.min(...e.plains); hi = Math.max(...e.plains); }
-    else continue; // one plain value → direction unknowable → NOT a band (rule 1)
+    // ⚠️⚠️ THERE USED TO BE A FOURTH BRANCH HERE, AND DELETING IT IS THE POINT.
+    //
+    //     else if (e.plains.length >= 2) { lo = min(plains); hi = max(plains); }
+    //     // "two plain values for the same attr → an implicit range"
+    //
+    // That was an INVENTED HEURISTIC and it was wrong. Two plain values for the same attribute are
+    // very rarely a range — they are a DUPLICATE. On a greenfield turn the orchestrator UNIONS the
+    // agentic model's constraints with the temp-0 extractor's (deliberately, to recover specs the
+    // model drops), so a single stated spec routinely arrives TWICE. Measured, for "NPN transistor
+    // in SOT-23 with gain of at least 300":
+    //
+    //     model     : ... DC current gain (hFE) = 300
+    //     extractor : ... hFE = 300
+    //     => plains = [300, 300]  =>  band [300, 300]  =>  "gain must be EXACTLY 300"
+    //
+    // Nothing on Earth has a gain of exactly 300, so EVERY candidate was marked "Below spec". A
+    // whole result set, destroyed by a guess. (It also produced `package_case: [-23, -23]` by
+    // reading the "-23" out of "SOT-23".)
+    //
+    // The rule the module already stated — RULE 1, ONLY EXPLICIT BANDS — was correct all along,
+    // and this branch quietly violated it. A range must be STATED as a range ("200-400") or carry
+    // an explicit bound (`c.bound`). We do not infer one. Ever.
+    else continue; // a bare value → direction unknowable → NOT a band (rule 1)
 
     if (lo == null || hi == null || Number.isNaN(lo) || Number.isNaN(hi) || hi < lo) continue;
 

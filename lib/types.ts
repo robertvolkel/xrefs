@@ -340,10 +340,25 @@ export type MatchStatus = 'exact' | 'compatible' | 'better' | 'worse' | 'differe
 export interface SearchConstraint {
   /** Human term, e.g. "drain-source voltage", "current", "channel type". */
   attribute: string;
-  /** 12, "5", or "N-Channel". */
+  /** 12, "5", "1-5" (a stated range), or "N-Channel". */
   value: string | number;
   /** "V", "A", "MHz" — omitted for categorical values. */
   unit?: string;
+  /**
+   * WHICH DIRECTION the user's number binds in — and it must come from the USER, never be
+   * inferred.
+   *
+   * "gain of at least 300" and "no taller than 1.2mm" carry a direction that a bare number cannot.
+   * Without this field the extractors emitted a plain `300`, the direction was lost, and the
+   * requirement either did nothing or (worse) got guessed at. Guessing a direction is the single
+   * mistake this codebase has made most often: it once banded a "2 mA circuit" to parts *rated*
+   * 2-20 mA and excluded every ordinary transistor ever made.
+   *
+   * Absent = the user stated a bare value and we do NOT know which way it binds. That is a real,
+   * representable state, and the correct response to it is to leave the spec uncompared — not to
+   * invent an answer.
+   */
+  bound?: 'min' | 'max';
 }
 
 /** Lightweight part info for search results / selection */
