@@ -8850,3 +8850,40 @@ An xhigh code review of #268 found the per-status *predicate* was sound but the 
 3. **Honest counts + copy.** The zero-match message quoted the full-set size as "still showing"; it now counts what is actually on screen. The recs headline is `Filtered to **5** replacements — hiding Discontinued.` (was the ungrammatical "Filtered to **5** hiding Discontinued replacements."). `ALL_STATUSES` is now a single exported list derived from `NON_ACTIVE_STATUSES` and consumed by the detector's inversion, the labels, and BOTH LLM tool enums — the five hardcoded copies were the same drift risk this decision set out to kill.
 
 **Verification.** 12 new guard tests, one per confirmed defect, each pinning the old broken output as the thing that must never return. Full suite 2,910 passing (11 pre-existing `mfrMatchPicker`/`manufacturerAliasResolver` failures unchanged); `tsc` 92 errors = baseline, none in touched files; eslint 0 errors on touched files; build clean. **Lesson: the fix was right and the recognition layer around it was wrong — a narrow correct predicate behind a loose trigger is still a filter that does the wrong thing.**
+
+---
+
+### Decision #270 — the selection questions are generated from a reviewable document, and the build refuses an unclassified rule (July 13, 2026)
+
+**The bug, in one line: the app never asked what voltage goes INTO a voltage regulator.**
+
+`docs/min_attr_sets.md` said which specs the agent asks a user who is choosing a part by description. It was hand-copied ONCE into `SELECTION_TIERS` (`lib/services/selectionQuestions.ts`) — whose own header read *"transcribed verbatim from docs/min_attr_sets.md"* — and then never revisited. Two hand-maintained copies of the same truth, with nothing forcing them to agree. Measured, across all 43 families:
+
+| | |
+|---|---|
+| Specs the matching engine scores | **823** |
+| …with a state recorded anywhere | **287 (35%)** |
+| …never asked **and never ruled on** | **536 (65%)**, in **all 43** families |
+| Cross-family contradictions | **38** |
+| `tier3` ("narrows results") runtime consumers | **ZERO** |
+
+The TS copy was *faithful*. **The document itself had the hole**: C2 switching regulators require `vin_max`; C1 LDOs — also a Vin→Vout device, and the engine scores C1 `vin_max` at weight 8 — do not. Nothing could ever have noticed, because the one guard test asserted every *listed* id **exists**; it never asserted anything was **missing**. 536 holes, zero red tests.
+
+**Inverted the dependency.** The document is now the SOURCE OF TRUTH and the code is generated from it:
+
+- `lib/services/selectionDoc.ts` — parser, validator, serializer, contradiction detector (pure).
+- `npm run selection:audit` — reconciles the doc against the live logic tables: every scored rule gets a row (new ones seed as `Not Asked`), names/weights/ids are re-read from the tables so they cannot go stale, and the human decisions (State + Reason) are preserved. Emits `lib/services/selectionTiers.generated.ts`.
+- `npm run selection:check` — wired as `prebuild`, so **`npm run build` fails** if any scored rule has no state, if an attribute id was invented, or if the generated module is stale. Also a jest test, so `npm test` catches it identically.
+- `SELECTION_TIERS` is now a re-export of the generated module. The public API (`getSelectionQuestions`, `getSelectionTier`) is unchanged — the existing 381-test drift guard passes untouched, which is the proof the swap is behaviour-identical.
+
+**THREE states, not two.** `Required for Search` (always asked, blocks the search) · `Narrows Results` (asked only when the result set is too large) · `Not Asked`. The two ask-states fire on *different triggers* — collapsing them means asking everything up front, i.e. up to 27 questions before showing a MOSFET, the interrogation failure this product already shipped once.
+
+**No weight threshold anywhere in the check — on purpose.** An earlier draft gated on weight ≥ 8. That is an invented heuristic and it fails BOTH ways: false-positive on `tst` (storage temperature, w8, correctly never asked) and false-negative on C1 `vin_min` (w7, never asked, plausibly a real hole — the threshold would have *hidden* it). **The build only guarantees a decision was MADE about everything; a human (Claude Fable 5) makes the decisions in the document, with weight shown as information, never as the verdict.** The one surviving automatic signal is also threshold-free: **cross-family contradiction** — the same attributeId asked in one family and silently skipped in a sibling that also scores it. That check catches the reported `vin_max` bug on its own, with no intuition required.
+
+**ONE writable surface.** The admin "Attribute Templates" panel is **read-only** — it renders the state but cannot edit it. A file *and* a UI that can both write the same truth is precisely the drift being fixed. The panel's chip is also **never blank** now: previously an unasked spec was an unmarked row, so a real omission (`vin_max`) and a deliberate one (`rth_ja`) looked identical and there was nothing to review against. Unreviewed rows render `⚠️ Not asked`.
+
+**The review loop (there is no engineer on this project — this is the actual workflow).** `npm run selection:audit` emits ONE artefact: the review prompt in the header, all 43 families, every scored spec with its real name + weight + current state, and the contradiction list. The owner hands that single file to Claude; the corrected file comes back; applying it and re-running audit regenerates the code, and **the build validates it** — a missing rule or an invented id names the offending line. The prompt ships *inside* the file deliberately: a separate prompt file could drift from the data, which is the exact failure being fixed.
+
+**Honest limit, stated in the file itself:** `Required for Search` corrections take effect immediately. `Narrows Results` corrections are **recorded but not yet acted on** — the narrowing step that consumes tier 3 does not exist (its zero runtime consumers are why a small-signal-NPN search stopped surfacing BC847: gain is filed as a narrowing spec and was never asked). Building that step is the next piece of work.
+
+**Verification.** 21 new tests, including the guard that was missing — the completeness check *fails* when a rule is added and left unclassified, proven end-to-end by injecting a real rule into the real C1 logic table (`npm run selection:check` → exit 1, naming the rule) and reverting. Generator is a byte-exact fixed point across runs. Full suite 2,931 passing (11 pre-existing `mfrMatchPicker`/`manufacturerAliasResolver` failures unchanged); `tsc` and eslint clean on touched files; `npm run build` passes with the gate firing first.

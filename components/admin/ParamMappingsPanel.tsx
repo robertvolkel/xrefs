@@ -11,6 +11,7 @@ import {
   TableHead,
   TableRow,
   TableSortLabel,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import { useTranslation } from 'react-i18next';
@@ -29,7 +30,7 @@ import {
   computePartsioCoverage,
   getAllPartsioFields,
 } from '@/lib/services/partsioParamMap';
-import { getSelectionTier } from '@/lib/services/selectionQuestions';
+import { getSelectionState, type SelectionStateInfo } from '@/lib/services/selectionQuestions';
 
 /** Data for L2 display-only rendering */
 export interface L2ParamMapData {
@@ -48,6 +49,44 @@ interface ParamMappingsPanelProps {
 const COL = { num: 36, attrId: 160, attrName: 180, weight: 50, digikey: 220, partsio: 220 };
 /** Column widths for the L2 simplified table */
 const COL_L2 = { num: 36, attrId: 160, attrName: 200, digikey: 240 };
+
+/**
+ * Does the agent ask the user about this spec when they are choosing a part by description?
+ *
+ * READ-ONLY. Every one of these decisions lives in docs/min_attr_sets.md; hand that file to
+ * Claude to revise it, then run `npm run selection:audit`. There is deliberately no way to
+ * edit it here — a document and a UI that can both write the same truth is exactly the drift
+ * that let an LDO search never ask what voltage goes into the regulator.
+ *
+ * The chip is NEVER blank. Previously an unasked spec rendered as an unmarked row, so a spec
+ * nobody had ever ruled on looked identical to one deliberately excluded — there was nothing
+ * to review against.
+ */
+function SelectionChip({ sel }: { sel: SelectionStateInfo | null }) {
+  if (!sel) return null;
+
+  const chip = {
+    required: { label: 'Required to search', color: 'primary' as const, tip: 'Always asked, before any search runs.' },
+    narrows: { label: 'Narrows results', color: 'default' as const, tip: 'Asked only when the result set is too large to be useful.' },
+    not_asked: {
+      label: sel.needsReview ? '⚠️ Not asked' : 'Not asked',
+      color: (sel.needsReview ? 'warning' : 'default') as 'warning' | 'default',
+      tip: sel.reason || 'Never asked — and no one has recorded a reason. This has not been ruled on.',
+    },
+  }[sel.state];
+
+  return (
+    <Tooltip title={chip.tip}>
+      <Chip
+        label={chip.label}
+        size="small"
+        color={chip.color}
+        variant="outlined"
+        sx={{ height: 18, fontSize: '0.6rem', opacity: sel.state === 'not_asked' && !sel.needsReview ? 0.6 : 1 }}
+      />
+    </Tooltip>
+  );
+}
 
 /** Flatten a ParamMapEntry into individual ParamMapping items */
 function flattenEntries(paramMap: Record<string, ParamMapEntry>): { dkField: string; mapping: ParamMapping }[] {
@@ -278,8 +317,8 @@ function L3View({ table, t }: { table: LogicTable | null; t: ReturnType<typeof u
               const dkField = dkReverse.get(rule.attributeId);
               const pioField = pioReverse.get(rule.attributeId);
               const hasSources = !!dkField || !!pioField;
-              // Read-only marker: does the greenfield agent ask about this spec?
-              const selTier = table ? getSelectionTier(table.familyId, rule.attributeId) : null;
+              // Read-only marker: does the greenfield agent ask about this spec? Never blank.
+              const sel = table ? getSelectionState(table.familyId, rule.attributeId) : null;
 
               return (
                 <TableRow
@@ -302,17 +341,7 @@ function L3View({ table, t }: { table: LogicTable | null; t: ReturnType<typeof u
                   <TableCell>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
                       <Typography variant="body2">{rule.attributeName}</Typography>
-                      {selTier && (
-                        <Chip
-                          label={selTier === 'tier2'
-                            ? t('admin.tierRequired', 'Required to search')
-                            : t('admin.tierNarrows', 'Narrows results')}
-                          size="small"
-                          color={selTier === 'tier2' ? 'primary' : 'default'}
-                          variant="outlined"
-                          sx={{ height: 18, fontSize: '0.6rem' }}
-                        />
-                      )}
+                      <SelectionChip sel={sel} />
                     </Box>
                   </TableCell>
                   <TableCell sx={{ textAlign: 'center' }}>

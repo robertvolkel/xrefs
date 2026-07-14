@@ -4,6 +4,20 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Tier-3 narrowing step — SPECIFIED, never BUILT (P0, next up)
+
+`docs/min_attr_sets.md` has always said: *"Tier 3 — Result Set Discriminators: ask after Tier 2 is satisfied but **before presenting results**… should ask if the result set exceeds ~20 candidates."* Authored for **all 43 families**. **`tier3` has ZERO runtime consumers** — grep-verified across `lib`/`hooks`/`app`/`components` (`tier2` is read in 6 places). Only half the document was ever implemented, and the admin panel rendering a "Narrows results" chip made the feature *look* wired up, which is plausibly why nobody noticed for a month.
+
+**This is the bug that lost BC847BLT1G.** For a BJT, gain (`hfe`) is a tier-3 spec. On a 50-result small-signal-NPN search the app was *supposed* to ask "what gain do you need?" It never asked, and the obvious part sank into the pile.
+
+**Build it:** Tier 2 satisfied → search → if the set exceeds ~20, ask the tier-3 discriminators **before** presenting results (skippable). **Refinement:** skip a tier-3 question whose attribute does not actually *vary* across the current candidates — a question that cannot split the set is noise, and it is cheap to compute from candidates already in hand.
+
+**Blocks the value of Decision #270's review pass:** `Required for Search` corrections take effect on ingest; `Narrows Results` corrections do **nothing** until this ships.
+
+**Then add the guard** Decision #270 deliberately left out: assert that BOTH tiers have a runtime consumer, so a specified-but-unbuilt step cannot sit dormant again. (It is omitted today only because it would fail the build immediately — tier 3 has none.)
+
+---
+
 
 ## ~~CLAUDE.md diet — it is 202KB and loads in FULL every session~~ DONE (July 12, 2026)
 

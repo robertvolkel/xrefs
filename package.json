@@ -4,7 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "npm run selection:check",
     "build": "next build",
+    "selection:audit": "tsx scripts/selection-audit.ts",
+    "selection:check": "tsx scripts/selection-check.ts",
     "start": "next start",
     "lint": "eslint",
     "test": "jest",
