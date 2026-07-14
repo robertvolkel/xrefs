@@ -237,15 +237,39 @@ export async function fetchGreenfieldParametricProducts(
   // Filter every resolved category in parallel; facets split across leaves for multi-category
   // families (op-amps: Amplifier Type in one, supply in another), so each contributes its own
   // in-scope specs. Union the products.
+  // ⚠️ EVERY FAILURE BELOW IS LOGGED, AND THAT IS THE POINT.
+  //
+  // Both of these calls used to end in `.catch(() => null)`. When the facet call timed out — which
+  // it did in 4 of 6 measured attempts, because it was uncached and ran against a 10 s limit — this
+  // function returned an empty array, the search silently fell back to a keyword-only pool, and the
+  // user got three obsolete parts with no hint that anything had failed. A failure nobody can see
+  // is why that survived a month. If the value-based pool is empty, the log now says WHY.
   const perCategory = await Promise.all(
     categoryIds.map(async (categoryId): Promise<DigikeyProduct[]> => {
-      const discover = await getCategoryParametricFacets('', categoryId, currency, userId).catch(() => null);
-      if (!discover || discover.facets.length === 0) return [];
+      const discover = await getCategoryParametricFacets('', categoryId, currency, userId)
+        .catch((e: unknown) => {
+          console.error(`[greenfield] category ${categoryId}: facet discovery FAILED — falling back to keyword-only. ${e instanceof Error ? e.message : String(e)}`);
+          return null;
+        });
+      if (!discover) return [];
+      if (discover.facets.length === 0) {
+        console.warn(`[greenfield] category ${categoryId}: Digikey returned NO facets — cannot filter by value here.`);
+        return [];
+      }
       const filters = buildFiltersForCategory(source.parameters, logicTable, discover.facets, discover.products[0], bands);
-      if (filters.length === 0) return [];
-      const res = await parametricFilterSearchMulti(categoryId, filters, { limit: 50 }, currency, userId).catch(() => null);
+      if (filters.length === 0) {
+        console.warn(`[greenfield] category ${categoryId}: none of the stated specs [${source.parameters.map(p => p.parameterId).join(', ')}] matched a facet — no value filter applied.`);
+        return [];
+      }
+      const res = await parametricFilterSearchMulti(categoryId, filters, { limit: 50 }, currency, userId)
+        .catch((e: unknown) => {
+          console.error(`[greenfield] category ${categoryId}: parametric search FAILED. ${e instanceof Error ? e.message : String(e)}`);
+          return null;
+        });
       if (!res) return [];
-      return [...(res.ExactMatches ?? []), ...(res.Products ?? [])];
+      const products = [...(res.ExactMatches ?? []), ...(res.Products ?? [])];
+      console.log(`[greenfield] category ${categoryId}: ${products.length} parts from the value filter`);
+      return products;
     }),
   );
 
