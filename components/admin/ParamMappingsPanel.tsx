@@ -61,6 +61,10 @@ const COL_L2 = { num: 36, attrId: 160, attrName: 200, digikey: 240 };
  * The chip is NEVER blank. Previously an unasked spec rendered as an unmarked row, so a spec
  * nobody had ever ruled on looked identical to one deliberately excluded — there was nothing
  * to review against.
+ *
+ * The REASON for a skip is rendered inline, not hidden in a tooltip. "Why don't we ask about
+ * this?" is the whole question this screen exists to answer; burying the answer behind a hover
+ * means you have to already suspect it is there.
  */
 function SelectionChip({ sel }: { sel: SelectionStateInfo | null }) {
   if (!sel) return null;
@@ -79,9 +83,7 @@ function SelectionChip({ sel }: { sel: SelectionStateInfo | null }) {
     not_asked: {
       label: 'Not asked',
       color: 'default' as const,
-      tip: sel.reason
-        ? `Not asked — ${sel.reason}`
-        : 'Not asked. No reason recorded yet, so this one has not been ruled on either way.',
+      tip: 'Never asked when a user is choosing a part by description.',
     },
   }[sel.state];
 
@@ -90,22 +92,32 @@ function SelectionChip({ sel }: { sel: SelectionStateInfo | null }) {
   const provisional = sel.state === 'not_asked' && sel.needsReview;
 
   return (
-    <Tooltip title={chip.tip}>
-      <Chip
-        label={chip.label}
-        size="small"
-        color={chip.color}
-        variant="outlined"
-        sx={{
-          height: 18,
-          fontSize: '0.6rem',
-          ...(sel.state === 'not_asked' && {
-            opacity: 0.7,
-            borderStyle: provisional ? 'dashed' : 'solid',
-          }),
-        }}
-      />
-    </Tooltip>
+    <>
+      <Tooltip title={chip.tip}>
+        <Chip
+          label={chip.label}
+          size="small"
+          color={chip.color}
+          variant="outlined"
+          sx={{
+            height: 18,
+            fontSize: '0.6rem',
+            ...(sel.state === 'not_asked' && {
+              opacity: 0.7,
+              borderStyle: provisional ? 'dashed' : 'solid',
+            }),
+          }}
+        />
+      </Tooltip>
+      {sel.state === 'not_asked' && (
+        <Typography
+          variant="caption"
+          sx={{ color: 'text.secondary', fontSize: '0.65rem', fontStyle: 'italic', opacity: 0.8 }}
+        >
+          {sel.reason || 'no reason recorded — not ruled on yet'}
+        </Typography>
+      )}
+    </>
   );
 }
 
