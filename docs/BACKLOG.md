@@ -4,6 +4,27 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Selection-review follow-ups (from the Decision #270 Fable 5 pass)
+
+Two items the review surfaced that were deliberately NOT actioned in that pass, so they did not derail it.
+
+**1. Should MOSFET `technology` (Si / SiC / GaN) be Required rather than Narrows? (P2 — answer from data, do not guess.)**
+The reviewer flagged this as its one genuine judgement call: technology is *critical* above ~650 V and *noise* for the majority of silicon searches, so the right answer depends on whether real traffic skews high-voltage. **Do not settle it by intuition.** `search_history` (448 labelled rows) and `conversations.messages` (1,627 real turns) already record what people actually search for — measure the share of MOSFET/discrete searches that state a voltage above ~200 V, and flip the row only if the data says so. Same instrument answers the equivalent question for any other family later. See [[production-logs-are-the-corpus]].
+
+**2. Schema smells in the logic tables (P3 — cosmetic to matching, real for maintenance).**
+The reviewer recorded these in the `Reason` column of `docs/min_attr_sets.md` as it went. None of them break scoring; all of them make the tables harder to reason about:
+- `iq` vs `quiescent_current` — near-duplicate canonical ids for the same spec.
+- `crystal_load_cap_pf` filed under **C8** (timers & oscillators) — a crystal spec.
+- `i2c_bus_speed_max_khz` filed under **C5** (74-series logic) — an interface spec.
+- `tolerance` vs `inductance_tolerance` both present in **72** (RF inductors).
+- `schottky_technology` overlaps `semiconductor_material` in **B2**.
+- `qualification_level` is a generic catch-all overlapping `aec_q200`.
+- **B9** carries a zero-weight `matched_pair_review` placeholder.
+
+⚠️ Any fix here is a rule-id change, so it **must** be followed by `npm run selection:audit` — the build will otherwise reject the now-stale document, which is the mechanism working as intended.
+
+---
+
 ## Tier-3 narrowing step — SPECIFIED, never BUILT (P0, next up)
 
 `docs/min_attr_sets.md` has always said: *"Tier 3 — Result Set Discriminators: ask after Tier 2 is satisfied but **before presenting results**… should ask if the result set exceeds ~20 candidates."* Authored for **all 43 families**. **`tier3` has ZERO runtime consumers** — grep-verified across `lib`/`hooks`/`app`/`components` (`tier2` is read in 6 places). Only half the document was ever implemented, and the admin panel rendering a "Narrows results" chip made the feature *look* wired up, which is plausibly why nobody noticed for a month.
