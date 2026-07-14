@@ -172,23 +172,35 @@ interface Snapshot {
 }
 
 /** Wipe this query's L2 search-cache rows so BOTH commits compute fresh and the diff shows code,
- *  not catalogue drift. Search-cache rows are derived — they recompute on next use. */
+ *  not catalogue drift. Search-cache rows are derived — they recompute on next use.
+ *
+ *  ⚠️ THE COLUMN IS `mpn_lower`, NOT `mpn`. This shipped saying `mpn` — a column that does not exist.
+ *  Postgres said so, the code `console.warn`ed and CARRIED ON, and every purge deleted nothing. Both
+ *  commits then answered from the SAME cache, so the control groups compared identical rows and
+ *  reported "0 of 14 changed" — a pass that was never earned. A failed purge invalidates the entire
+ *  comparison, so it now ABORTS. Never warn-and-continue on a step the result depends on. */
 async function purgeSearchCacheFor(queries: string[]) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) { console.warn('! no Supabase creds — skipping cache purge (diff may show drift)'); return; }
+  if (!url || !key) {
+    console.error('✗ ABORT: no Supabase creds — without a purge both commits answer from cache and the diff means nothing.');
+    process.exit(2);
+  }
   const sb = createClient(url, key);
   let purged = 0;
   for (const q of queries) {
-    // Key shape (partDataService): `${VERSION}__${query.toLowerCase()}__${currency}__…`
-    // The version prefix differs per commit, so match on the query segment instead.
+    // Key shape (partDataService): `${VERSION}__${query.toLowerCase()}__${currency}__…`, stored in the
+    // `mpn_lower` column. The version prefix differs per commit, so match on the query segment.
     const { data, error } = await sb
       .from('part_data_cache')
       .delete()
       .eq('service', 'search')
-      .like('mpn', `%__${q.toLowerCase()}__%`)
-      .select('mpn');
-    if (error) { console.warn(`! purge failed for ${JSON.stringify(q)}: ${error.message}`); continue; }
+      .ilike('mpn_lower', `%${q.toLowerCase()}%`)
+      .select('id');
+    if (error) {
+      console.error(`✗ ABORT: purge failed for ${JSON.stringify(q)}: ${error.message}`);
+      process.exit(2);
+    }
     purged += data?.length ?? 0;
   }
   console.log(`· purged ${purged} cached search rows (both commits now compute fresh)\n`);

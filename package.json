@@ -6,6 +6,7 @@
     "dev": "next dev",
     "prebuild": "npm run selection:check",
     "build": "next build",
+    "verify:fixes": "node --env-file=.env.local --import tsx scripts/verify-fixes.ts --label current",
     "selection:audit": "tsx scripts/selection-audit.ts",
     "selection:check": "tsx scripts/selection-check.ts",
     "start": "next start",
