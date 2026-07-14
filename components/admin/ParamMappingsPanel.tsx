@@ -46,7 +46,7 @@ interface ParamMappingsPanelProps {
 }
 
 /** Column widths for the attribute-centric table */
-const COL = { num: 36, attrId: 160, attrName: 180, weight: 50, digikey: 220, partsio: 220 };
+const COL = { num: 36, attrId: 160, attrName: 180, asked: 100, weight: 50, digikey: 220, partsio: 220 };
 /** Column widths for the L2 simplified table */
 const COL_L2 = { num: 36, attrId: 160, attrName: 200, digikey: 240 };
 
@@ -62,17 +62,16 @@ const COL_L2 = { num: 36, attrId: 160, attrName: 200, digikey: 240 };
  * nobody had ever ruled on looked identical to one deliberately excluded — there was nothing
  * to review against.
  *
- * The REASON for a skip is rendered inline, not hidden in a tooltip. "Why don't we ask about
- * this?" is the whole question this screen exists to answer; burying the answer behind a hover
- * means you have to already suspect it is there.
+ * The recorded REASON rides in the tooltip. It exists on essentially every `Not Asked` row and
+ * on a handful of others, so hovering any chip answers "why is it treated this way?".
  */
 function SelectionChip({ sel }: { sel: SelectionStateInfo | null }) {
   const { t } = useTranslation();
   if (!sel) return null;
 
-  // Labels are short because they sit inline beside the attribute name on every row; the
-  // tooltip carries the full meaning for anyone who needs it. (The reason text itself comes
-  // from docs/min_attr_sets.md and is English-only — it is engineering rationale, not UI copy.)
+  // Labels are short because they sit in a narrow column; the tooltip carries the full meaning.
+  // (The reason text comes from docs/min_attr_sets.md and is English-only — it is engineering
+  // rationale, not UI copy, and would need re-translating on every review round.)
   const chip = {
     required: {
       label: t('admin.tierRequired', 'Required'),
@@ -87,7 +86,9 @@ function SelectionChip({ sel }: { sel: SelectionStateInfo | null }) {
     not_asked: {
       label: t('admin.tierNotAsked', 'Not asked'),
       color: 'default' as const,
-      tip: t('admin.tierNotAskedTip', 'Never asked when a user is choosing a part by description.'),
+      tip: sel.needsReview
+        ? t('admin.tierNoReason', 'Not asked — no reason recorded, so this has not been ruled on yet.')
+        : t('admin.tierNotAskedTip', 'Never asked when a user is choosing a part by description.'),
     },
   }[sel.state];
 
@@ -96,32 +97,33 @@ function SelectionChip({ sel }: { sel: SelectionStateInfo | null }) {
   const provisional = sel.state === 'not_asked' && sel.needsReview;
 
   return (
-    <>
-      <Tooltip title={chip.tip}>
-        <Chip
-          label={chip.label}
-          size="small"
-          color={chip.color}
-          variant="outlined"
-          sx={{
-            height: 18,
-            fontSize: '0.6rem',
-            ...(sel.state === 'not_asked' && {
-              opacity: 0.7,
-              borderStyle: provisional ? 'dashed' : 'solid',
-            }),
-          }}
-        />
-      </Tooltip>
-      {sel.state === 'not_asked' && (
-        <Typography
-          variant="caption"
-          sx={{ color: 'text.secondary', fontSize: '0.65rem', fontStyle: 'italic', opacity: 0.8 }}
-        >
-          {sel.reason || t('admin.tierNoReason', 'no reason recorded — not ruled on yet')}
-        </Typography>
-      )}
-    </>
+    <Tooltip
+      title={
+        <>
+          {chip.tip}
+          {sel.reason && (
+            <Box component="span" sx={{ display: 'block', mt: 0.75, fontStyle: 'italic', opacity: 0.85 }}>
+              {sel.reason}
+            </Box>
+          )}
+        </>
+      }
+    >
+      <Chip
+        label={chip.label}
+        size="small"
+        color={chip.color}
+        variant="outlined"
+        sx={{
+          height: 18,
+          fontSize: '0.6rem',
+          ...(sel.state === 'not_asked' && {
+            opacity: 0.7,
+            borderStyle: provisional ? 'dashed' : 'solid',
+          }),
+        }}
+      />
+    </Tooltip>
   );
 }
 
@@ -336,6 +338,9 @@ function L3View({ table, t }: { table: LogicTable | null; t: ReturnType<typeof u
               <TableCell sx={{ fontWeight: 600, width: COL.num }}>#</TableCell>
               <TableCell sx={{ fontWeight: 600, width: COL.attrId }}>{t('admin.attributeId')}</TableCell>
               <TableCell sx={{ fontWeight: 600, width: COL.attrName }}>{t('admin.attributeName')}</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: COL.asked }}>
+                {t('admin.askedInSearch', 'Asked in search')}
+              </TableCell>
               <TableCell sx={{ fontWeight: 600, width: COL.weight, textAlign: 'center' }}>
                 <TableSortLabel
                   active
@@ -376,10 +381,10 @@ function L3View({ table, t }: { table: LogicTable | null; t: ReturnType<typeof u
                     </Typography>
                   </TableCell>
                   <TableCell>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
-                      <Typography variant="body2">{rule.attributeName}</Typography>
-                      <SelectionChip sel={sel} />
-                    </Box>
+                    <Typography variant="body2">{rule.attributeName}</Typography>
+                  </TableCell>
+                  <TableCell>
+                    <SelectionChip sel={sel} />
                   </TableCell>
                   <TableCell sx={{ textAlign: 'center' }}>
                     <Typography variant="body2" sx={{ fontWeight: 600 }}>
@@ -424,6 +429,10 @@ function L3View({ table, t }: { table: LogicTable | null; t: ReturnType<typeof u
                       {t('admin.extraPartsioFields', 'Additional Parts.io fields (not in schema)')}
                     </Typography>
                   )}
+                </TableCell>
+                {/* "Asked in search" \u2014 these rows are not schema attributes, so there is nothing to ask about. */}
+                <TableCell>
+                  <Typography variant="body2" color="text.disabled">{'\u2014'}</Typography>
                 </TableCell>
                 <TableCell sx={{ textAlign: 'center' }}>
                   <Typography variant="body2" color="text.disabled">{'\u2014'}</Typography>
