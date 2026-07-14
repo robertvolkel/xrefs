@@ -26,6 +26,18 @@ import { leadingMagnitudeToBaseSI } from './searchConstraints';
 export interface GuidedAnswer {
   value: string | number | null;
   unit?: string;
+  /** WHICH DIRECTION the number binds in, when the user stated one ("at least 300", "no more
+   *  than 1.2mm"). Mirrors `SearchConstraint.bound` and is passed straight through.
+   *
+   *  ⚠️ This was MISSING, and the omission was invisible. `SearchConstraint.bound` existed and
+   *  `parseStatedBands` already read it — but the GUIDED extractor had no field to put it in, so on
+   *  a guided turn "gain of at least 300" arrived as a bare `300`, the direction was lost, and the
+   *  requirement did nothing at all. The catalogue was never filtered by gain and the high-gain
+   *  parts never surfaced. The other extractor (`EXTRACT_SPECS_TOOL`) had the field; this one did
+   *  not, so the bug depended on WHICH path a turn happened to take. Absent still means "the user
+   *  gave a bare number and we do not know which way it binds" — leave the spec uncompared rather
+   *  than invent a direction. */
+  bound?: 'min' | 'max';
 }
 
 /** answered[attributeId] present ⇒ the spec has been asked and resolved. */
@@ -88,6 +100,7 @@ function buildConstraints(answered: GuidedAnswerMap): SearchConstraint[] {
     if (!hasValue(ans)) continue;
     const c: SearchConstraint = { attribute: attributeId, value: ans.value as string | number };
     if (ans.unit) c.unit = ans.unit;
+    if (ans.bound) c.bound = ans.bound;   // "at least 300" must stay a floor, not become a bare 300
     out.push(c);
   }
   return out;

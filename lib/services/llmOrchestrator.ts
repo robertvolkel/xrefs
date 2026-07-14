@@ -1207,6 +1207,15 @@ async function extractAnsweredSpecs(
                   'Use null ONLY if the user explicitly said it does not matter / any / not sure.',
               },
               unit: { type: 'string', description: 'Unit for numeric values, e.g. "V", "A", "MHz". Omit for choices.' },
+              // Without this field a stated DIRECTION is simply lost: "gain of at least 300" arrives
+              // as a bare 300, nothing downstream knows which way it binds, and the requirement does
+              // nothing. `SearchConstraint.bound` and `parseStatedBands` were already built to carry
+              // it — only this schema was missing, so the bug depended on which extractor ran.
+              bound: {
+                type: 'string',
+                enum: ['min', 'max'],
+                description: 'Set ONLY when the user stated a direction: "at least" / "minimum" / "or more" / "or higher" → "min"; "at most" / "no more than" / "under" / "maximum" → "max". OMIT for a plain value ("9V") or a range ("200-400").',
+              },
             },
             required: ['attributeId', 'value'],
           },
@@ -1231,7 +1240,7 @@ async function extractAnsweredSpecs(
     logGuidedUsage(userId, resp, 'chat_guided_extract');
     const block = resp.content.find(b => b.type === 'tool_use');
     if (!block || block.type !== 'tool_use') return {};
-    const inp = block.input as { answers?: Array<{ attributeId?: string; value?: string | number | null; unit?: string }> };
+    const inp = block.input as { answers?: Array<{ attributeId?: string; value?: string | number | null; unit?: string; bound?: string }> };
     const valid = new Set(table.rules.map(r => r.attributeId));
     const map: GuidedAnswerMap = {};
     for (const a of inp.answers ?? []) {
@@ -1240,7 +1249,10 @@ async function extractAnsweredSpecs(
       // (treat as "any / not sure"): coerce to null so it's answered-but-not-a-constraint,
       // rather than a "" that counts as answered yet silently drops from the constraints.
       const value = a.value === '' ? null : a.value ?? null;
-      map[a.attributeId] = { value, ...(a.unit ? { unit: a.unit } : {}) };
+      // Only 'min'/'max' — anything else is dropped rather than guessed at. A wrong direction is
+      // worse than none: it bands the catalogue the wrong way and hides the parts the user wanted.
+      const bound = a.bound === 'min' || a.bound === 'max' ? a.bound : undefined;
+      map[a.attributeId] = { value, ...(a.unit ? { unit: a.unit } : {}), ...(bound ? { bound } : {}) };
     }
     return map;
   } catch (err) {

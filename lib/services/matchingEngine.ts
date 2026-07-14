@@ -61,6 +61,58 @@ export function normalize(value: string): string {
 }
 
 /**
+ * A PACKAGE IS AN ALIAS LIST, NOT A NAME.
+ *
+ * Digikey writes a package as EVERY name the industry knows it by, comma-separated, in one field:
+ *
+ *     BC847C  →  "TO-236-3, SC-59, SOT-23-3"
+ *
+ * A user — and every other data source — writes ONE name: "SOT-23". So an exact string compare
+ * fails, and it fails for EVERY part, because every part's package is written that way. Measured on
+ * BC847C against a "gain of at least 300" search: `package_case` was the ONLY failing rule, and it
+ * was enough to label the correct part "Below spec".
+ *
+ * So compare the field as the list it is: split on commas, and match token against token.
+ *
+ * ⚠️ THE LEAD COUNT IS LOAD-BEARING. "SOT-23-3" (3 leads) and "SOT-23-6" (6 leads) are different
+ * footprints and are NOT interchangeable — a 3-pin transistor cannot be dropped into a 6-pin land
+ * pattern. So a trailing "-<n>" is only ignored when ONE SIDE LEAVES IT OPEN ("SOT-23" states no
+ * lead count and matches either). When BOTH sides state one they must agree.
+ *
+ * ⚠️ AND YOU CANNOT DETECT A LEAD COUNT BY "ends in a dash and digits" — "SOT-23" ends in "-23" and
+ * that 23 is the package's own name, not a lead count. This is why the rule is expressed as "the
+ * longer token is exactly the shorter token plus a -<n> suffix", never as "strip the suffix off
+ * both and compare". The first is decidable from the strings; the second is a guess.
+ */
+const PACKAGE_ATTRIBUTE_IDS = new Set(['package_case']);
+
+/** "0402 (1005 Metric)" → "0402". A trailing parenthetical is a gloss (the metric equivalent, a
+ *  cross-reference), never a distinct package — it must not defeat the comparison. */
+function packageTokens(value: string): string[] {
+  return value
+    .split(',')
+    .map(t => normalize(t).replace(/\s*\([^)]*\)\s*$/, '').trim())
+    .filter(Boolean);
+}
+
+/** True when the longer token is exactly the shorter one plus a lead count: "SOT-23" ≡ "SOT-23-3".
+ *  "SOT-23-3" vs "SOT-23-6" → false (both state a count, and they disagree).
+ *  "SOT-23"   vs "SOT-223"  → false (the suffix must be a hyphen + 1–2 digits, and "-223" is three). */
+function packageTokensMatch(a: string, b: string): boolean {
+  if (a === b) return true;
+  const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+  const m = /^(.*)-\d{1,2}$/.exec(longer);
+  return !!m && m[1] === shorter;
+}
+
+/** Any name for the source's package matching any name for the candidate's. */
+export function packageValuesMatch(sourceValue: string, candidateValue: string): boolean {
+  const srcs = packageTokens(sourceValue);
+  const cands = packageTokens(candidateValue);
+  return srcs.some(s => cands.some(c => packageTokensMatch(s, c)));
+}
+
+/**
  * Check whether two values land in the same alias group on this rule.
  * Returns true only when both values appear in the same group; any value
  * not in any group is treated as ungrouped (returns false).
@@ -173,6 +225,13 @@ function evaluateIdentity(
   // same categorical state (e.g. Digikey "Polar" vs Atlas "POLARIZED"). When
   // both sides land in the same alias group on this rule, treat them as equal.
   if (!match && inSameAliasGroup(rule, sourceValue, candidateValue)) {
+    match = true;
+  }
+
+  // A package is an alias LIST, not a name — Digikey packs every name a footprint goes by into one
+  // comma-separated field ("TO-236-3, SC-59, SOT-23-3"). Compare it as the list it is. See
+  // `packageValuesMatch`; the lead count still has to agree when both sides state one.
+  if (!match && PACKAGE_ATTRIBUTE_IDS.has(rule.attributeId) && packageValuesMatch(sourceValue, candidateValue)) {
     match = true;
   }
 
