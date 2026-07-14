@@ -1,5 +1,7 @@
-import type { SearchConstraint, SelectionAttr } from '../types';
+import type { PartAttributes, SearchConstraint, SelectionAttr } from '../types';
+import { getLogicTable } from '../logicTables';
 import { getSelectionQuestions } from './selectionQuestions';
+import { leadingMagnitudeToBaseSI } from './searchConstraints';
 
 /**
  * SYSTEM-DRIVEN guided part selection — the deterministic decision core.
@@ -68,13 +70,217 @@ export function nextGuidedStep(familyId: string, answered: GuidedAnswerMap): Gui
   // 3) Tier 2 complete → search. Only specs with a real value become constraints;
   //    "any / not sure" answers (value null) are intentionally dropped so they never
   //    block or over-narrow the search.
-  const constraints: SearchConstraint[] = questions.tier2
-    .filter(a => hasValue(answered[a.attributeId]))
-    .map(a => {
-      const ans = answered[a.attributeId];
-      const c: SearchConstraint = { attribute: a.attributeId, value: ans.value as string | number };
-      if (ans.unit) c.unit = ans.unit;
-      return c;
+  //
+  //    Constraints come from EVERYTHING the user answered — not just the specs we asked
+  //    about. The ask-list and the hear-list are different things, and conflating them is
+  //    why "hFE 200-400" was thrown in the bin: gain is a narrowing spec, so it was outside
+  //    the required set, so the search never saw it even though the user had SAID it. A spec
+  //    being one we don't ASK about never meant we should IGNORE it when volunteered.
+  return { type: 'search', constraints: buildConstraints(answered) };
+}
+
+/** Every answered spec with a real value, as search constraints. Keys are already real
+ *  attributeIds (the extractor's enum is the family's own rule list), so no term resolution
+ *  is needed and none can go wrong. */
+function buildConstraints(answered: GuidedAnswerMap): SearchConstraint[] {
+  const out: SearchConstraint[] = [];
+  for (const [attributeId, ans] of Object.entries(answered)) {
+    if (!hasValue(ans)) continue;
+    const c: SearchConstraint = { attribute: attributeId, value: ans.value as string | number };
+    if (ans.unit) c.unit = ans.unit;
+    out.push(c);
+  }
+  return out;
+}
+
+// ── The narrowing step ────────────────────────────────────────
+//
+// A search that comes back with 50 parts has not answered the user's question. The doc
+// (docs/min_attr_sets.md) has always specified a second tier of specs to ask "after Tier 2 is
+// satisfied but before presenting results… when the result set exceeds ~20 candidates". It was
+// authored for all 43 families and then read by NOTHING — grep-verified, zero runtime consumers.
+// This is that step.
+//
+// WHICH question to ask is decided by the DATA, not by a hand-ranked list per family:
+//
+//   • the TIER decides what we are ALLOWED to ask — that is a judgement about whether a human
+//     can answer it ("what junction-to-case thermal resistance do you need?" is not a question
+//     anyone can answer), and it is recorded by a human in the document.
+//   • the POOL decides which of those we SHOULD ask — the one that actually splits the parts in
+//     front of us. A question that cannot divide the candidates is noise, no matter how
+//     important the spec is in the abstract.
+//
+// Measured on the live BJT pool: gain scores 0.90, saturation voltage 0.85, transition frequency
+// 0.81 — so the system asks about GAIN, which is exactly the right question, with no B6-specific
+// code anywhere. AEC qualification looks like a great splitter (0.89) but only 26% of the pool
+// carries the field at all, which is why coverage is a gate and not a tiebreak.
+
+/** Below this, the result set is already useful — asking another question is just friction. */
+const MIN_POOL_TO_NARROW = 20;
+/** HARD CAP. The documented failure mode of this product is "never stops asking" (27 questions
+ *  before showing a MOSFET). One good discriminating question takes 50 parts to a shortlist; a
+ *  second has sharply diminishing returns and doubles the interrogation risk. */
+const MAX_NARROWING_QUESTIONS = 1;
+/** A spec most of the pool doesn't carry can't sort it — and would quietly hide every part with
+ *  no value for it. */
+const MIN_COVERAGE = 0.5;
+/**
+ * Normalized entropy floor: below this the pool is so lopsided that the question barely divides
+ * it, and asking it is just friction.
+ *
+ * ⚠️ SPLIT QUALITY IS A GATE, NOT A RANKING. It answers "can this question separate these parts
+ * at all?" — a fact about the data. It does NOT answer "which question is most useful to a person
+ * choosing this part?" — a judgement about electronics. Using it to RANK looked reasonable and is
+ * wrong, and the measurement says so: on the same family and the same query, gain scored 0.90 and
+ * saturation voltage 0.85 when read from fully-enriched attributes, but 0.71 and 0.92 when read
+ * from the lighter projection the vetting pass actually scores. THE ORDER FLIPS depending on which
+ * enrichment path ran. A question chosen that way changes based on plumbing the user cannot see.
+ *
+ * So the data gets a veto and the document gets the vote: any spec that genuinely splits the pool
+ * is a legitimate question, and among those we ask the one a human ranked highest — which is what
+ * `tier3` order already carries, straight out of docs/min_attr_sets.md.
+ */
+const MIN_SPLIT_QUALITY = 0.35;
+/** Buckets a numeric spec's observed range is divided into — both to MEASURE the split and to
+ *  OFFER it (the buckets become the buttons). Four keeps the choice legible. */
+const NUM_BUCKETS = 4;
+
+export interface NarrowingQuestion {
+  attributeId: string;
+  label: string;
+  /** Always a closed set: a numeric spec is offered as value-RANGE buttons drawn from the pool,
+   *  never a free-text box. A typed "200" would be ambiguous (at least 200? about 200?) and a
+   *  band whose direction we cannot know is one we refuse to invent — so we ask in a form that
+   *  can only produce an explicit range. See statedBands.ts. */
+  options: string[];
+  poolSize: number;
+}
+
+/** Normalized Shannon entropy of a bucket distribution: 1 = an even split (maximally
+ *  informative), 0 = every part in one bucket (a useless question). */
+function normalizedEntropy(buckets: number[]): number {
+  const total = buckets.reduce((a, b) => a + b, 0);
+  const used = buckets.filter(n => n > 0);
+  if (total === 0 || used.length < 2) return 0;
+  let h = 0;
+  for (const n of used) {
+    const p = n / total;
+    h -= p * Math.log2(p);
+  }
+  return h / Math.log2(used.length);
+}
+
+/** Round to 2 significant figures so bucket labels read like specs ("210") and not like
+ *  floating-point noise ("207.33333"). */
+function sig2(n: number): number {
+  if (n === 0 || !Number.isFinite(n)) return 0;
+  const mag = Math.floor(Math.log10(Math.abs(n)));
+  const f = Math.pow(10, mag - 1);
+  return Math.round(n / f) * f;
+}
+
+/** Split a numeric spec's observed values into equal-WIDTH buckets — deliberately not
+ *  equal-count. Equal-count quantiles would report a perfect split for every spec by
+ *  construction, which is precisely the signal we are trying to measure. Log-spaced when all
+ *  values are positive (electronics specs span decades), linear otherwise (temperatures go
+ *  negative). Returns the bucket counts and their human range labels. */
+function bucketNumeric(values: number[]): { counts: number[]; labels: string[] } {
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  if (!(hi > lo)) return { counts: [values.length], labels: [] }; // no spread → entropy 0 → skipped
+  const useLog = lo > 0;
+  const tx = (v: number) => (useLog ? Math.log10(v) : v);
+  const inv = (v: number) => (useLog ? Math.pow(10, v) : v);
+  const tLo = tx(lo);
+  const tHi = tx(hi);
+  const width = (tHi - tLo) / NUM_BUCKETS;
+
+  const counts = new Array<number>(NUM_BUCKETS).fill(0);
+  for (const v of values) {
+    const i = Math.min(NUM_BUCKETS - 1, Math.floor((tx(v) - tLo) / width));
+    counts[i]++;
+  }
+  const labels = counts.map((_, i) => {
+    const a = sig2(inv(tLo + i * width));
+    const b = sig2(inv(tLo + (i + 1) * width));
+    return `${a} - ${b}`;
+  });
+  return { counts, labels };
+}
+
+/**
+ * Pick the one narrowing question worth asking about this candidate pool, or null to just show
+ * the results. Pure and deterministic.
+ *
+ * `answeredIds` is every spec the user has already addressed — INCLUDING ones they waived with
+ * "any". It doubles as the convergence guarantee: a narrowing answer lands in it, so the count of
+ * answered narrowing specs is the number of narrowing questions already asked. No state channel,
+ * no counter to get out of sync.
+ */
+export function pickNarrowingQuestion(
+  familyId: string,
+  answeredIds: Set<string>,
+  candidates: PartAttributes[],
+): NarrowingQuestion | null {
+  if (candidates.length < MIN_POOL_TO_NARROW) return null;
+  const questions = getSelectionQuestions(familyId);
+  const table = getLogicTable(familyId);
+  if (!questions || !table) return null;
+
+  const asked = questions.tier3.filter(a => answeredIds.has(a.attributeId)).length;
+  if (asked >= MAX_NARROWING_QUESTIONS) return null;
+
+  type Scored = NarrowingQuestion & { quality: number; docIndex: number };
+  const scored: Scored[] = [];
+
+  for (const [docIndex, attr] of questions.tier3.entries()) {
+    if (answeredIds.has(attr.attributeId)) continue;
+    const raw = candidates
+      .map(c => c.parameters.find(p => p.parameterId === attr.attributeId)?.value)
+      .filter((v): v is string => !!v && String(v).trim() !== '');
+    if (raw.length / candidates.length < MIN_COVERAGE) continue;
+
+    let counts: number[];
+    let options: string[];
+    if (attr.input === 'choice') {
+      const byValue = new Map<string, number>();
+      for (const v of raw) byValue.set(v.trim(), (byValue.get(v.trim()) ?? 0) + 1);
+      if (byValue.size < 2) continue;
+      const sortedByFreq = [...byValue.entries()].sort((a, b) => b[1] - a[1]);
+      counts = sortedByFreq.map(([, n]) => n);
+      options = sortedByFreq.map(([v]) => v);
+    } else {
+      // The value STRING, never numericValue — see leadingMagnitudeToBaseSI.
+      const nums = raw.map(v => leadingMagnitudeToBaseSI(v)).filter((n): n is number => n != null);
+      if (nums.length / candidates.length < MIN_COVERAGE) continue;
+      const b = bucketNumeric(nums);
+      if (b.labels.length < 2) continue;
+      counts = b.counts;
+      options = b.labels;
+    }
+
+    const quality = normalizedEntropy(counts);
+    if (quality < MIN_SPLIT_QUALITY) continue;
+    // Drop empty buckets so we never offer a range no part in the pool actually occupies.
+    const live = options.filter((_, i) => counts[i] > 0);
+    if (live.length < 2) continue;
+
+    scored.push({
+      attributeId: attr.attributeId,
+      label: attr.label,
+      options: live,
+      poolSize: candidates.length,
+      quality,
+      docIndex,
     });
-  return { type: 'search', constraints };
+  }
+
+  if (scored.length === 0) return null;
+  // Everything still standing genuinely splits the pool (the data's veto has been applied above).
+  // Among those, ask the one the DOCUMENT ranks first — `tier3` preserves the order of
+  // docs/min_attr_sets.md, so this is a human's judgement about what matters for this family, not
+  // an entropy score that moves when an enrichment path changes.
+  scored.sort((a, b) => a.docIndex - b.docIndex);
+  const { attributeId, label, options, poolSize } = scored[0];
+  return { attributeId, label, options, poolSize };
 }

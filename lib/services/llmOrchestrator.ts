@@ -2,10 +2,10 @@ import Anthropic from '@anthropic-ai/sdk';
 import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction, ChoiceOption, SearchConstraint, deriveRecommendationBucket, deriveRecommendationCategories, RecommendationCategory } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
 import { looksLikeMpn, mentionsMpn, buildSearchSummary } from './searchSummary';
-import { decideGuidedTurn } from './guidedSelectionController';
+import { decideGuidedTurn, renderNarrowingQuestion } from './guidedSelectionController';
 import { sanitizeChoiceOptions } from './choiceGuard';
 import { buildGreenfieldQuery } from './searchConstraints';
-import { logicTableRegistry } from '../logicTables';
+import { logicTableRegistry, getLogicTable } from '../logicTables';
 import { getSelectionQuestions } from './selectionQuestions';
 import { GuidedAnswerMap } from './guidedSelection';
 import { observeAndLogGrounding, extractUserMpnCandidates } from './grounding/groundingLogger';
@@ -1126,10 +1126,36 @@ async function extractAnsweredSpecs(
   userId?: string,
 ): Promise<GuidedAnswerMap> {
   const questions = getSelectionQuestions(familyId);
-  if (!questions || questions.tier2.length === 0) return {};
-  const specLines = questions.tier2.map(a => {
-    const opts = a.input === 'choice' && a.options ? ` (choices: ${a.options.join(', ')})` : '';
-    return `- ${a.attributeId}: ${a.label}${opts}`;
+  const table = getLogicTable(familyId);
+  if (!questions || questions.tier2.length === 0 || !table) return {};
+
+  // HEAR EVERYTHING. The enum is the family's ENTIRE rule list — not the specs we ASK about.
+  //
+  // It used to be the required set only, which meant a spec the user VOLUNTEERED but we hadn't
+  // asked for was silently thrown away: someone typing "I need a small-signal NPN, 9V, 1-2mA,
+  // hFE 200-400" had their gain requirement deleted before the search ever ran, because gain is
+  // a narrowing spec and narrowing specs weren't in the enum. Across all 43 families that
+  // discarded 629 of the 823 specs the engine can actually score. What we choose not to ASK
+  // about was never a reason to IGNORE the user when they tell us anyway.
+  //
+  // Widening the enum widens the surface to hallucinate over (B5 goes from 6 specs to 27), so it
+  // was measured before it was shipped — both enums run over the same real conversations in
+  // scripts/diag-extractor-widening.ts. Result: it recovers the volunteered specs and reports
+  // NOTHING the user didn't say. The tool description ("ONLY specs the user has actually
+  // addressed") is what holds, and it holds at temp 0.
+  const askedIds = new Set(questions.tier2.map(a => a.attributeId));
+  const optionsById = new Map(
+    [...questions.tier2, ...questions.tier3]
+      .filter(a => a.input === 'choice' && a.options)
+      .map(a => [a.attributeId, a.options!]),
+  );
+  const specLines = table.rules.map(r => {
+    const opts = optionsById.get(r.attributeId);
+    const choices = opts ? ` (choices: ${opts.join(', ')})` : '';
+    // Mark which specs we actually asked, so the model isn't nudged into treating an
+    // unmentioned one as answered just because it appears in the list.
+    const asked = askedIds.has(r.attributeId) ? '' : ' [only if the user volunteers it]';
+    return `- ${r.attributeId}: ${r.attributeName}${choices}${asked}`;
   }).join('\n');
 
   const tool: Anthropic.Tool = {
@@ -1144,7 +1170,7 @@ async function extractAnsweredSpecs(
           items: {
             type: 'object',
             properties: {
-              attributeId: { type: 'string', enum: questions.tier2.map(a => a.attributeId), description: 'The spec id from the list.' },
+              attributeId: { type: 'string', enum: table.rules.map(r => r.attributeId), description: 'The spec id from the list.' },
               value: { type: ['string', 'number', 'null'], description: 'The value the user gave (number for numeric specs, the chosen label for choices). Use null ONLY if the user explicitly said it does not matter / any / not sure.' },
               unit: { type: 'string', description: 'Unit for numeric values, e.g. "V", "A", "MHz". Omit for choices.' },
             },
@@ -1172,7 +1198,7 @@ async function extractAnsweredSpecs(
     const block = resp.content.find(b => b.type === 'tool_use');
     if (!block || block.type !== 'tool_use') return {};
     const inp = block.input as { answers?: Array<{ attributeId?: string; value?: string | number | null; unit?: string }> };
-    const valid = new Set(questions.tier2.map(a => a.attributeId));
+    const valid = new Set(table.rules.map(r => r.attributeId));
     const map: GuidedAnswerMap = {};
     for (const a of inp.answers ?? []) {
       if (!a || typeof a.attributeId !== 'string' || !valid.has(a.attributeId)) continue;
@@ -1868,7 +1894,23 @@ export async function chat(
       partType: guidedTurn.partType,
       familyId: guidedTurn.familyId,
       constraints: guidedTurn.constraints,
+      answeredSpecIds: guidedTurn.answeredSpecIds,
     });
+    // THE NARROWING STEP. The search came back too big to be useful AND a spec exists that
+    // genuinely splits it — so ask that one question instead of presenting 50 parts. Returning no
+    // `searchResult` is deliberate: nothing goes on screen, so the next turn is still a guided
+    // continuation rather than a post-results refine. The answer (including "any") lands in the
+    // answered set, which caps this at one question and guarantees the next turn presents.
+    if (result.narrowing) {
+      const { label, options, poolSize } = result.narrowing;
+      return {
+        message: renderNarrowingQuestion(label, poolSize),
+        choices: sanitizeChoiceOptions([
+          ...options.map(o => ({ id: o, label: o })),
+          { id: 'any', label: 'Any' },
+        ]),
+      };
+    }
     return { message: buildSearchSummary(result), searchResult: result };
   }
 

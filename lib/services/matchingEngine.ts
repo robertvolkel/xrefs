@@ -690,6 +690,25 @@ export function effectiveThresholdDirection(
   return null;
 }
 
+/**
+ * Rule types that structurally CANNOT separate two parts. `application_review` returns a flat
+ * `review` (50% credit) and `operational` a flat 80% — NEITHER ever looks at the two values.
+ * That is the RIGHT verdict for a cross-reference ("the gain differs; a human should look"),
+ * and it is why these rules must never be retyped to make a search work.
+ *
+ * But it means a SEARCH cannot honour a spec typed this way: ask for "hFE 200-400" and every
+ * candidate — the 110, the 200, the 420 — scores identically. The two questions are genuinely
+ * different, so the search path compares stated bands ITSELF (see statedBands.ts) rather than
+ * bending the engine. This set is the boundary between them, and the ONE definition of it:
+ * `selectionDoc.findAskedButUncomparable` uses it to flag specs we ASK about and then ignore.
+ */
+export const CANNOT_COMPARE_LOGIC_TYPES: ReadonlySet<string> = new Set(['application_review', 'operational']);
+
+/** True when the engine's evaluator for this rule actually compares source vs candidate. */
+export function ruleCanCompare(rule: Pick<MatchingRule, 'logicType'> | undefined): boolean {
+  return !!rule && !CANNOT_COMPARE_LOGIC_TYPES.has(rule.logicType);
+}
+
 function evaluateFit(
   rule: MatchingRule,
   sourceParam: ParametricAttribute | undefined,

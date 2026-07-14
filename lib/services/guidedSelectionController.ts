@@ -49,6 +49,15 @@ export function renderValuesQuestion(labels: string[]): string {
   return `What ${list} are you targeting? (Say "any" if one doesn't matter.)`;
 }
 
+/** The NARROWING question — asked after a search that came back too big to be useful, with the
+ *  count stated so the user can see why they're being asked. Must stay matchable by NARROW_Q_RE.
+ *  The "any" escape is explicit: the user is never trapped behind a question they don't care
+ *  about, which is the whole difference between narrowing and interrogating. */
+export function renderNarrowingQuestion(label: string, poolSize: number): string {
+  const clean = label.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  return `That gives ${poolSize} parts — more than is useful. Which ${clean.toLowerCase()} do you need? (Say "any" to see them all.)`;
+}
+
 function joinWithAnd(items: string[]): string {
   if (items.length === 0) return '';
   if (items.length === 1) return items[0];
@@ -58,12 +67,15 @@ function joinWithAnd(items: string[]): string {
 
 const CHOICE_Q_RE = /^Which .+ do you need\?$/;
 const VALUES_Q_RE = /^What .+ are you targeting\?/;
+const NARROW_Q_RE = /^That gives \d+ parts — more than is useful\. Which .+ do you need\?/;
 
 /** True when `text` is one of the fixed questions this controller emits — the signal
- *  that we are mid-guided-selection (no message metadata channel exists). */
+ *  that we are mid-guided-selection (no message metadata channel exists). The narrowing
+ *  question must be in here: it is asked INSTEAD of showing results, so the user's next message
+ *  is answering us and the turn after it has to be recognized as a continuation. */
 export function isSystemGuidedQuestion(text: string): boolean {
   const t = (text ?? '').trim();
-  return CHOICE_Q_RE.test(t) || VALUES_Q_RE.test(t);
+  return CHOICE_Q_RE.test(t) || VALUES_Q_RE.test(t) || NARROW_Q_RE.test(t);
 }
 
 /** A SPEC question (a per-attribute choice/values question), as opposed to the
@@ -226,7 +238,18 @@ function pinFamily(messages: OrchestratorMessage[]): Pinned | null {
 
 export type GuidedTurnDecision =
   | { kind: 'ask'; message: string; choices?: ChoiceOption[] }
-  | { kind: 'search'; query: string; partType: string; familyId: string; constraints: SearchConstraint[] };
+  | {
+      kind: 'search';
+      query: string;
+      partType: string;
+      familyId: string;
+      constraints: SearchConstraint[];
+      /** Every spec the user has addressed, INCLUDING ones waived with "any" (which carry no
+       *  value and so never appear in `constraints`). The search uses it to decide whether a
+       *  narrowing question is still worth asking — and, because a narrowing ANSWER lands here
+       *  too, it is what guarantees the flow terminates instead of asking forever. */
+      answeredSpecIds: string[];
+    };
 
 /**
  * Decide whether the SYSTEM should own this turn, and if so what to do. Returns null
@@ -352,5 +375,6 @@ export async function decideGuidedTurn(
     partType,
     familyId,
     constraints: step.constraints,
+    answeredSpecIds: Object.keys(answered),
   };
 }

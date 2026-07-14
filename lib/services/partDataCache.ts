@@ -155,8 +155,18 @@ export const RECS_CACHE_SCHEMA_VERSION = 'v20';
  *  the engine has always evaluated them. A v9 entry holds the POISONED pool this fixed — for a
  *  small-signal-NPN search that is 18 exotic parts rated 2–20 mA with every ordinary transistor
  *  excluded. Without this bump the fix is invisible: the fetch is corrected but the stale pool is
- *  served straight from cache, which reads exactly like the fix not working. */
-export const SEARCH_CACHE_SCHEMA_VERSION = 'v10';
+ *  served straight from cache, which reads exactly like the fix not working.
+ *  v10→v11 on 2026-07-14: SearchResult gained `narrowing` — the question to ask when the pool came
+ *  back too big to be useful. A v10 entry simply has no such field, so a cached greenfield search
+ *  silently skips the narrowing step and hands the user 50 parts. Same lesson as v9→v10, one day
+ *  apart: a new FIELD on a cached shape needs a bump exactly as much as a new VALUE does, and the
+ *  failure looks identical either way — like the feature was never wired up.
+ *  v11→v12 on 2026-07-14: the narrowing question is now chosen by the DOCUMENT's ranking among the
+ *  specs the pool can support, not by the best entropy score (which flips with the enrichment path
+ *  — see guidedSelection.MIN_SPLIT_QUALITY). v11 rows carry a `narrowing` naming whichever spec the
+ *  old ranker picked. There is one Supabase instance and no separate prod DB, so rows written while
+ *  developing this ARE live rows. */
+export const SEARCH_CACHE_SCHEMA_VERSION = 'v12';
 
 /** Not-found sentinel: 24 hours */
 export const TTL_NOT_FOUND_MS = 24 * 60 * 60 * 1000;

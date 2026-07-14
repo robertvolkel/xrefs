@@ -4,6 +4,18 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Gaps left open by the narrowing step (Decision #272) — deliberate, not forgotten
+
+**1. A BARE stated value on a rule the engine can't compare does nothing (P2).** `parseStatedBands` honours only EXPLICIT bands (a range, or a min/max-labelled bound). Say *"gain 200"* and it is heard, becomes a constraint, and then has **no effect** — because `hfe` is `application_review`, so the engine ignores it, and a bare value has no direction we can know ("gain 200" = at *least*; "parasitic inductance 2nH" = at *most*). **Inventing a default direction is precisely what caused Decision #271**, so we refuse to. Mitigated in practice: the narrowing question offers value-RANGE buttons, so the common path produces an explicit band. Real fix = record a direction per uncomparable spec in `min_attr_sets.md` (a reviewed judgement, not a guessed default). ⚠️ Note the failure is **silent** — the classic "a filter that never fires is indistinguishable from one that matched nothing".
+
+**2. `Narrows Results` fires only on the FIRST search of a guided flow (P2).** The narrowing question is computed inside `searchParts` and consumed by the guided turn controller. A user who reaches a big result set by any *other* route (a chat pivot, an LLM-run `search_parts`, a refine) gets no narrowing offer. Extending it means surfacing `SearchResult.narrowing` in the normal chat path too — cheap, but it needs its own "don't nag" rules.
+
+**3. The narrowing cap is ONE question (P3).** Deliberate: this product's documented worst behaviour is *"never stops asking"*. If a single question demonstrably isn't enough to cut a 50-part pool to something useful, raise `MAX_NARROWING_QUESTIONS` — but measure the interrogation cost first.
+
+**4. `digikeyMapper.extractNumericValue` locks onto the TEST CONDITION (P2, unchanged from #271).** `"200 @ 2mA"` → **0.002**. Verified live on every BJT gain in the catalog. Decision #272 routes around it (`leadingMagnitudeToBaseSI` reads the value STRING), but the landmine is still armed for anything that reads `numericValue` on a condition-bearing spec. Fixing the mapper serves all 43 families and is **the highest-blast-radius change in the codebase** — it needs its own before/after on real cross-references.
+
+---
+
 ## Data-shape bugs found during the BC847 diagnostic (Decision #271) — evidenced, not speculative
 
 **1. Digikey's dual-unit facet strings parse as INCHES (P2).** Height facet values look like `0.005" (0.13mm)`. `facetValueToBaseSI` takes the leading number (`0.005`) and finds no unit (the next char is `"`), so a **0.13 mm** part is read as **0.005** on a millimetre scale. Any inch-first facet is misread. Currently masked: Digikey returns `"-"` for height on most small parts, so `fit` rules are largely inert. Fix = teach the parser to prefer the metric value in parentheses.

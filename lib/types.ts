@@ -384,6 +384,22 @@ export interface SearchResult {
   type: 'single' | 'multiple' | 'none';
   matches: PartSummary[];
   sourcesContributed?: SearchDataSource[];
+  /** The one question worth asking to cut this pool down, when it came back too big to be
+   *  useful. Computed inside the search (where the candidates' full parametrics are already in
+   *  hand) rather than re-derived later, and small enough to ride the search cache. Consumed by
+   *  the guided-selection turn controller; absent when the pool is already small enough, when no
+   *  spec can actually split it, or when one narrowing question has already been asked. */
+  narrowing?: NarrowingSuggestion;
+}
+
+/** A pool-derived narrowing question. `options` are always a closed set drawn from the parts
+ *  actually in the pool — for a numeric spec they are value RANGES, so the answer can only ever
+ *  be an explicit band (see statedBands.ts on why a bare number is refused). */
+export interface NarrowingSuggestion {
+  attributeId: string;
+  label: string;
+  options: string[];
+  poolSize: number;
 }
 
 // ── Service Status ──────────────────────────────────────────
