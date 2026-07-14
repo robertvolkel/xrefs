@@ -10,6 +10,63 @@ reads "Below spec"), **F9** (latent), **F12** and **F13** (UX). The rest are pre
 
 ---
 
+## ⚠️ How to check that a fix is REALLY fixed — `npm run verify:fixes`
+
+**A check that only PASSES proves nothing.** It has to FAIL on the code as it was and PASS after.
+`scripts/verify-fixes.ts` types real sentences into the real `chat()` and asserts on the parts you
+end up looking at. To get the number that actually means something, run it on both commits:
+
+```bash
+npm run verify:fixes                                   # the current code
+
+git worktree add /tmp/pre <sha-before-the-fix>         # the code as it was
+ln -sfn "$PWD/node_modules" /tmp/pre/node_modules
+cp .env.local /tmp/pre/ && cp scripts/verify-fixes.ts /tmp/pre/scripts/
+cd /tmp/pre && node --env-file=.env.local --import tsx scripts/verify-fixes.ts --label before
+```
+
+**Three traps this instrument fell into itself. Do not re-introduce them:**
+
+1. **Test the layer the USER touches.** The first version called `searchParts` with hand-written,
+   perfect specs — and scored **4/4 on the BROKEN code**, because three of the four bugs live *above*
+   that line, in the part that reads the user's sentence. Feed the engine perfect input and you skip
+   the broken component. Drive `chat()`.
+2. **A failed cache purge is worse than no purge.** It deleted `WHERE mpn = …`; the column is
+   `mpn_lower`. Postgres said so, the code warned and carried on, every delete was a no-op, and the
+   old code answered out of the new code's cache. A purge failure now **aborts the run**.
+3. **A cold run needs a cold PROCESS.** Purging the database does nothing to the in-memory cache. Three
+   in-process "runs" printed `L1 HIT, L1 HIT, L1 HIT` and exercised nothing.
+
+**And when the tick and the parts disagree, believe the parts.** Check 4 went green while the correct
+transistor was still labelled "Below spec" and dual NPN/PNP parts outranked it — the assertion was
+just too weak to say so.
+
+---
+
+## Status
+
+| | Finding | State |
+|---|---|---|
+| **F4** | Catalogue fetch times out ~half the time, silently | ✅ **Fixed & proven** — 3 cold runs, 50/50/50 (was 3/3/3) |
+| **F6** | The harness never covered the chat layer | ✅ **Fixed** — `verify-fixes.ts` drives `chat()` |
+| **F8** | Two duplicate specs become "exactly N" → every part "Below spec" | ✅ **Fixed & proven** |
+| **F9** | A package code parses as a negative number | ✅ **Fixed** |
+| **F11** | "at least 300" loses its direction | ✅ **Fixed & proven** — it was fixed in ONE of the two spec-readers; the guided one still dropped it |
+| **F15** | Guided search uses the family DISPLAY NAME as the keyword | ✅ **Fixed & proven** — "10 ohm resistor" now returns 10 ohm resistors (was 0 of 10) |
+| **F16** | The extractor cannot represent a RANGE — "1 to 5 amps" → "any" | ✅ **Fixed & proven** — 50 parts (was 3) |
+| — | A package is an alias list, not a name (`"TO-236-3, SC-59, SOT-23-3"`) | ✅ **Fixed & proven** — found by the verifier, not on the original list |
+| **F5** | 🔴 A part whose specs we cannot read scores a PASSING grade | ❌ **Open — the deepest one.** Being unreadable is an advantage |
+| **F10** | Polarity called "channel type" → the NPN requirement is dropped | ❌ Open |
+| **F2** | Search results have no ranking of our own | ❌ Open (a product decision) |
+| **F1** | 🇨🇳 flag on search cards keys off the wrong field | ❌ Open (one line) |
+| **F3, F12, F13, F14** | Card copy, jargon questions, unit-less buttons, BOM refresh speed | ❌ Open |
+| **F7** | Gain bins concatenated into the Atlas MPN | Known to owner |
+
+"**Proven**" means: it FAILS on the pre-fix commit and PASSES on this one, via `npm run verify:fixes`.
+Nothing else counts.
+
+---
+
 ## Findings
 
 ### F1 · The 🇨🇳 flag is missing on search cards for Chinese makers whose data came from Digikey
