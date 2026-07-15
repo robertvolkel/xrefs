@@ -451,9 +451,13 @@ export async function searchParts(
   // ASKED it, the cache hands back a result that still carries the question, and we ask it
   // again — forever. The one escape hatch from the narrowing step would have been an infinite
   // loop. (Caught by the end-to-end run, not by reasoning about it.)
+  // ⚠️ `c.bound` (min/max direction) is part of the key. "current at most 5A" and "current at least
+  // 5A" carry the SAME attribute+value+unit but bind in OPPOSITE directions and produce different
+  // results — without the direction in the key they collide, and whichever ran first is served to
+  // both. (Absent bound is its own third state and serializes to nothing, so it stays distinct.)
   const vettingKey = constraints
     ? `${(options?.familyId ?? '').toLowerCase()}|${(options?.partType ?? '').toLowerCase()}|${[...constraints]
-        .map(c => `${c.attribute.toLowerCase()}=${String(c.value).toLowerCase()}${(c.unit ?? '').toLowerCase()}`)
+        .map(c => `${c.attribute.toLowerCase()}=${String(c.value).toLowerCase()}${(c.unit ?? '').toLowerCase()}${c.bound ? `@${c.bound}` : ''}`)
         .sort()
         .join(',')}|${[...(options?.answeredSpecIds ?? [])].sort().join(',')}`
     : '';

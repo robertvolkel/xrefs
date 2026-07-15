@@ -312,6 +312,25 @@ const TTL_FACETS_MS = 30 * 24 * 60 * 60 * 1000;
  * work. The empty-keyword call — the one the greenfield fetch makes, covering the whole category —
  * is the only one cached; a keyword-scoped call is per-query and not worth persisting.
  */
+/**
+ * Strip price and stock before a facet product is retained or persisted.
+ *
+ * The facet cache's `products` exist ONLY to give the discover step a sample of the category's
+ * parametric structure — `findFacetForAttribute` reads a product's `.Category` and `.Parameters`
+ * and nothing else. Price/stock on these products is never read, and persisting it to the 30-day
+ * L2 tier would violate the project's no-caching-commercial-data rule (Decision #158) and let a
+ * future reader mistake a month-old number for live data. So the facet cache never holds it.
+ */
+function stripCommercialForFacetCache(products: DigikeyProduct[]): DigikeyProduct[] {
+  return products.map(p => ({
+    ...p,
+    UnitPrice: 0,
+    QuantityAvailable: 0,
+    StandardPricing: undefined,
+    ProductVariations: p.ProductVariations?.map(v => ({ ...v, StandardPricing: undefined })),
+  }));
+}
+
 export async function getCategoryParametricFacets(
   keywords: string,
   categoryId: number,
@@ -339,7 +358,9 @@ export async function getCategoryParametricFacets(
   );
   const out: CategoryFacets = {
     facets: res.FilterOptions?.ParametricFilters ?? [],
-    products: [...(res.ExactMatches ?? []), ...(res.Products ?? [])],
+    // Strip price/stock up front so nothing commercial reaches L1, L2, or the caller — the facet
+    // products are read only for their parametric structure. See stripCommercialForFacetCache.
+    products: stripCommercialForFacetCache([...(res.ExactMatches ?? []), ...(res.Products ?? [])]),
   };
 
   // Only cache a real answer. An empty facet list means the call came back useless; persisting

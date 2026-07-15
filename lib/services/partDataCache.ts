@@ -176,8 +176,11 @@ export const RECS_CACHE_SCHEMA_VERSION = 'v20';
  *  50 results for a 1–5 A MOSFET ask were duals rated 0.115–0.95 A, all shown as fitting). A v13 row
  *  has no `specFit`, and the chip keys off it — so a cached card would show NO chip at all. Exactly
  *  the v9→v10 and v10→v11 lesson a third time: a new FIELD on a cached shape needs a bump, and the
- *  failure looks identical to the feature never having been wired up. */
-export const SEARCH_CACHE_SCHEMA_VERSION = 'v14';
+ *  failure looks identical to the feature never having been wired up.
+ *  v14→v15 on 2026-07-15: the vetting key now includes each constraint's `bound` (min/max) direction.
+ *  Before, "current at most 5A" and "current at least 5A" hashed identically and whichever ran first
+ *  was served to both. v14 rows were keyed without direction and are ambiguous where a bound fired. */
+export const SEARCH_CACHE_SCHEMA_VERSION = 'v15';
 
 /** Not-found sentinel: 24 hours */
 export const TTL_NOT_FOUND_MS = 24 * 60 * 60 * 1000;

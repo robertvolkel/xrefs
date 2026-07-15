@@ -69,4 +69,47 @@ describe('packageValuesMatch — a package is an alias list', () => {
       expect(packageValuesMatch('SOT-23', 'SOT-23-6')).toBe(true);
     });
   });
+
+  describe('MUST NOT MATCH — same pin count is not the same package', () => {
+    // The trap the old numeric fallback fell into: an IC package leads with its pin count, and
+    // reading just that number made every 8-pin part equal to every other. "8-SOIC" and "8-MSOP"
+    // are different footprints and are NOT interchangeable.
+    it('does NOT cross two 8-pin IC packages of different families', () => {
+      expect(packageValuesMatch('8-SOIC', '8-MSOP')).toBe(false);
+      expect(packageValuesMatch('8-SOIC', '8-VSSOP')).toBe(false);
+      expect(packageValuesMatch('8-SOIC', '8-SON')).toBe(false);
+    });
+    it('does NOT cross an optocoupler DIP-4 to a SOP-4 (same 4 pins, incompatible footprint)', () => {
+      expect(packageValuesMatch('DIP-4', 'SOP-4')).toBe(false);
+    });
+    it('does NOT match two IC packages with different pin counts', () => {
+      expect(packageValuesMatch('14-SOIC', '8-SOIC')).toBe(false);
+      expect(packageValuesMatch('SOIC-14', 'SOIC-8')).toBe(false);
+    });
+  });
+
+  describe('IC package word order — pin count leads OR trails, same footprint', () => {
+    // JEDEC/datasheets write "SOIC-8"; Digikey writes "8-SOIC". Same package, and a user may type
+    // either. Must match — but ONLY when the family and the count both agree.
+    it('matches "8-SOIC" against "SOIC-8"', () => {
+      expect(packageValuesMatch('8-SOIC', 'SOIC-8')).toBe(true);
+      expect(packageValuesMatch('SOIC-8', '8-SOIC')).toBe(true);
+      expect(packageValuesMatch('14-TSSOP', 'TSSOP-14')).toBe(true);
+    });
+    it('does NOT let word order override a family mismatch', () => {
+      expect(packageValuesMatch('8-SOIC', 'MSOP-8')).toBe(false);
+    });
+  });
+
+  describe("a Digikey dimension gloss has a comma INSIDE the parenthetical", () => {
+    // "8-SOIC (0.154", 3.90mm Width)" — the gloss itself contains a comma. Splitting on commas
+    // first shatters the token; the gloss must be stripped before the split, or the real "8-SOIC"
+    // never survives to be compared. This is the DOMINANT IC package format from our primary source.
+    it('matches a user\'s "8-SOIC" against Digikey\'s full "8-SOIC (0.154\", 3.90mm Width)"', () => {
+      expect(packageValuesMatch('8-SOIC', '8-SOIC (0.154", 3.90mm Width)')).toBe(true);
+    });
+    it('matches word order even through the gloss', () => {
+      expect(packageValuesMatch('SOIC-8', '8-SOIC (0.154", 3.90mm Width)')).toBe(true);
+    });
+  });
 });

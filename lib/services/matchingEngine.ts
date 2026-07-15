@@ -84,25 +84,50 @@ export function normalize(value: string): string {
  * longer token is exactly the shorter token plus a -<n> suffix", never as "strip the suffix off
  * both and compare". The first is decidable from the strings; the second is a guess.
  */
-const PACKAGE_ATTRIBUTE_IDS = new Set(['package_case']);
+// The package-IDENTITY attribute ids — every family whose footprint rule is a string `identity`.
+// `package_case` (31 families) plus `package_type` (E1 optocouplers) and `package_format` (D2 fuses).
+// NOT the `identity_flag` footprint rules (F1/F2 relays' `package_footprint`, D1 crystals'
+// `package_type`): those route through evaluateIdentityFlag, which never calls into here.
+const PACKAGE_ATTRIBUTE_IDS = new Set(['package_case', 'package_type', 'package_format']);
 
-/** "0402 (1005 Metric)" → "0402". A trailing parenthetical is a gloss (the metric equivalent, a
- *  cross-reference), never a distinct package — it must not defeat the comparison. */
+/** "0402 (1005 Metric)" → "0402"; "8-SOIC (0.154", 3.90mm Width)" → "8-SOIC". A parenthetical is a
+ *  gloss (metric equivalent, dimensions, a cross-reference), never a distinct package. Strip glosses
+ *  BEFORE splitting on commas — Digikey puts a COMMA *inside* the dimension gloss, so splitting first
+ *  shatters "8-SOIC (0.154", 3.90mm Width)" into fragments and the real token "8-SOIC" is lost. */
 function packageTokens(value: string): string[] {
   return value
+    .replace(/\([^)]*\)/g, ' ')
     .split(',')
-    .map(t => normalize(t).replace(/\s*\([^)]*\)\s*$/, '').trim())
+    .map(t => normalize(t))
     .filter(Boolean);
 }
 
-/** True when the longer token is exactly the shorter one plus a lead count: "SOT-23" ≡ "SOT-23-3".
- *  "SOT-23-3" vs "SOT-23-6" → false (both state a count, and they disagree).
- *  "SOT-23"   vs "SOT-223"  → false (the suffix must be a hyphen + 1–2 digits, and "-223" is three). */
+/** True when two package tokens name the same footprint:
+ *   • identical, or
+ *   • one leaves the lead count open: "SOT-23" ≡ "SOT-23-3" (longer = shorter + a "-<1–2 digits>"),
+ *     while "SOT-23-3" vs "SOT-23-6" → false (both state a count and disagree) and "SOT-23" vs
+ *     "SOT-223" → false (the suffix must be a hyphen + 1–2 digits, and "-223" is three), or
+ *   • a pin-count word-order transposition: "8-SOIC" ≡ "SOIC-8" (see transposedPinCountMatch). */
 function packageTokensMatch(a: string, b: string): boolean {
   if (a === b) return true;
   const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
-  const m = /^(.*)-\d{1,2}$/.exec(longer);
-  return !!m && m[1] === shorter;
+  const suffix = /^(.*)-\d{1,2}$/.exec(longer);
+  if (suffix && suffix[1] === shorter) return true;
+  return transposedPinCountMatch(a, b);
+}
+
+/** "8-SOIC" ≡ "SOIC-8": the SAME family name with one pin-count digit group moved front↔back — the
+ *  two industry word orders for an IC package. Requires identical family AND identical count, so it
+ *  can never cross "8-SOIC" to "8-MSOP". Discrete packages ("SOT-23-3") never start with a bare
+ *  digit group, so this leaves the lead-count rule above untouched. This is the ONE legitimate
+ *  cross-format the old evaluateIdentity numeric fallback used to (crudely) rescue. */
+function transposedPinCountMatch(a: string, b: string): boolean {
+  const front = /^(\d{1,3})-(.+)$/;   // "8-SOIC" → count "8", family "SOIC"
+  const back = /^(.+)-(\d{1,3})$/;    // "SOIC-8" → family "SOIC", count "8"
+  const fa = front.exec(a), bk = back.exec(b);
+  if (fa && bk && fa[1] === bk[2] && fa[2] === bk[1]) return true;
+  const fb = front.exec(b), ak = back.exec(a);
+  return !!(fb && ak && fb[1] === ak[2] && fb[2] === ak[1]);
 }
 
 /** Any name for the source's package matching any name for the candidate's. */
@@ -235,11 +260,16 @@ function evaluateIdentity(
     match = true;
   }
 
-  // Numeric comparison (with relative tolerance for float rounding) only
-  // when strings genuinely differ — catches "0.33µF" vs "330nF" style equivalence.
-  const srcNum = match ? null : getNumeric(sourceParam);
-  const candNum = match ? null : getNumeric(candidateParam);
-  if (!match && srcNum !== null && candNum !== null) {
+  // Numeric comparison (with relative tolerance for float rounding) only when strings genuinely
+  // differ — catches "0.33µF" vs "330nF" style equivalence. NEVER for a package: getNumeric reads
+  // the FIRST number, which for a package is the pin count, so "8-SOIC" and "8-MSOP" would both read
+  // 8 and be declared identical — two different footprints crossed as a clean pass. Packages are
+  // compared only as alias lists (above); a real cross-format like "8-SOIC" vs "SOIC-8" is handled
+  // there, not here.
+  const numericComparable = !match && !PACKAGE_ATTRIBUTE_IDS.has(rule.attributeId);
+  const srcNum = numericComparable ? getNumeric(sourceParam) : null;
+  const candNum = numericComparable ? getNumeric(candidateParam) : null;
+  if (numericComparable && srcNum !== null && candNum !== null) {
     const denom = Math.max(Math.abs(srcNum), Math.abs(candNum), 1e-30);
     match = Math.abs(srcNum - candNum) / denom < 1e-6;
   }

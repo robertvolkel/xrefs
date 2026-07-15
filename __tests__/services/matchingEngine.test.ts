@@ -117,6 +117,65 @@ describe('matchingEngine', () => {
   });
 
   // ----------------------------------------------------------
+  // IDENTITY RULES — PACKAGE (alias list, never a numeric pin count)
+  // ----------------------------------------------------------
+  describe('identity rule — package comparison', () => {
+    // A package param carries NO numericValue (Digikey ships it as a string), so getNumeric would
+    // parse the LEADING pin count. These pin the behavior at the layer where the bug lived: the
+    // numeric fallback read that pin count and declared every same-pin-count package identical.
+    const pkg = rule({ attributeId: 'package_case', logicType: 'identity' });
+
+    it('FAILS two different 8-pin IC packages (the same-pin-count false match)', () => {
+      const src = attrs([param('package_case', '8-SOIC')]);
+      const cand = attrs([param('package_case', '8-MSOP')], 'CAND-001');
+      const result = evaluateCandidate(table([pkg]), src, cand);
+      expect(result.results[0].result).toBe('fail');
+    });
+
+    it('still PASSES the same footprint in the other word order (8-SOIC ≡ SOIC-8)', () => {
+      const src = attrs([param('package_case', 'SOIC-8')]);
+      const cand = attrs([param('package_case', '8-SOIC')], 'CAND-001');
+      const result = evaluateCandidate(table([pkg]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+    });
+
+    it("still PASSES a short name against Digikey's full string with an inner-comma gloss", () => {
+      const src = attrs([param('package_case', '8-SOIC')]);
+      const cand = attrs([param('package_case', '8-SOIC (0.154", 3.90mm Width)')], 'CAND-001');
+      const result = evaluateCandidate(table([pkg]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+    });
+
+    it('still PASSES a single package name against a Digikey alias list', () => {
+      const src = attrs([param('package_case', 'SOT-23')]);
+      const cand = attrs([param('package_case', 'TO-236-3, SC-59, SOT-23-3')], 'CAND-001');
+      const result = evaluateCandidate(table([pkg]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+    });
+
+    it('applies the alias-list logic to package_type (E1) and package_format (D2)', () => {
+      // Previously excluded from the matcher, these fell to the numeric fallback (DIP-4 ≈ SOP-4).
+      const typeRule = rule({ attributeId: 'package_type', logicType: 'identity' });
+      const srcT = attrs([param('package_type', 'DIP-4')]);
+      const candT = attrs([param('package_type', 'SOP-4')], 'C');
+      expect(evaluateCandidate(table([typeRule]), srcT, candT).results[0].result).toBe('fail');
+
+      const fmtRule = rule({ attributeId: 'package_format', logicType: 'identity' });
+      const srcF = attrs([param('package_format', 'Cartridge 5x20mm')]);
+      const candF = attrs([param('package_format', 'Cartridge 5x20mm')], 'C');
+      expect(evaluateCandidate(table([fmtRule]), srcF, candF).results[0].result).toBe('pass');
+    });
+
+    it('does NOT alter numeric equivalence for NON-package identity rules', () => {
+      // Guard: the package carve-out must not touch the "0.33µF" ≡ "330nF" numeric fallback.
+      const capRule = rule({ attributeId: 'capacitance', logicType: 'identity' });
+      const src = attrs([param('capacitance', '0.33µF', 3.3e-7)]);
+      const cand = attrs([param('capacitance', '330nF', 3.3e-7)], 'C');
+      expect(evaluateCandidate(table([capRule]), src, cand).results[0].result).toBe('pass');
+    });
+  });
+
+  // ----------------------------------------------------------
   // IDENTITY_UPGRADE RULES
   // ----------------------------------------------------------
   describe('identity_upgrade rule', () => {
