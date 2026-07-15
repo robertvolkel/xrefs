@@ -1,3 +1,6 @@
+/* eslint-disable @typescript-eslint/no-explicit-any --
+ * Reads the harness's JSON snapshots, whose row shape is intentionally loose (it must survive schema
+ * differences between the two commits being compared). Structural access with `any` is deliberate. */
 /**
  * SEARCH REGRESSION DIFF — compare two harness runs and say, in plain terms, what changed.
  *

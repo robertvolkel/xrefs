@@ -1,3 +1,7 @@
+/* eslint-disable @typescript-eslint/no-explicit-any --
+ * This diagnostic is COPIED to a pre-fix worktree and run against a DIFFERENT commit, so it accesses
+ * `searchParts` responses STRUCTURALLY rather than through imported types — pinning the exact type
+ * would tie it to one commit and defeat the cross-commit comparison. The `any` is deliberate. */
 /**
  * SEARCH REGRESSION HARNESS — run the same real queries through `searchParts` on two different
  * commits and diff the answers.

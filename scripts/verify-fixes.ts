@@ -37,6 +37,13 @@
  *     cp .env.local /tmp/xrefs-prefix/ && cp scripts/verify-fixes.ts /tmp/xrefs-prefix/scripts/
  *     cd /tmp/xrefs-prefix && node --env-file=.env.local --import tsx scripts/verify-fixes.ts --label before
  */
+/* eslint-disable @typescript-eslint/no-explicit-any --
+ * This diagnostic is COPIED to a pre-fix worktree and run against a DIFFERENT commit, whose exact
+ * return/option types may not match this one. It therefore accesses `searchParts` / `chat` responses
+ * STRUCTURALLY (`r?.matches`, `r?.searchResult?.matches`) rather than through imported types — using
+ * the real types would tie it to one commit's shape and defeat the whole point of a cross-commit
+ * comparison. The `any` is deliberate and load-bearing here, not laziness. */
+import { spawnSync } from 'node:child_process';
 import { createClient } from '@supabase/supabase-js';
 import { chat } from '@/lib/services/llmOrchestrator';
 import { searchParts } from '@/lib/services/partDataService';
@@ -337,7 +344,6 @@ async function askChat(c: Check, cold: boolean): Promise<Match[]> {
  *  and every rep after the first printed "L1 HIT": all three "runs" re-read one answer from memory,
  *  so the reliability check exercised nothing and would have passed on the broken code too. */
 function coldRep(checkIndex: number): Match[] {
-  const { spawnSync } = require('node:child_process') as typeof import('node:child_process');
   const r = spawnSync(
     process.execPath,
     ['--env-file=.env.local', '--import', 'tsx', process.argv[1], '--single', String(checkIndex), '--cold'],
