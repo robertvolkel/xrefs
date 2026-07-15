@@ -4,6 +4,7 @@ import { chat } from '@/lib/services/llmOrchestrator';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 import { runWithServiceTracking, reportServiceFailure, getServiceWarnings } from '@/lib/services/serviceStatusTracker';
 import { fetchUserPreferences } from '@/lib/services/userPreferencesService';
+import { maybeEnterMaintenance } from '@/lib/services/maintenanceMode';
 
 interface ChatRequestBody {
   messages: OrchestratorMessage[];
@@ -54,6 +55,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       });
     } catch (error) {
       console.error('Chat API error:', error);
+      maybeEnterMaintenance(error);
       reportServiceFailure('anthropic', 'unavailable', 'Chat request failed');
       const warnings = getServiceWarnings();
       return NextResponse.json(

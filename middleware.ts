@@ -32,6 +32,12 @@ export async function middleware(request: NextRequest) {
       return supabaseResponse;
     }
 
+    // Allow the public maintenance-status endpoint — the login screen reads it
+    // before sign-in, so it must not be redirected to /login (Decision #273).
+    if (pathname.startsWith('/api/maintenance/status')) {
+      return supabaseResponse;
+    }
+
     // Everything else requires authentication
     if (!user) {
       const redirectUrl = new URL('/login', request.url);

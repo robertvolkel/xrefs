@@ -51,7 +51,7 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
       sx={{
         position: 'relative',
         bgcolor: 'background.default',
-        '&:hover': { borderColor: 'text.primary', bgcolor: 'action.hover' },
+        '&:hover': { borderColor: 'primary.main', bgcolor: 'action.hover' },
         transition: 'border-color 0.2s ease, background-color 0.2s ease',
       }}
     >

@@ -32,10 +32,11 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
   const router = useRouter();
   const pathname = usePathname();
   const { isAdmin } = useProfile();
-  // Logo tint: bright mint (primary) reads well on the dark sidebar, but in light mode
-  // the thin wordmark strokes need a richer/darker teal to match the solid avatar's punch.
+  // `mode` can be 'system' — resolve it before picking the logo, or the dark wordmark
+  // lands on the dark sidebar and disappears.
   const { mode, systemMode } = useColorScheme();
   const isDarkMode = (mode === 'system' ? systemMode : mode) === 'dark';
+  const logoSrc = isDarkMode ? '/xq-logo.png' : '/xq-logo-dark.png';
 
   const isListsActive = pathname === '/lists';
   const isReleasesActive = pathname === '/releases';
@@ -198,23 +199,7 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
             width: '100%',
           }}
         >
-          <Box
-            role="img"
-            aria-label="XQ"
-            sx={{
-              width: 28,
-              height: 16.3,
-              bgcolor: isDarkMode ? 'primary.main' : '#00695C',
-              maskImage: 'url(/xq-logo-dark.png)',
-              maskSize: 'contain',
-              maskRepeat: 'no-repeat',
-              maskPosition: 'center',
-              WebkitMaskImage: 'url(/xq-logo-dark.png)',
-              WebkitMaskSize: 'contain',
-              WebkitMaskRepeat: 'no-repeat',
-              WebkitMaskPosition: 'center',
-            }}
-          />
+          <Box component="img" src={logoSrc} alt="XQ" sx={{ width: 28 }} />
         </Box>
 
         {/* Navigation icons */}

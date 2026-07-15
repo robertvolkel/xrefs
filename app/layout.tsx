@@ -6,6 +6,7 @@ import AuthProvider from "@/components/AuthProvider";
 import I18nProvider from "@/components/I18nProvider";
 import { createClient } from "@/lib/supabase/server";
 import { ServiceStatusProvider } from "@/contexts/ServiceStatusContext";
+import MaintenanceGate from "@/components/MaintenanceGate";
 
 export const viewport: Viewport = {
   width: 'device-width',
@@ -50,7 +51,9 @@ export default async function RootLayout({
           <AuthProvider initialUser={user} initialProfile={initialProfile}>
             <I18nProvider initialLocale={(user?.user_metadata?.language as string) || undefined}>
               <ServiceStatusProvider>
-                {children}
+                <MaintenanceGate>
+                  {children}
+                </MaintenanceGate>
               </ServiceStatusProvider>
             </I18nProvider>
           </AuthProvider>
