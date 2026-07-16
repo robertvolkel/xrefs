@@ -20,7 +20,7 @@ import {
 } from './digikeyMapper';
 import { buildSyntheticSource, computeOverSpecPenalty } from './searchConstraints';
 import { parseStatedBands, countStatedBandViolations } from './statedBands';
-import { pickNarrowingQuestion } from './guidedSelection';
+import { pickNarrowingQuestion, NARROWING_ENABLED } from './guidedSelection';
 import { fetchGreenfieldParametricProducts, resolveCategoryIdsForFamily } from './greenfieldParametricFetch';
 import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates, type AtlasCandidateWidening } from './atlasClient';
 import { reportServiceFailure } from './serviceStatusTracker';
@@ -815,7 +815,7 @@ export async function searchParts(
           // can be chosen from the DATA rather than from a hand-ranked list. Riding it back on the
           // result (rather than re-deriving it in the caller) also means it caches with the search,
           // so a repeat query doesn't refetch 50 parts' attributes to ask the same question.
-          if (options?.answeredSpecIds && synthetic.familyId) {
+          if (NARROWING_ENABLED && options?.answeredSpecIds && synthetic.familyId) {
             const narrowing = pickNarrowingQuestion(
               synthetic.familyId,
               new Set(options.answeredSpecIds),

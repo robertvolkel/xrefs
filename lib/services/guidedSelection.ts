@@ -128,6 +128,20 @@ function buildConstraints(answered: GuidedAnswerMap): SearchConstraint[] {
 // code anywhere. AEC qualification looks like a great splitter (0.89) but only 26% of the pool
 // carries the field at all, which is why coverage is a gate and not a tiebreak.
 
+/**
+ * ⚠️ TEMPORARILY OFF (2026-07-15). The narrowing step ships with known bugs — its numeric range
+ * buttons can render as unreadable base-SI/scientific-notation numbers or get dropped entirely by
+ * the choice sanitizer, and the loop lacks a deterministic stop. So it is gated OFF until repaired.
+ *
+ * With this false, a too-big result set is simply presented in full (the behaviour before the step
+ * existed); the narrowing logic below stays intact and unit-tested, so re-enabling is one flip.
+ * The gate is at the single CALLER (partDataService searchParts) — NOT inside pickNarrowingQuestion
+ * — precisely so the logic tests keep exercising the picker. Repair tracked in docs/BACKLOG.md under
+ * "Chat Flow → Narrowing step". Typed `boolean` (not the literal `false`) so flipping it needs no
+ * other edit and nothing reads as unreachable.
+ */
+export const NARROWING_ENABLED: boolean = false;
+
 /** Below this, the result set is already useful — asking another question is just friction. */
 const MIN_POOL_TO_NARROW = 20;
 /** HARD CAP. The documented failure mode of this product is "never stops asking" (27 questions

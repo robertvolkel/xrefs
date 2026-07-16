@@ -4,6 +4,90 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+# Chat Flow — the agent ↔ user conversation
+
+> **The map for everything conversational**: how the agent reads what you type, what it asks back,
+> how it searches and refines, and how it keeps from making things up. Ask *"what's left for Chat
+> Flow"* and start here. NEW conversational items belong under this heading. Entries that predate
+> this index and carry long detail are **referenced by their section title** (searchable) rather
+> than copied, so there is one home per item and nothing drifts.
+
+### A · Greenfield & guided selection — you describe a part, the agent asks for specs, then searches
+- **Narrowing step — BUILT (#272), then TURNED OFF 2026‑07‑15, pending repair (P1).** → full entry below.
+- **A bare stated value on an uncomparable spec does nothing (P2).** "gain 200" is heard but has no effect — see the residual gaps in *"Gaps left open by the narrowing step (Decision #272)"* (item 1).
+- **Selection‑review follow‑ups (#270) (P2/P3)** — MOSFET technology Required‑vs‑Narrows (answer from real logs, don't guess); logic‑table schema smells. → *"Selection‑review follow‑ups (from the Decision #270 Fable 5 pass)"*.
+- **System‑driven guided selection follow‑ups (#262) (P2/P3)** — a 2nd guided selection later in one chat falls to the LLM; an MPN typed mid‑questions is re‑asked. → *"System‑driven guided selection — follow‑ups (Decision #262)"*.
+- **Greenfield search relevance (#243) (P3)** — dual‑channel penalty, over‑spec tuning. → *"Greenfield search relevance — follow‑ups to logic‑vetted search (Decision #243)"*.
+- **`countStatedBandViolations` reads only the FIRST number of a stated range (P2).** → full entry below.
+
+### B · Refinement & filtering — you narrow what's already on screen
+- **Attribute filtering on search‑result cards (#268) (P2)** — filter cards by any spec, not just MFR/status/origin. → *"Attribute filtering on search‑result cards (Phase 3 of Decision #268)"*.
+- **Search‑card "meets spec" filter treats UNKNOWN fit as fitting (P2).** → full entry below.
+- **Multi‑manufacturer + negation filters (P2)** — "Kemet or Murata", "anything but TI" are inexpressible today. → full entry below.
+
+### C · Routing — the agent decides what to DO with your message
+- **Conversational query‑shape routing (P2)** — the messy ways users actually ask; the single-router rework. → *"Conversational query‑shape routing — interpreting the messy ways users actually ask"*.
+
+### D · Grounding — never make things up
+- **Grounded‑MPN gate follow‑ups** — never serve an unverified part number. → *"Grounded‑MPN gate — follow‑ups"*.
+- **Chat‑prompt grounding leaks + cleanup (#241) (P2/P3)** — free‑prose closings still leak fabricated detail. → *"Chat‑prompt remaining work — grounding leaks + cleanup"*.
+
+### E · Chat UX
+- **Informative "thinking" status (P3)** — stream the agent's real steps to the UI. → *"Informative chat 'thinking' status"*.
+- **Manufacturer‑profile pull should open the right‑hand panel (#203) (P3)** — → *"Manufacturer profile pull should open the right‑hand panel…"*.
+- **Context‑question wording completeness (#227) (P3)** — how questions render in chat. → *"Context‑question translation completeness + `en` locale redundancy"*.
+
+### F · Cleanups & test coverage (chat/search internals, all P3)
+- **`hardFail` is now redundant** — `specFit` (three‑state) replaced it; remove the dead field once no reader remains.
+- **`specFit` is computed inline in `partDataService`** — extract into a named helper for one testable definition.
+- **`selectionDoc` CANNOT_COMPARE set is duplicated** — dedupe against `matchingEngine.CANNOT_COMPARE_LOGIC_TYPES`.
+- **`scripts/search-regression-harness.ts` still reads `hardFail`** — update to `specFit` so the harness reflects the real shape.
+- **Greenfield category enumeration has no test / a silent zero‑category returns nothing** — add coverage so a mis‑resolved family is loud, not empty.
+
+---
+
+### Narrowing step — BUILT (#272), TURNED OFF 2026‑07‑15, pending repair (P1)
+
+**Supersedes the two older narrowing sections below** (*"Gaps left open by the narrowing step (Decision #272)"* residual items 2–3, and *"Tier‑3 narrowing step — SPECIFIED, never BUILT"* which is now historically wrong — it WAS built by #272).
+
+**What it is.** When a guided (describe‑a‑part) search returns a big pool (~20+), the agent was asking ONE extra multiple‑choice question — "what gain?", "what current?" — before showing results, to cut the pile to a shortlist. The picker (`pickNarrowingQuestion`, `lib/services/guidedSelection.ts`) chooses the question from the DATA (which spec actually splits the parts in front of us), gated by the reviewable document order.
+
+**Why it's off.** It shipped with bugs a code review (2026‑07‑15) confirmed:
+1. **The numeric answer buttons can render unreadable** — a range button becomes a raw base‑SI / scientific‑notation number (e.g. `3e-7`), and such labels are then **dropped entirely by the choice sanitizer**, so the user can get a question with missing options.
+2. **No deterministic stop.** The one‑question cap relies on the answer landing in `answeredSpecIds`; the loop has no hard backstop, so a mis‑cached or mishandled answer can re‑ask.
+3. **The candidate pool used to pick the question includes below‑spec parts** — so the "what splits these?" measurement is taken over parts that shouldn't count.
+4. **Continuation is recognized by matching the agent's own question wording** — fragile; a reworded question breaks the "this is a narrowing answer" detection.
+
+**How it's off.** `NARROWING_ENABLED = false` in `guidedSelection.ts`, checked at the single caller in `partDataService.searchParts`. With it off, a big pool is presented in full (the behaviour before the step existed); nothing else changes. The picker logic and its 11 unit tests stay intact, so re‑enabling is one flip — the gate is deliberately at the caller, not inside the pure function, so the tests keep proving the logic.
+
+**To repair (then flip back on):**
+- Format numeric range buttons as human labels **with units** (e.g. "100–200 mA"), and make the sanitizer keep them.
+- Add a hard, deterministic question cap independent of cache state.
+- Compute the split over the **fits‑spec** pool only.
+- Recognize a narrowing continuation by a real marker, not by re‑matching the question text.
+- **Only asks on the FIRST search of a guided flow** — a pool reached by pivot / LLM `search_parts` / refine gets no offer. Surface `SearchResult.narrowing` in the normal chat path too, with its own don't‑nag rules.
+- Add the guard #270 left out: assert BOTH selection tiers have a runtime consumer, so a specified‑but‑unbuilt step can't sit dormant again.
+
+---
+
+### Search‑card "meets spec" filter treats UNKNOWN fit as fitting (P2)
+
+`searchResultFilter.ts`'s `meets_spec` predicate keeps a card when `specFit === undefined || specFit === 'fits'`. But `undefined` is overloaded — it is ALSO every card from a search we never spec‑scored. So on a plain (non‑spec) search, "show me the ones that meet spec" keeps **everything**, silently — the same "unreadable == fitting" lie that Decision #`specFit` fixed on the chips, reopened on this filter. Fix: distinguish "scored and fits" from "never scored" (only the former should pass), or refuse the filter when nothing was scored.
+
+---
+
+### `countStatedBandViolations` reads only the FIRST number of a stated range (P2)
+
+In the greenfield spec‑vetting path, when a CANDIDATE's own value is a range (e.g. a gain of "200 ~ 450"), the stated‑band comparison reads only the leading number, so a candidate whose range straddles the user's stated band is judged on one endpoint. Confirmed by the 2026‑07‑15 review. Fix: compare the candidate's full range against the stated band (overlap), mirroring `identity_range`.
+
+---
+
+### Multi‑manufacturer + negation filters (P2)
+
+`manufacturer_filter` is single‑valued and non‑negatable on both `FilterInput` (recs) and `SearchFilterInput` (cards), so "**Kemet or Murata**" and "**anything but TI**" cannot be expressed no matter how well the model routes. Widen to `{ names: string[]; negate: boolean }` (keep the old key as a one‑release alias), teach `filterIntentDetector` to parse *or* / *except* / *not* / *anything but* with the same cue‑adjacent discipline the status detector uses (Decision #268), update the two tool schemas, and resolve names through `manufacturerAliasResolver` so "Kemet" also matches its aliases. From the search‑flow plan (Gap A).
+
+---
+
 ## Gaps left open by the narrowing step (Decision #272) — deliberate, not forgotten
 
 **1. A BARE stated value on a rule the engine can't compare does nothing (P2).** `parseStatedBands` honours only EXPLICIT bands (a range, or a min/max-labelled bound). Say *"gain 200"* and it is heard, becomes a constraint, and then has **no effect** — because `hfe` is `application_review`, so the engine ignores it, and a bare value has no direction we can know ("gain 200" = at *least*; "parasitic inductance 2nH" = at *most*). **Inventing a default direction is precisely what caused Decision #271**, so we refuse to. Mitigated in practice: the narrowing question offers value-RANGE buttons, so the common path produces an explicit band. Real fix = record a direction per uncomparable spec in `min_attr_sets.md` (a reviewed judgement, not a guessed default). ⚠️ Note the failure is **silent** — the classic "a filter that never fires is indistinguishable from one that matched nothing".
@@ -49,17 +133,9 @@ The reviewer recorded these in the `Reason` column of `docs/min_attr_sets.md` as
 
 ---
 
-## Tier-3 narrowing step — SPECIFIED, never BUILT (P0, next up)
+## ~~Tier-3 narrowing step — SPECIFIED, never BUILT (P0, next up)~~ → BUILT by #272, then turned OFF 2026‑07‑15
 
-`docs/min_attr_sets.md` has always said: *"Tier 3 — Result Set Discriminators: ask after Tier 2 is satisfied but **before presenting results**… should ask if the result set exceeds ~20 candidates."* Authored for **all 43 families**. **`tier3` has ZERO runtime consumers** — grep-verified across `lib`/`hooks`/`app`/`components` (`tier2` is read in 6 places). Only half the document was ever implemented, and the admin panel rendering a "Narrows results" chip made the feature *look* wired up, which is plausibly why nobody noticed for a month.
-
-**This is the bug that lost BC847BLT1G.** For a BJT, gain (`hfe`) is a tier-3 spec. On a 50-result small-signal-NPN search the app was *supposed* to ask "what gain do you need?" It never asked, and the obvious part sank into the pile.
-
-**Build it:** Tier 2 satisfied → search → if the set exceeds ~20, ask the tier-3 discriminators **before** presenting results (skippable). **Refinement:** skip a tier-3 question whose attribute does not actually *vary* across the current candidates — a question that cannot split the set is noise, and it is cheap to compute from candidates already in hand.
-
-**Blocks the value of Decision #270's review pass:** `Required for Search` corrections take effect on ingest; `Narrows Results` corrections do **nothing** until this ships.
-
-**Then add the guard** Decision #270 deliberately left out: assert that BOTH tiers have a runtime consumer, so a specified-but-unbuilt step cannot sit dormant again. (It is omitted today only because it would fail the build immediately — tier 3 has none.)
+**This section is historical.** When it was written, `tier3` had zero runtime consumers and the narrowing step existed only on paper — that gap was the bug that lost BC847BLT1G (for a BJT, gain `hfe` is a tier‑3 spec; a 50‑result small‑signal‑NPN search was supposed to ask "what gain?" and never did). **Decision #272 built the step.** It then shipped with bugs and was **gated off on 2026‑07‑15** pending repair. Current state, the repair checklist, and the still‑open #270 guard ("assert both tiers have a runtime consumer") now live in one place: **Chat Flow → "Narrowing step — BUILT (#272), TURNED OFF…"** at the top of this file.
 
 ---
 
