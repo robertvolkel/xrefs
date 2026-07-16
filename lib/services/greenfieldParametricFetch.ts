@@ -10,7 +10,9 @@ import {
 import { findFacetForAttribute } from './digikeyMapper';
 import { getTaxonomyPatternsForFamily } from './digikeyParamMap';
 import type { LogicTable, ParametricAttribute, SearchConstraint } from '../types';
-import { buildSyntheticSource, toBaseSI } from './searchConstraints';
+import { buildSyntheticSource, leadingMagnitudeToBaseSI } from './searchConstraints';
+import { parseStatedBands, widenBandForFetch, type StatedBand } from './statedBands';
+import { effectiveThresholdDirection } from './matchingEngine';
 
 /**
  * Greenfield parametric pool fetch (the foundational greenfield search).
@@ -77,15 +79,11 @@ export async function resolveCategoryIdsForFamily(familyId: string): Promise<num
   return ids.slice(0, MAX_CATEGORIES);
 }
 
-/** Parse a facet's human ValueName (e.g. "25 V", "1 µF", "5V ~ 10V", "200 @ 2mA") to base SI.
- *  Takes the leading magnitude before any range/condition separator — the spec value, not the
- *  test condition. Returns null when there's no parseable number. */
-function facetValueToBaseSI(valueName: string): number | null {
-  const head = (valueName ?? '').split(/@|~|≤|≥|±/)[0].trim();
-  const m = head.match(/(-?\d[\d.]*)\s*([a-zA-Zµμ%°/√]+)?/);
-  if (!m) return null;
-  return toBaseSI(m[1], m[2] || undefined);
-}
+/** A facet's human ValueName ("25 V", "1 µF", "200 @ 2mA, 5V") → base SI. Shared with the
+ *  vetting pass so the catalog VALUES and the candidates' VALUES are read by one parser — the
+ *  fetch selecting a "200 @ 2mA" facet value while the scorer read that same part's gain as
+ *  0.002 is exactly the kind of split-brain a second copy produces. */
+const facetValueToBaseSI = leadingMagnitudeToBaseSI;
 
 /** Categorical facet ValueIds matching the user's code: exact normalized hit, else first-token
  *  match (so "0805" → "0805 (2012 Metric)", "X7R" → "X7R"). Skips bare-integer facets. */
@@ -103,22 +101,53 @@ export function pickCategoricalValueIds(facet: DigikeyParametricFilter, userValu
     .map(v => v.ValueId);
 }
 
-/** Numeric facet ValueIds in-band for a stated spec. Band shape by rule type: gte threshold →
- *  [v, v×OVERSPEC]; lte/fit → [0, v]; identity (exact, e.g. capacitance) → v ±IDENTITY_TOL.
- *  Skips bare-integer facets (count-facet trap). */
+/**
+ * Numeric facet ValueIds in-band for a stated spec.
+ *
+ * Band shape, by how the ENGINE compares the rule (`effectiveThresholdDirection` — one shared
+ * definition, so the fetch and the engine cannot drift apart again):
+ *
+ *   gte  ("must be RATED for at least X")  → [X, ∞)
+ *   lte / fit ("must be no more than X")   → [0, X]
+ *   range_superset                         → [X, X×OVERSPEC]  (unchanged — see BACKLOG)
+ *   identity ("must BE X", e.g. 1 µF)      → X ± IDENTITY_TOL
+ *
+ * ⚠️ THE gte BAND HAS NO UPPER BOUND, AND THAT IS THE WHOLE POINT. It used to be [X, X×10],
+ * which quietly encoded a false idea: that a part rated far above what you need is a worse
+ * answer. It isn't — HEADROOM ON A MAXIMUM RATING IS FREE. Ask for a transistor for a circuit
+ * drawing 2 mA and the old band fetched only parts *rated* 2–20 mA: 19 exotic products, while
+ * every ordinary small-signal NPN (rated 100 mA, e.g. the BC847) was excluded BY CONSTRUCTION.
+ * Un-banded, the same search returns 50 sensible parts with the BC847 third.
+ *
+ * The pool stays bounded by MAX_VALUES_PER_SPEC taken ProductCount-DESC, which selects the
+ * MAINSTREAM ratings — verified: a 12 V MOSFET ask fetches 12–60 V parts and admits zero parts
+ * rated ≥100 V, so removing the ceiling does not let exotic high-voltage parts in.
+ *
+ * Skips bare-integer facets (count-facet trap).
+ */
 export function pickNumericValueIds(
   facet: DigikeyParametricFilter,
   required: number,
   rule: LogicTable['rules'][number] | undefined,
+  explicitBand?: { lo: number; hi: number },
 ): string[] {
   const fvs = facet.FilterValues ?? [];
   if (fvs.length === 0 || fvs.every(v => isBareInt(v.ValueName))) return [];
   let lo: number;
   let hi: number;
-  const dir = rule?.thresholdDirection ?? 'gte';
-  if (rule?.logicType === 'threshold' && dir === 'lte') { lo = 0; hi = required; }
-  else if (rule?.logicType === 'threshold' || rule?.logicType === 'fit') { lo = required; hi = required * OVERSPEC_FACTOR; }
-  else { lo = required * (1 - IDENTITY_TOL); hi = required * (1 + IDENTITY_TOL); } // identity exact-ish
+  if (explicitBand) {
+    // The user stated a RANGE ("hFE 200-400"). That is a direct instruction about which parts
+    // they want, and it outranks anything we would infer from the rule's type — including for a
+    // rule the engine cannot compare at all, which would otherwise fall to the identity branch
+    // below and band the catalog to ±2% of one end of their range.
+    ({ lo, hi } = explicitBand);
+  } else {
+    const dir = effectiveThresholdDirection(rule);
+    if (dir === 'lte') { lo = 0; hi = required; }
+    else if (dir === 'gte') { lo = required; hi = Infinity; }
+    else if (dir === 'range_superset') { lo = required; hi = required * OVERSPEC_FACTOR; }
+    else { lo = required * (1 - IDENTITY_TOL); hi = required * (1 + IDENTITY_TOL); } // identity exact-ish
+  }
   return fvs
     .map(v => ({ v, n: facetValueToBaseSI(v.ValueName) }))
     .filter(x => x.n != null && (x.n as number) >= lo && (x.n as number) <= hi)
@@ -129,12 +158,21 @@ export function pickNumericValueIds(
 
 const CATEGORICAL_TYPES = new Set(['identity', 'identity_upgrade', 'identity_flag']);
 
-/** Build the ParameterFilters for ONE category from the synthetic source's resolved specs. */
+/**
+ * Build the ParameterFilters for ONE category from the synthetic source's resolved specs.
+ *
+ * `bands` carries the ranges the user stated EXPLICITLY (see statedBands.ts). They are passed
+ * separately because the synthetic source flattens a spec to a single `numericValue` — a stated
+ * "200-400" arrives here as just `200`, and the upper bound would be lost. Each is widened
+ * outward before use: the fetch is a relevance NET (a boundary part must survive it), and the
+ * precise cut happens later in the vetting pass.
+ */
 export function buildFiltersForCategory(
   specs: ParametricAttribute[],
   logicTable: LogicTable,
   facets: DigikeyParametricFilter[],
   sample: DigikeyProduct | undefined,
+  bands?: Map<string, StatedBand>,
 ): ParametricFilterSpec[] {
   const ruleById = new Map(logicTable.rules.map(r => [r.attributeId, r]));
   const filters: ParametricFilterSpec[] = [];
@@ -143,11 +181,22 @@ export function buildFiltersForCategory(
     if (!facet) continue; // no facet in this category → defer to vetting
     const rule = ruleById.get(spec.parameterId);
     const categorical = !!rule && CATEGORICAL_TYPES.has(rule.logicType) && spec.numericValue === undefined;
-    const valueIds = categorical
-      ? pickCategoricalValueIds(facet, spec.value)
-      : spec.numericValue !== undefined
-        ? pickNumericValueIds(facet, spec.numericValue, rule)
-        : pickCategoricalValueIds(facet, spec.value); // unitless identity (e.g. dielectric)
+    // CATEGORICAL WINS OVER A BAND. A band is meaningless for a code like "SOT-23" or "X7R", and
+    // one can still be produced by accident: the range regex matches any `digits SEP digits` run,
+    // so a package such as "TO-220-3" parses as the "range" 220-to-3. Consulting the band first
+    // would then filter a categorical facet ("0805 (2012 Metric)") numerically and select packages
+    // at random. If the synthetic source decided this spec is a code, it is a code.
+    const band = categorical ? undefined : bands?.get(spec.parameterId);
+    const valueIds = band
+      // The band already carries its direction (parseStatedBands drops the free end on a
+      // max-rating or limit rule), so it can be used as-is — no direction logic here, which is
+      // exactly how this consumer got it wrong before.
+      ? pickNumericValueIds(facet, spec.numericValue ?? band.lo, rule, widenBandForFetch(band))
+      : categorical
+        ? pickCategoricalValueIds(facet, spec.value)
+        : spec.numericValue !== undefined
+          ? pickNumericValueIds(facet, spec.numericValue, rule)
+          : pickCategoricalValueIds(facet, spec.value); // unitless identity (e.g. dielectric)
     if (valueIds.length) filters.push({ parameterId: facet.ParameterId, valueIds });
   }
   return filters;
@@ -175,6 +224,11 @@ export async function fetchGreenfieldParametricProducts(
   if (!synth) return [];
   const { logicTable, familyId, source } = synth;
 
+  // Ranges the user stated outright ("hFE 200-400"). Parsed from the RAW constraints because the
+  // synthetic source keeps only one number per spec — by the time a spec reaches `source`, the
+  // 400 is gone.
+  const bands = parseStatedBands(constraints, logicTable);
+
   // Caller may pass pre-resolved categories (guided flow resolves them once for both the
   // category-scoped keyword search and this fetch) — avoids a duplicate category-tree walk.
   const categoryIds = categoryIdsOverride ?? await resolveCategoryIdsForFamily(familyId);
@@ -183,15 +237,39 @@ export async function fetchGreenfieldParametricProducts(
   // Filter every resolved category in parallel; facets split across leaves for multi-category
   // families (op-amps: Amplifier Type in one, supply in another), so each contributes its own
   // in-scope specs. Union the products.
+  // ⚠️ EVERY FAILURE BELOW IS LOGGED, AND THAT IS THE POINT.
+  //
+  // Both of these calls used to end in `.catch(() => null)`. When the facet call timed out — which
+  // it did in 4 of 6 measured attempts, because it was uncached and ran against a 10 s limit — this
+  // function returned an empty array, the search silently fell back to a keyword-only pool, and the
+  // user got three obsolete parts with no hint that anything had failed. A failure nobody can see
+  // is why that survived a month. If the value-based pool is empty, the log now says WHY.
   const perCategory = await Promise.all(
     categoryIds.map(async (categoryId): Promise<DigikeyProduct[]> => {
-      const discover = await getCategoryParametricFacets('', categoryId, currency, userId).catch(() => null);
-      if (!discover || discover.facets.length === 0) return [];
-      const filters = buildFiltersForCategory(source.parameters, logicTable, discover.facets, discover.products[0]);
-      if (filters.length === 0) return [];
-      const res = await parametricFilterSearchMulti(categoryId, filters, { limit: 50 }, currency, userId).catch(() => null);
+      const discover = await getCategoryParametricFacets('', categoryId, currency, userId)
+        .catch((e: unknown) => {
+          console.error(`[greenfield] category ${categoryId}: facet discovery FAILED — falling back to keyword-only. ${e instanceof Error ? e.message : String(e)}`);
+          return null;
+        });
+      if (!discover) return [];
+      if (discover.facets.length === 0) {
+        console.warn(`[greenfield] category ${categoryId}: Digikey returned NO facets — cannot filter by value here.`);
+        return [];
+      }
+      const filters = buildFiltersForCategory(source.parameters, logicTable, discover.facets, discover.products[0], bands);
+      if (filters.length === 0) {
+        console.warn(`[greenfield] category ${categoryId}: none of the stated specs [${source.parameters.map(p => p.parameterId).join(', ')}] matched a facet — no value filter applied.`);
+        return [];
+      }
+      const res = await parametricFilterSearchMulti(categoryId, filters, { limit: 50 }, currency, userId)
+        .catch((e: unknown) => {
+          console.error(`[greenfield] category ${categoryId}: parametric search FAILED. ${e instanceof Error ? e.message : String(e)}`);
+          return null;
+        });
       if (!res) return [];
-      return [...(res.ExactMatches ?? []), ...(res.Products ?? [])];
+      const products = [...(res.ExactMatches ?? []), ...(res.Products ?? [])];
+      console.log(`[greenfield] category ${categoryId}: ${products.length} parts from the value filter`);
+      return products;
     }),
   );
 

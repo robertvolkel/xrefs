@@ -112,8 +112,15 @@ export const TTL_RECOMMENDATIONS_MS = 30 * 24 * 60 * 60 * 1000;
  *       is 'atlas' (mirrors searchParts), so an Atlas-sourced Chinese maker whose
  *       name the alias index misses reads 🇨🇳 consistently across the search + recs
  *       panels. Cached v18 recs carry the old 'unknown' origin for those parts.
- *       (Full-result tier only — mfrOrigin is resolved after the base payload.) */
-export const RECS_CACHE_SCHEMA_VERSION = 'v19';
+ *       (Full-result tier only — mfrOrigin is resolved after the base payload.)
+ *   v19→v20 on 2026-07-13: `package_case` is now compared (identity) in C6/C7/C8/C9/C10
+ *       instead of being handed to a human ('application_review' = a flat 50% for EVERY
+ *       candidate). 33 other families already compared it; these five did not, so a
+ *       request for SOT-23 accepted a QFN-32 at half marks. SCORING CHANGES: a
+ *       different-package candidate now FAILS in those families and sinks, as it always
+ *       has everywhere else. Cached v19 recs hold the old flat-50% scores.
+ *       (Full-result tier only — the base payload holds no scores.) */
+export const RECS_CACHE_SCHEMA_VERSION = 'v20';
 
 /** Bump this when search merge/dedup/MFR-filter semantics change. v1→v2 on
  *  2026-06-02 to invalidate entries cached by the pre-MFR-filter merge that
@@ -142,8 +149,38 @@ export const RECS_CACHE_SCHEMA_VERSION = 'v19';
  *  wrong-family pool (gate-driver ICs for a MOSFET search) mislabelled "Fits".
  *  v8→v9 on 2026-06-30: searchParts now resolves PartSummary.mfrOrigin per match (atlas/western/
  *  unknown) so the deterministic Chinese/Western search-card filter works. A v8 entry's matches
- *  lack mfrOrigin, so the Western filter would wrongly come back empty. */
-export const SEARCH_CACHE_SCHEMA_VERSION = 'v9';
+ *  lack mfrOrigin, so the Western filter would wrongly come back empty.
+ *  v9→v10 on 2026-07-13: the greenfield parametric fetch no longer caps a "must be rated at least
+ *  X" band at X×10 (headroom on a maximum rating is free), and `fit` specs now band DOWNWARD as
+ *  the engine has always evaluated them. A v9 entry holds the POISONED pool this fixed — for a
+ *  small-signal-NPN search that is 18 exotic parts rated 2–20 mA with every ordinary transistor
+ *  excluded. Without this bump the fix is invisible: the fetch is corrected but the stale pool is
+ *  served straight from cache, which reads exactly like the fix not working.
+ *  v10→v11 on 2026-07-14: SearchResult gained `narrowing` — the question to ask when the pool came
+ *  back too big to be useful. A v10 entry simply has no such field, so a cached greenfield search
+ *  silently skips the narrowing step and hands the user 50 parts. Same lesson as v9→v10, one day
+ *  apart: a new FIELD on a cached shape needs a bump exactly as much as a new VALUE does, and the
+ *  failure looks identical either way — like the feature was never wired up.
+ *  v11→v12 on 2026-07-14: the narrowing question is now chosen by the DOCUMENT's ranking among the
+ *  specs the pool can support, not by the best entropy score (which flips with the enrichment path
+ *  — see guidedSelection.MIN_SPLIT_QUALITY). v11 rows carry a `narrowing` naming whichever spec the
+ *  old ranker picked. There is one Supabase instance and no separate prod DB, so rows written while
+ *  developing this ARE live rows.
+ *  v12→v13 on 2026-07-14: a stated band now carries its DIRECTION (statedBands.parseStatedBands).
+ *  v12 banded the catalog FETCH two-sided on max-rating rules, so a user's "1-2 mA" asked Digikey
+ *  for parts RATED 1-2 mA — the Decision #271 misread, restored in the fetch. v12 pools were
+ *  fetched under that band and are wrong wherever the band fired.
+ *  v13→v14 on 2026-07-14: PartSummary gained `specFit` / `specsRead` / `specsStated` — the honest
+ *  three-state fit verdict. `hardFail === false` meant BOTH "meets every stated spec" AND "we could
+ *  not read a single one of them", so unreadable parts rendered as "Fits your specs" (measured: 20 of
+ *  50 results for a 1–5 A MOSFET ask were duals rated 0.115–0.95 A, all shown as fitting). A v13 row
+ *  has no `specFit`, and the chip keys off it — so a cached card would show NO chip at all. Exactly
+ *  the v9→v10 and v10→v11 lesson a third time: a new FIELD on a cached shape needs a bump, and the
+ *  failure looks identical to the feature never having been wired up.
+ *  v14→v15 on 2026-07-15: the vetting key now includes each constraint's `bound` (min/max) direction.
+ *  Before, "current at most 5A" and "current at least 5A" hashed identically and whichever ran first
+ *  was served to both. v14 rows were keyed without direction and are ambiguous where a bound fired. */
+export const SEARCH_CACHE_SCHEMA_VERSION = 'v15';
 
 /** Not-found sentinel: 24 hours */
 export const TTL_NOT_FOUND_MS = 24 * 60 * 60 * 1000;

@@ -340,10 +340,25 @@ export type MatchStatus = 'exact' | 'compatible' | 'better' | 'worse' | 'differe
 export interface SearchConstraint {
   /** Human term, e.g. "drain-source voltage", "current", "channel type". */
   attribute: string;
-  /** 12, "5", or "N-Channel". */
+  /** 12, "5", "1-5" (a stated range), or "N-Channel". */
   value: string | number;
   /** "V", "A", "MHz" — omitted for categorical values. */
   unit?: string;
+  /**
+   * WHICH DIRECTION the user's number binds in — and it must come from the USER, never be
+   * inferred.
+   *
+   * "gain of at least 300" and "no taller than 1.2mm" carry a direction that a bare number cannot.
+   * Without this field the extractors emitted a plain `300`, the direction was lost, and the
+   * requirement either did nothing or (worse) got guessed at. Guessing a direction is the single
+   * mistake this codebase has made most often: it once banded a "2 mA circuit" to parts *rated*
+   * 2-20 mA and excluded every ordinary transistor ever made.
+   *
+   * Absent = the user stated a bare value and we do NOT know which way it binds. That is a real,
+   * representable state, and the correct response to it is to leave the spec uncompared — not to
+   * invent an answer.
+   */
+  bound?: 'min' | 'max';
 }
 
 /** Lightweight part info for search results / selection */
@@ -374,8 +389,31 @@ export interface PartSummary {
    *  synthetic source built from the user's stated specs. Absent on MPN lookups
    *  and unvetted searches. Display/ranking only. */
   matchScore?: number;   // 0-100 vs the synthetic spec (most valid parts ≈100 — spec is sparse, so use ordering not the raw %)
-  failCount?: number;    // real mismatches (candidate value known & disagrees) — 0 = fits all stated specs
+  failCount?: number;    // real mismatches (candidate value known & disagrees) — NOT "everything checked out"
   hardFail?: boolean;    // failCount > 0 — below spec or wrong identity (kept, but sunk)
+
+  /**
+   * THE HONEST VERDICT. Read this, not `hardFail`, to tell the user how a part stands.
+   *
+   * ⚠️ `hardFail === false` DOES NOT MEAN "it fits". A rule only fails when a value DISAGREES, and a
+   * value we cannot read never disagrees — so a part whose specs are unreadable collects zero
+   * failures and looks like a flawless match. Measured, for "a 30V N-channel MOSFET that can handle
+   * 1 to 5 amps": 20 of 50 results were dual MOSFETs rated 0.115–0.95 A — parts that physically
+   * cannot carry 1 A — and every one was labelled "Fits your specs".
+   *
+   *   'fits'         we read every spec the user stated, and none of them disagree
+   *   'below_spec'   we read a value and it violates what they asked for
+   *   'unconfirmed'  we could NOT READ some of what they asked for — we do not know
+   *
+   * `undefined` = no spec-vetted search ran (a part-number lookup, or a description with no stated
+   * specs). That is different from 'unconfirmed', and callers must keep it different: there is
+   * nothing to be unconfirmed ABOUT when the user stated nothing.
+   */
+  specFit?: 'fits' | 'below_spec' | 'unconfirmed';
+  /** How many of the specs the user stated we could actually READ on this part. */
+  specsRead?: number;
+  /** How many specs the user stated. `specsRead < specsStated` ⇒ we did not check everything. */
+  specsStated?: number;
 }
 
 export type SearchDataSource = 'digikey' | 'atlas' | 'partsio' | 'mouser';
@@ -384,6 +422,22 @@ export interface SearchResult {
   type: 'single' | 'multiple' | 'none';
   matches: PartSummary[];
   sourcesContributed?: SearchDataSource[];
+  /** The one question worth asking to cut this pool down, when it came back too big to be
+   *  useful. Computed inside the search (where the candidates' full parametrics are already in
+   *  hand) rather than re-derived later, and small enough to ride the search cache. Consumed by
+   *  the guided-selection turn controller; absent when the pool is already small enough, when no
+   *  spec can actually split it, or when one narrowing question has already been asked. */
+  narrowing?: NarrowingSuggestion;
+}
+
+/** A pool-derived narrowing question. `options` are always a closed set drawn from the parts
+ *  actually in the pool — for a numeric spec they are value RANGES, so the answer can only ever
+ *  be an explicit band (see statedBands.ts on why a bare number is refused). */
+export interface NarrowingSuggestion {
+  attributeId: string;
+  label: string;
+  options: string[];
+  poolSize: number;
 }
 
 // ── Service Status ──────────────────────────────────────────

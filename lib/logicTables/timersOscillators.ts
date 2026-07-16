@@ -237,7 +237,7 @@ export const timersOscillatorsLogicTable: LogicTable = {
     {
       attributeId: 'package_case',
       attributeName: 'Package / Case',
-      logicType: 'application_review',
+      logicType: 'identity',
       weight: 5,
       engineeringReason: 'Oscillator package encodes the PCB footprint: 3225 = 3.2×2.5mm, 5032 = 5.0×3.2mm, 7050 = 7.0×5.0mm, 2016 = 2.0×1.6mm, 2520 = 2.5×2.0mm. BLOCK substitutions with a different package size — footprints are not compatible. Within the same package size: pad 1 function varies by vendor (may be /OE, NC, or VCC) — always verify pad assignment against the PCB layout, not just package size.',
       sortOrder: 20,

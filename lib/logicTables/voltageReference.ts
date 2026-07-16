@@ -221,7 +221,7 @@ export const voltageReferenceLogicTable: LogicTable = {
     {
       attributeId: 'package_case',
       attributeName: 'Package / Footprint',
-      logicType: 'application_review',
+      logicType: 'identity',
       weight: 5,
       engineeringReason: 'Package must match PCB footprint for drop-in replacement. SOT-23-3 (3-pin) and SOT-23-5 (5-pin) have DIFFERENT footprints despite similar outlines — not interchangeable. SC70-5 is smaller than SOT-23-5 with 0.65mm pin pitch vs 0.95mm — footprints are not compatible despite smaller outline. SOIC-8 for higher-pin-count references with multiple outputs. DFN-6, MSOP-8 as intermediate sizes. TO-92 for through-hole TL431, LM336, LM385 in legacy designs. TL431 exists in both SOT-23 and TO-92 — different footprints within same part family. Application Review because physical compatibility is a visual board-level check.',
       sortOrder: 18,

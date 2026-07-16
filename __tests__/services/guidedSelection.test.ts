@@ -21,13 +21,19 @@ describe('nextGuidedStep — system-driven guided selection', () => {
     if (s1?.type === 'ask_choice') expect(s1.attr.attributeId).toBe('polarity');
   });
 
-  it('batches all remaining typed-value specs into ONE prose turn', () => {
+  it('batches all remaining typed-value specs into ONE prose turn — INCLUDING the input voltage', () => {
     const answered: GuidedAnswerMap = { output_type: { value: 'Fixed' }, polarity: { value: 'Positive' } };
     const step = nextGuidedStep('C1', answered);
     expect(step?.type).toBe('ask_values');
     if (step?.type === 'ask_values') {
-      // The three remaining Tier 2 specs are all typed values, asked together.
-      expect(step.attrs.map(a => a.attributeId)).toEqual(['output_voltage', 'iout_max', 'package_case']);
+      // `vin_max` is the whole point of the selection review: an LDO converts Vin→Vout and the
+      // agent never once asked for Vin. A 60 V rail into a 6 V part is a hard safety failure.
+      expect(step.attrs.map(a => a.attributeId)).toEqual([
+        'output_voltage',
+        'iout_max',
+        'vin_max',
+        'package_case',
+      ]);
       expect(step.attrs.every(a => a.input === 'value')).toBe(true);
     }
   });
@@ -38,6 +44,7 @@ describe('nextGuidedStep — system-driven guided selection', () => {
       polarity: { value: 'Positive' },
       output_voltage: { value: 3.3, unit: 'V' },
       iout_max: { value: 500, unit: 'mA' },
+      vin_max: { value: 12, unit: 'V' },
       package_case: { value: 'SOT-23' },
     };
     const step = nextGuidedStep('C1', answered);
@@ -45,6 +52,7 @@ describe('nextGuidedStep — system-driven guided selection', () => {
     if (step?.type === 'search') {
       expect(step.constraints).toContainEqual({ attribute: 'output_voltage', value: 3.3, unit: 'V' });
       expect(step.constraints).toContainEqual({ attribute: 'iout_max', value: 500, unit: 'mA' });
+      expect(step.constraints).toContainEqual({ attribute: 'vin_max', value: 12, unit: 'V' });
       expect(step.constraints).toContainEqual({ attribute: 'output_type', value: 'Fixed' });
     }
   });
@@ -55,13 +63,14 @@ describe('nextGuidedStep — system-driven guided selection', () => {
       polarity: { value: 'Positive' },
       output_voltage: { value: 3.3, unit: 'V' },
       iout_max: { value: 500, unit: 'mA' },
+      vin_max: { value: 12, unit: 'V' },
       package_case: { value: null }, // user said "any / not sure" — must not block the search
     };
     const step = nextGuidedStep('C1', answered);
     expect(step?.type).toBe('search');
     if (step?.type === 'search') {
       expect(step.constraints.find(c => c.attribute === 'package_case')).toBeUndefined();
-      expect(step.constraints.length).toBe(4);
+      expect(step.constraints.length).toBe(5);
     }
   });
 

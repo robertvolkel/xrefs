@@ -11,14 +11,20 @@ function part(overrides: Partial<PartSummary>): PartSummary {
   };
 }
 
-// A vetted-search result set: each card scored by the engine, so failCount /
-// hardFail are populated. Two "Below spec" (hardFail) parts + three green ones.
+// A vetted-search result set: each card scored by the engine, so failCount / hardFail / specFit are
+// populated. Three parts we READ and that meet the ask, two we read and that VIOLATE it.
+//
+// ⚠️ `specFit` IS NOT OPTIONAL DECORATION HERE. `searchParts` writes hardFail and specFit together,
+// on the same line — there is no state where one exists without the other. A fixture that carries
+// only `hardFail` describes a shape the system does not emit, and a test built on it silently stops
+// testing the real thing. (The whole reason `specFit` exists is that `hardFail` could not tell
+// "meets every spec" apart from "we could not read a single one".)
 const vetted: PartSummary[] = [
-  part({ mpn: 'BC847B', manufacturer: 'Nexperia', failCount: 0, hardFail: false, status: 'Active', qualifications: ['AEC-Q101'] }),
-  part({ mpn: 'MMBT3904', manufacturer: 'onsemi', failCount: 0, hardFail: false, status: 'Active' }),
-  part({ mpn: 'BC817', manufacturer: 'Diodes Inc', failCount: 0, hardFail: false, status: 'Obsolete' }),
-  part({ mpn: '2N2222', manufacturer: 'STMicro', failCount: 2, hardFail: true, status: 'Active' }),
-  part({ mpn: 'PN2222', manufacturer: 'onsemi', failCount: 1, hardFail: true, status: 'Active' }),
+  part({ mpn: 'BC847B', manufacturer: 'Nexperia', failCount: 0, hardFail: false, specFit: 'fits', specsRead: 3, specsStated: 3, status: 'Active', qualifications: ['AEC-Q101'] }),
+  part({ mpn: 'MMBT3904', manufacturer: 'onsemi', failCount: 0, hardFail: false, specFit: 'fits', specsRead: 3, specsStated: 3, status: 'Active' }),
+  part({ mpn: 'BC817', manufacturer: 'Diodes Inc', failCount: 0, hardFail: false, specFit: 'fits', specsRead: 3, specsStated: 3, status: 'Obsolete' }),
+  part({ mpn: '2N2222', manufacturer: 'STMicro', failCount: 2, hardFail: true, specFit: 'below_spec', specsRead: 3, specsStated: 3, status: 'Active' }),
+  part({ mpn: 'PN2222', manufacturer: 'onsemi', failCount: 1, hardFail: true, specFit: 'below_spec', specsRead: 3, specsStated: 3, status: 'Active' }),
 ];
 
 // Mixed-origin set: resolved mfrOrigin populated by searchParts. The "3PEAK" row is the
@@ -57,12 +63,44 @@ describe('applySearchResultFilter', () => {
 
   it('meets_spec keeps parts with no verdict (unscored / unvetted search)', () => {
     const unscored = [
-      part({ mpn: 'A', failCount: 0, hardFail: false }),
-      part({ mpn: 'B' }), // no failCount/hardFail — engine did not score it
-      part({ mpn: 'C', failCount: 3, hardFail: true }),
+      part({ mpn: 'A', failCount: 0, hardFail: false, specFit: 'fits', specsRead: 2, specsStated: 2 }),
+      part({ mpn: 'B' }), // no verdict at all — the user stated no specs, so there is nothing to be unconfirmed about
+      part({ mpn: 'C', failCount: 3, hardFail: true, specFit: 'below_spec', specsRead: 2, specsStated: 2 }),
     ];
-    // Missing data never causes rejection: B (unknown) is kept, only C drops.
+    // An unvetted card is kept: there is nothing to check it against.
     expect(applySearchResultFilter(unscored, { meets_spec: true }).map(p => p.mpn)).toEqual(['A', 'B']);
+  });
+
+  // ── THE BUG THIS FILTER USED TO HAVE ──────────────────────────────────────────────────────────
+  //
+  // `meets_spec` was `p.hardFail !== true`. A rule only FAILS when a value DISAGREES, so a part
+  // whose specs could not be READ has no failures — and this filter kept it. Measured on a real
+  // "30V N-channel MOSFET, 1 to 5 amps" search: 20 of the 50 results were dual MOSFETs rated
+  // 0.115–0.95 A (they physically cannot carry 1 A), every one labelled "Fits your specs", and
+  // every one survived a "show me the ones that meet spec" request.
+  //
+  // The filter's NAME is a promise. A part we never managed to check does not meet the spec.
+  describe('a part whose specs we could not READ does not "meet spec"', () => {
+    const withUnreadable: PartSummary[] = [
+      part({ mpn: 'CSD17313Q2', description: 'MOSFET N-CH 30V 5A', failCount: 0, hardFail: false, specFit: 'fits', specsRead: 3, specsStated: 3 }),
+      // The real offender: a DUAL MOSFET. Digikey names a dual's parameters differently, our map
+      // does not recognise them, so not one of the three stated specs could be read.
+      part({ mpn: '2N7002DW', description: 'MOSFET 2N-CH 60V 0.115A', failCount: 0, hardFail: false, specFit: 'unconfirmed', specsRead: 0, specsStated: 3 }),
+      part({ mpn: 'IRLR024N', description: 'MOSFET N-CH 55V 17A', failCount: 0, hardFail: false, specFit: 'fits', specsRead: 3, specsStated: 3 }),
+      part({ mpn: 'BSS138', description: 'MOSFET N-CH 50V 0.2A', failCount: 1, hardFail: true, specFit: 'below_spec', specsRead: 3, specsStated: 3 }),
+    ];
+
+    it('drops it — it cannot carry the 1 A that was asked for, and we never checked', () => {
+      const result = applySearchResultFilter(withUnreadable, { meets_spec: true });
+      expect(result.map(p => p.mpn)).toEqual(['CSD17313Q2', 'IRLR024N']);
+      expect(result.map(p => p.mpn)).not.toContain('2N7002DW');
+    });
+
+    it('would have KEPT it under the old `hardFail !== true` rule — this is the regression guard', () => {
+      // Pin the old behaviour explicitly, so nobody "simplifies" the filter back to it.
+      const oldRule = withUnreadable.filter(p => p.hardFail !== true);
+      expect(oldRule.map(p => p.mpn)).toContain('2N7002DW');
+    });
   });
 
   it('manufacturer_filter matches case-insensitive substring', () => {

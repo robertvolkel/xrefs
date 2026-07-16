@@ -112,6 +112,10 @@ export interface DigikeySearchOptions {
   limit?: number;
   offset?: number;
   categoryId?: number;
+  /** Override the default request timeout. Only the category-facet discovery call needs this:
+   *  it asks Digikey to aggregate an ENTIRE product category, which routinely takes longer than
+   *  the 10 s default and then throws (see `digikeyFetch` — a timeout is NOT retried). */
+  timeoutMs?: number;
 }
 
 // ============================================================
@@ -176,12 +180,17 @@ function buildHeaders(token: string, currency?: string): Record<string, string> 
 
 const DIGIKEY_TIMEOUT_MS = 10_000;
 
-async function digikeyFetch(url: string, options: RequestInit, currency?: string): Promise<Response> {
+/** The category-facet discovery call asks Digikey to aggregate a whole category and is far
+ *  slower than a normal search. At the 10 s default it timed out in 4 of 6 measured attempts —
+ *  and a timeout is thrown, never retried (below) — so the caller silently got nothing. */
+const DIGIKEY_FACETS_TIMEOUT_MS = 30_000;
+
+async function digikeyFetch(url: string, options: RequestInit, currency?: string, timeoutMs?: number): Promise<Response> {
   const MAX_RETRIES = 3;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     let res: Response;
     try {
-      res = await fetch(url, { ...options, signal: AbortSignal.timeout(DIGIKEY_TIMEOUT_MS) });
+      res = await fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs ?? DIGIKEY_TIMEOUT_MS) });
     } catch (error) {
       // Timeout or network error — don't retry, fail fast
       throw new Error(`Digikey request failed: ${error instanceof Error ? error.message : 'timeout'}`);
@@ -254,7 +263,7 @@ export async function keywordSearch(
     method: 'POST',
     headers: buildHeaders(token, currency),
     body: JSON.stringify(body),
-  }, currency);
+  }, currency, options.timeoutMs);
 
   const data = await res.json();
   console.log(`[perf] digikey:keywordSearch ${(performance.now() - t0).toFixed(0)}ms`);
@@ -276,17 +285,91 @@ export async function keywordSearch(
  * param-map category from the products to match the right facet). Facets are only populated
  * when `categoryId` is supplied. Caller handles errors (returns empty on failure upstream).
  */
+type CategoryFacets = { facets: DigikeyParametricFilter[]; products: DigikeyProduct[] };
+
+/** L1 in-memory facet cache. Process-local, so a cold start still pays one L2 read. */
+const facetCache = new Map<string, CategoryFacets>();
+
+/** Bump when the cached shape changes. */
+const FACETS_CACHE_VERSION = 'v1';
+/** Catalogue STRUCTURE — the parameter names and the values that exist in a category — is a
+ *  slowly-changing dimension. Products come and go, so `ProductCount` drifts, but we only use it
+ *  to rank which values are mainstream, and that ordering is stable on a 30-day scale. This is
+ *  catalogue structure, NOT pricing or stock, so persisting it does not violate the project's
+ *  no-caching-commercial-data rule. */
+const TTL_FACETS_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * The parametric facets (every filterable parameter and its possible values) for a category.
+ *
+ * ⚠️ THIS CALL IS THE SLOWEST THING WE ASK DIGIKEY FOR, and it used to be made fresh on EVERY
+ * spec-driven search, with the default 10 s timeout, and a timeout is thrown-not-retried. Measured:
+ * it failed 4 of 6 attempts. Both call sites swallowed the error (`.catch(() => null)`), so the
+ * search silently fell back to a keyword-only pool — a user asking for a 30 V / 1-5 A MOSFET got
+ * three obsolete parts and no indication that anything had gone wrong.
+ *
+ * Two fixes, both here: CACHE it (structure barely changes), and give it a timeout that fits the
+ * work. The empty-keyword call — the one the greenfield fetch makes, covering the whole category —
+ * is the only one cached; a keyword-scoped call is per-query and not worth persisting.
+ */
+/**
+ * Strip price and stock before a facet product is retained or persisted.
+ *
+ * The facet cache's `products` exist ONLY to give the discover step a sample of the category's
+ * parametric structure — `findFacetForAttribute` reads a product's `.Category` and `.Parameters`
+ * and nothing else. Price/stock on these products is never read, and persisting it to the 30-day
+ * L2 tier would violate the project's no-caching-commercial-data rule (Decision #158) and let a
+ * future reader mistake a month-old number for live data. So the facet cache never holds it.
+ */
+function stripCommercialForFacetCache(products: DigikeyProduct[]): DigikeyProduct[] {
+  return products.map(p => ({
+    ...p,
+    UnitPrice: 0,
+    QuantityAvailable: 0,
+    StandardPricing: undefined,
+    ProductVariations: p.ProductVariations?.map(v => ({ ...v, StandardPricing: undefined })),
+  }));
+}
+
 export async function getCategoryParametricFacets(
   keywords: string,
   categoryId: number,
   currency?: string,
   userId?: string,
-): Promise<{ facets: DigikeyParametricFilter[]; products: DigikeyProduct[] }> {
-  const res = await keywordSearch(keywords, { limit: 1, categoryId }, currency, userId);
-  return {
+): Promise<CategoryFacets> {
+  const cacheable = keywords === '';
+  const key = `${FACETS_CACHE_VERSION}:${categoryId}:${currency ?? 'USD'}`;
+
+  if (cacheable) {
+    const l1 = facetCache.get(key);
+    if (l1) return l1;
+    const l2 = await getCachedResponse<CategoryFacets>('digikey', `__facets__:${key}`, 'facets');
+    if (l2?.data?.facets?.length) {
+      facetCache.set(key, l2.data);
+      return l2.data;
+    }
+  }
+
+  const res = await keywordSearch(
+    keywords,
+    { limit: 1, categoryId, ...(cacheable ? { timeoutMs: DIGIKEY_FACETS_TIMEOUT_MS } : {}) },
+    currency,
+    userId,
+  );
+  const out: CategoryFacets = {
     facets: res.FilterOptions?.ParametricFilters ?? [],
-    products: [...(res.ExactMatches ?? []), ...(res.Products ?? [])],
+    // Strip price/stock up front so nothing commercial reaches L1, L2, or the caller — the facet
+    // products are read only for their parametric structure. See stripCommercialForFacetCache.
+    products: stripCommercialForFacetCache([...(res.ExactMatches ?? []), ...(res.Products ?? [])]),
   };
+
+  // Only cache a real answer. An empty facet list means the call came back useless; persisting
+  // that would bake the outage in for 30 days.
+  if (cacheable && out.facets.length > 0) {
+    facetCache.set(key, out);
+    setCachedResponse('digikey', `__facets__:${key}`, 'facets', 'parametric', out, TTL_FACETS_MS);
+  }
+  return out;
 }
 
 /**
@@ -377,11 +460,17 @@ export async function parametricFilterSearchMulti(
     },
   };
 
+  // Same 20-second reality as the facet discovery call: this is a category-wide parametric query,
+  // not a keyword lookup, and Digikey takes its time. At the 10 s default it timed out and — since
+  // `digikeyFetch` throws rather than retries on timeout — the caller silently got nothing and the
+  // search fell back to a keyword-only pool. Measured: this is what still killed the MOSFET search
+  // after the facet call was fixed. Unlike the facets, this result is per-query and NOT cached, so
+  // it pays the latency every time; that is the cost of an accurate pool.
   const res = await digikeyFetch(SEARCH_URL, {
     method: 'POST',
     headers: buildHeaders(token, currency),
     body: JSON.stringify(body),
-  }, currency);
+  }, currency, DIGIKEY_FACETS_TIMEOUT_MS);
 
   const data = await res.json();
   console.log(`[perf] digikey:parametricFilterSearchMulti ${(performance.now() - t0).toFixed(0)}ms (${filters.length} params)`);

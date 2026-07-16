@@ -2,10 +2,10 @@ import Anthropic from '@anthropic-ai/sdk';
 import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction, ChoiceOption, SearchConstraint, deriveRecommendationBucket, deriveRecommendationCategories, RecommendationCategory } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
 import { looksLikeMpn, mentionsMpn, buildSearchSummary } from './searchSummary';
-import { decideGuidedTurn } from './guidedSelectionController';
+import { decideGuidedTurn, renderNarrowingQuestion } from './guidedSelectionController';
 import { sanitizeChoiceOptions } from './choiceGuard';
 import { buildGreenfieldQuery } from './searchConstraints';
-import { logicTableRegistry } from '../logicTables';
+import { logicTableRegistry, getLogicTable } from '../logicTables';
 import { getSelectionQuestions } from './selectionQuestions';
 import { GuidedAnswerMap } from './guidedSelection';
 import { observeAndLogGrounding, extractUserMpnCandidates } from './grounding/groundingLogger';
@@ -1036,13 +1036,27 @@ const EXTRACT_SPECS_TOOL: Anthropic.Tool = {
       },
       constraints: {
         type: 'array',
-        description: 'One entry per spec the user ACTUALLY stated. Numeric specs carry a number value + unit; categorical specs (channel type, polarity, technology) carry a string value and no unit. Do NOT invent specs the user did not state.',
+        description: 'One entry per spec the user ACTUALLY stated. Numeric specs carry a number value + unit; categorical specs (channel type, polarity, technology) carry a string value and no unit. Do NOT invent specs the user did not state. Report each stated spec ONCE.',
         items: {
           type: 'object',
           properties: {
             attribute: { type: 'string' },
-            value: { type: ['string', 'number'] },
+            value: {
+              type: ['string', 'number'],
+              // A RANGE and a BOUND are different things and both used to be lost here. A range
+              // arrives as a hyphenated string; a bound arrives as a number plus `bound`.
+              description: 'A single number for a plain value (9). A RANGE as a hyphenated string ("200-400" for "gain 200 to 400", "1-5" for "1 to 5 amps") — never collapse a range to one end. The literal string for a categorical ("N-Channel", "X7R", "SOT-23").',
+            },
             unit: { type: 'string' },
+            bound: {
+              type: 'string',
+              enum: ['min', 'max'],
+              // ⚠️ Without this the direction was simply lost: "gain of at least 300" arrived as a
+              // bare 300, and a bare number cannot say which way it binds. The downstream refuses
+              // to GUESS a direction (guessing one is the mistake this codebase has made most
+              // often), so the requirement silently did nothing.
+              description: 'Set ONLY when the user stated a direction: "at least" / "minimum" / "or more" → "min"; "at most" / "no more than" / "under" / "maximum" → "max". OMIT for a plain value or a range.',
+            },
           },
           required: ['attribute', 'value'],
         },
@@ -1126,10 +1140,36 @@ async function extractAnsweredSpecs(
   userId?: string,
 ): Promise<GuidedAnswerMap> {
   const questions = getSelectionQuestions(familyId);
-  if (!questions || questions.tier2.length === 0) return {};
-  const specLines = questions.tier2.map(a => {
-    const opts = a.input === 'choice' && a.options ? ` (choices: ${a.options.join(', ')})` : '';
-    return `- ${a.attributeId}: ${a.label}${opts}`;
+  const table = getLogicTable(familyId);
+  if (!questions || questions.tier2.length === 0 || !table) return {};
+
+  // HEAR EVERYTHING. The enum is the family's ENTIRE rule list — not the specs we ASK about.
+  //
+  // It used to be the required set only, which meant a spec the user VOLUNTEERED but we hadn't
+  // asked for was silently thrown away: someone typing "I need a small-signal NPN, 9V, 1-2mA,
+  // hFE 200-400" had their gain requirement deleted before the search ever ran, because gain is
+  // a narrowing spec and narrowing specs weren't in the enum. Across all 43 families that
+  // discarded 629 of the 823 specs the engine can actually score. What we choose not to ASK
+  // about was never a reason to IGNORE the user when they tell us anyway.
+  //
+  // Widening the enum widens the surface to hallucinate over (B5 goes from 6 specs to 27), so it
+  // was measured before it was shipped — both enums run over the same real conversations in
+  // scripts/diag-extractor-widening.ts. Result: it recovers the volunteered specs and reports
+  // NOTHING the user didn't say. The tool description ("ONLY specs the user has actually
+  // addressed") is what holds, and it holds at temp 0.
+  const askedIds = new Set(questions.tier2.map(a => a.attributeId));
+  const optionsById = new Map(
+    [...questions.tier2, ...questions.tier3]
+      .filter(a => a.input === 'choice' && a.options)
+      .map(a => [a.attributeId, a.options!]),
+  );
+  const specLines = table.rules.map(r => {
+    const opts = optionsById.get(r.attributeId);
+    const choices = opts ? ` (choices: ${opts.join(', ')})` : '';
+    // Mark which specs we actually asked, so the model isn't nudged into treating an
+    // unmentioned one as answered just because it appears in the list.
+    const asked = askedIds.has(r.attributeId) ? '' : ' [only if the user volunteers it]';
+    return `- ${r.attributeId}: ${r.attributeName}${choices}${asked}`;
   }).join('\n');
 
   const tool: Anthropic.Tool = {
@@ -1144,9 +1184,38 @@ async function extractAnsweredSpecs(
           items: {
             type: 'object',
             properties: {
-              attributeId: { type: 'string', enum: questions.tier2.map(a => a.attributeId), description: 'The spec id from the list.' },
-              value: { type: ['string', 'number', 'null'], description: 'The value the user gave (number for numeric specs, the chosen label for choices). Use null ONLY if the user explicitly said it does not matter / any / not sure.' },
+              attributeId: { type: 'string', enum: table.rules.map(r => r.attributeId), description: 'The spec id from the list.' },
+              // ⚠️ THE RANGE CASE IS LOAD-BEARING, AND IT USED TO BE MISSING.
+              //
+              // The description said "number for numeric specs" and offered null as the only other
+              // option. So when a user said "1 to 5 amps", the model — having no way to express a
+              // range — reported null, which means "doesn't matter". The requirement was deleted.
+              // Measured: "N-channel MOSFET, 30V, 1 to 5 amps" reached the engine carrying only
+              // channel_type and vds_max, and 100 mA / 154 mA / 350 mA parts came back "fits".
+              //
+              // The parse below and `hasValue` already accept a string; only the model was never
+              // told it could send one. A range string ("1-5") flows straight through: the engine
+              // gets a comparable lower bound, and `parseStatedBands` reads both ends for the
+              // catalogue fetch.
+              value: {
+                type: ['string', 'number', 'null'],
+                description:
+                  'The value the user gave. A single number for a plain numeric spec (9). ' +
+                  'A RANGE as a hyphenated string ("1-5" for "1 to 5 amps", "200-400" for "gain 200 to 400") — ' +
+                  'NEVER collapse a range to one end, and NEVER report null just because it is a range. ' +
+                  'The chosen label for a choice spec. ' +
+                  'Use null ONLY if the user explicitly said it does not matter / any / not sure.',
+              },
               unit: { type: 'string', description: 'Unit for numeric values, e.g. "V", "A", "MHz". Omit for choices.' },
+              // Without this field a stated DIRECTION is simply lost: "gain of at least 300" arrives
+              // as a bare 300, nothing downstream knows which way it binds, and the requirement does
+              // nothing. `SearchConstraint.bound` and `parseStatedBands` were already built to carry
+              // it — only this schema was missing, so the bug depended on which extractor ran.
+              bound: {
+                type: 'string',
+                enum: ['min', 'max'],
+                description: 'Set ONLY when the user stated a direction: "at least" / "minimum" / "or more" / "or higher" → "min"; "at most" / "no more than" / "under" / "maximum" → "max". OMIT for a plain value ("9V") or a range ("200-400").',
+              },
             },
             required: ['attributeId', 'value'],
           },
@@ -1171,8 +1240,8 @@ async function extractAnsweredSpecs(
     logGuidedUsage(userId, resp, 'chat_guided_extract');
     const block = resp.content.find(b => b.type === 'tool_use');
     if (!block || block.type !== 'tool_use') return {};
-    const inp = block.input as { answers?: Array<{ attributeId?: string; value?: string | number | null; unit?: string }> };
-    const valid = new Set(questions.tier2.map(a => a.attributeId));
+    const inp = block.input as { answers?: Array<{ attributeId?: string; value?: string | number | null; unit?: string; bound?: string }> };
+    const valid = new Set(table.rules.map(r => r.attributeId));
     const map: GuidedAnswerMap = {};
     for (const a of inp.answers ?? []) {
       if (!a || typeof a.attributeId !== 'string' || !valid.has(a.attributeId)) continue;
@@ -1180,7 +1249,10 @@ async function extractAnsweredSpecs(
       // (treat as "any / not sure"): coerce to null so it's answered-but-not-a-constraint,
       // rather than a "" that counts as answered yet silently drops from the constraints.
       const value = a.value === '' ? null : a.value ?? null;
-      map[a.attributeId] = { value, ...(a.unit ? { unit: a.unit } : {}) };
+      // Only 'min'/'max' — anything else is dropped rather than guessed at. A wrong direction is
+      // worse than none: it bands the catalogue the wrong way and hides the parts the user wanted.
+      const bound = a.bound === 'min' || a.bound === 'max' ? a.bound : undefined;
+      map[a.attributeId] = { value, ...(a.unit ? { unit: a.unit } : {}), ...(bound ? { bound } : {}) };
     }
     return map;
   } catch (err) {
@@ -1868,7 +1940,23 @@ export async function chat(
       partType: guidedTurn.partType,
       familyId: guidedTurn.familyId,
       constraints: guidedTurn.constraints,
+      answeredSpecIds: guidedTurn.answeredSpecIds,
     });
+    // THE NARROWING STEP. The search came back too big to be useful AND a spec exists that
+    // genuinely splits it — so ask that one question instead of presenting 50 parts. Returning no
+    // `searchResult` is deliberate: nothing goes on screen, so the next turn is still a guided
+    // continuation rather than a post-results refine. The answer (including "any") lands in the
+    // answered set, which caps this at one question and guarantees the next turn presents.
+    if (result.narrowing) {
+      const { label, options, poolSize } = result.narrowing;
+      return {
+        message: renderNarrowingQuestion(label, poolSize),
+        choices: sanitizeChoiceOptions([
+          ...options.map(o => ({ id: o, label: o })),
+          { id: 'any', label: 'Any' },
+        ]),
+      };
+    }
     return { message: buildSearchSummary(result), searchResult: result };
   }
 

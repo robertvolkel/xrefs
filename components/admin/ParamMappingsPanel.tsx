@@ -11,6 +11,7 @@ import {
   TableHead,
   TableRow,
   TableSortLabel,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import { useTranslation } from 'react-i18next';
@@ -29,7 +30,7 @@ import {
   computePartsioCoverage,
   getAllPartsioFields,
 } from '@/lib/services/partsioParamMap';
-import { getSelectionTier } from '@/lib/services/selectionQuestions';
+import { getSelectionState, type SelectionStateInfo } from '@/lib/services/selectionQuestions';
 
 /** Data for L2 display-only rendering */
 export interface L2ParamMapData {
@@ -45,9 +46,65 @@ interface ParamMappingsPanelProps {
 }
 
 /** Column widths for the attribute-centric table */
-const COL = { num: 36, attrId: 160, attrName: 180, weight: 50, digikey: 220, partsio: 220 };
+const COL = { num: 36, attrId: 160, attrName: 180, asked: 100, weight: 50, digikey: 220, partsio: 220 };
 /** Column widths for the L2 simplified table */
 const COL_L2 = { num: 36, attrId: 160, attrName: 200, digikey: 240 };
+
+/**
+ * Does the agent ask the user about this spec when they are choosing a part by description?
+ *
+ * READ-ONLY. Every one of these decisions lives in docs/min_attr_sets.md; hand that file to
+ * Claude to revise it, then run `npm run selection:audit`. There is deliberately no way to
+ * edit it here — a document and a UI that can both write the same truth is exactly the drift
+ * that let an LDO search never ask what voltage goes into the regulator.
+ *
+ * The chip is NEVER blank. Previously an unasked spec rendered as an unmarked row, so a spec
+ * nobody had ever ruled on looked identical to one deliberately excluded — there was nothing
+ * to review against.
+ *
+ * The tooltip carries ONLY the recorded reason — never a gloss of what the chip means. The
+ * labels say that already; a tooltip that repeats them is noise on every row, and it trains
+ * you to stop hovering, which is exactly when you'd miss the one that has something to say.
+ * A chip with no reason gets no tooltip at all.
+ */
+function SelectionChip({ sel }: { sel: SelectionStateInfo | null }) {
+  const { t } = useTranslation();
+  if (!sel) return null;
+
+  // The reason text comes from docs/min_attr_sets.md and is English-only — it is engineering
+  // rationale, not UI copy, and would need re-translating on every review round.
+  const chip = {
+    required: { label: t('admin.tierRequired', 'Required'), color: 'primary' as const },
+    narrows: { label: t('admin.tierNarrows', 'Narrows'), color: 'default' as const },
+    not_asked: { label: t('admin.tierNotAsked', 'Not asked'), color: 'default' as const },
+  }[sel.state];
+
+  // An unreviewed skip is PROVISIONAL, not an error — a dashed outline says "nobody has
+  // decided this yet" without shouting. The actual to-do list lives in docs/min_attr_sets.md.
+  const provisional = sel.state === 'not_asked' && sel.needsReview;
+
+  const node = (
+    <Chip
+      label={chip.label}
+      size="small"
+      color={chip.color}
+      variant="outlined"
+      sx={{
+        height: 18,
+        fontSize: '0.6rem',
+        ...(sel.state === 'not_asked' && {
+          opacity: 0.7,
+          borderStyle: provisional ? 'dashed' : 'solid',
+        }),
+      }}
+    />
+  );
+
+  const reason = sel.reason || (provisional ? t('admin.tierNoReason', 'No reason recorded — not ruled on yet.') : '');
+  if (!reason) return node;
+
+  return <Tooltip title={reason}>{node}</Tooltip>;
+}
 
 /** Flatten a ParamMapEntry into individual ParamMapping items */
 function flattenEntries(paramMap: Record<string, ParamMapEntry>): { dkField: string; mapping: ParamMapping }[] {
@@ -260,6 +317,9 @@ function L3View({ table, t }: { table: LogicTable | null; t: ReturnType<typeof u
               <TableCell sx={{ fontWeight: 600, width: COL.num }}>#</TableCell>
               <TableCell sx={{ fontWeight: 600, width: COL.attrId }}>{t('admin.attributeId')}</TableCell>
               <TableCell sx={{ fontWeight: 600, width: COL.attrName }}>{t('admin.attributeName')}</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: COL.asked }}>
+                {t('admin.askedInSearch', 'Asked in search')}
+              </TableCell>
               <TableCell sx={{ fontWeight: 600, width: COL.weight, textAlign: 'center' }}>
                 <TableSortLabel
                   active
@@ -278,8 +338,8 @@ function L3View({ table, t }: { table: LogicTable | null; t: ReturnType<typeof u
               const dkField = dkReverse.get(rule.attributeId);
               const pioField = pioReverse.get(rule.attributeId);
               const hasSources = !!dkField || !!pioField;
-              // Read-only marker: does the greenfield agent ask about this spec?
-              const selTier = table ? getSelectionTier(table.familyId, rule.attributeId) : null;
+              // Read-only marker: does the greenfield agent ask about this spec? Never blank.
+              const sel = table ? getSelectionState(table.familyId, rule.attributeId) : null;
 
               return (
                 <TableRow
@@ -300,20 +360,10 @@ function L3View({ table, t }: { table: LogicTable | null; t: ReturnType<typeof u
                     </Typography>
                   </TableCell>
                   <TableCell>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
-                      <Typography variant="body2">{rule.attributeName}</Typography>
-                      {selTier && (
-                        <Chip
-                          label={selTier === 'tier2'
-                            ? t('admin.tierRequired', 'Required to search')
-                            : t('admin.tierNarrows', 'Narrows results')}
-                          size="small"
-                          color={selTier === 'tier2' ? 'primary' : 'default'}
-                          variant="outlined"
-                          sx={{ height: 18, fontSize: '0.6rem' }}
-                        />
-                      )}
-                    </Box>
+                    <Typography variant="body2">{rule.attributeName}</Typography>
+                  </TableCell>
+                  <TableCell>
+                    <SelectionChip sel={sel} />
                   </TableCell>
                   <TableCell sx={{ textAlign: 'center' }}>
                     <Typography variant="body2" sx={{ fontWeight: 600 }}>
@@ -358,6 +408,10 @@ function L3View({ table, t }: { table: LogicTable | null; t: ReturnType<typeof u
                       {t('admin.extraPartsioFields', 'Additional Parts.io fields (not in schema)')}
                     </Typography>
                   )}
+                </TableCell>
+                {/* "Asked in search" \u2014 these rows are not schema attributes, so there is nothing to ask about. */}
+                <TableCell>
+                  <Typography variant="body2" color="text.disabled">{'\u2014'}</Typography>
                 </TableCell>
                 <TableCell sx={{ textAlign: 'center' }}>
                   <Typography variant="body2" color="text.disabled">{'\u2014'}</Typography>

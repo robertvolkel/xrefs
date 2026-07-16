@@ -10,6 +10,7 @@ import {
   XrefRecommendation,
   MatchDetail,
   MissingAttributeInfo,
+  ThresholdDirection,
 } from '../types';
 
 // ============================================================
@@ -57,6 +58,83 @@ function parseBoolean(value: string): boolean {
  *  candidate values exactly the way the engine matches them (see SetEditor). */
 export function normalize(value: string): string {
   return value.trim().toUpperCase().replace(/\s+/g, ' ');
+}
+
+/**
+ * A PACKAGE IS AN ALIAS LIST, NOT A NAME.
+ *
+ * Digikey writes a package as EVERY name the industry knows it by, comma-separated, in one field:
+ *
+ *     BC847C  →  "TO-236-3, SC-59, SOT-23-3"
+ *
+ * A user — and every other data source — writes ONE name: "SOT-23". So an exact string compare
+ * fails, and it fails for EVERY part, because every part's package is written that way. Measured on
+ * BC847C against a "gain of at least 300" search: `package_case` was the ONLY failing rule, and it
+ * was enough to label the correct part "Below spec".
+ *
+ * So compare the field as the list it is: split on commas, and match token against token.
+ *
+ * ⚠️ THE LEAD COUNT IS LOAD-BEARING. "SOT-23-3" (3 leads) and "SOT-23-6" (6 leads) are different
+ * footprints and are NOT interchangeable — a 3-pin transistor cannot be dropped into a 6-pin land
+ * pattern. So a trailing "-<n>" is only ignored when ONE SIDE LEAVES IT OPEN ("SOT-23" states no
+ * lead count and matches either). When BOTH sides state one they must agree.
+ *
+ * ⚠️ AND YOU CANNOT DETECT A LEAD COUNT BY "ends in a dash and digits" — "SOT-23" ends in "-23" and
+ * that 23 is the package's own name, not a lead count. This is why the rule is expressed as "the
+ * longer token is exactly the shorter token plus a -<n> suffix", never as "strip the suffix off
+ * both and compare". The first is decidable from the strings; the second is a guess.
+ */
+// The package-IDENTITY attribute ids — every family whose footprint rule is a string `identity`.
+// `package_case` (31 families) plus `package_type` (E1 optocouplers) and `package_format` (D2 fuses).
+// NOT the `identity_flag` footprint rules (F1/F2 relays' `package_footprint`, D1 crystals'
+// `package_type`): those route through evaluateIdentityFlag, which never calls into here.
+const PACKAGE_ATTRIBUTE_IDS = new Set(['package_case', 'package_type', 'package_format']);
+
+/** "0402 (1005 Metric)" → "0402"; "8-SOIC (0.154", 3.90mm Width)" → "8-SOIC". A parenthetical is a
+ *  gloss (metric equivalent, dimensions, a cross-reference), never a distinct package. Strip glosses
+ *  BEFORE splitting on commas — Digikey puts a COMMA *inside* the dimension gloss, so splitting first
+ *  shatters "8-SOIC (0.154", 3.90mm Width)" into fragments and the real token "8-SOIC" is lost. */
+function packageTokens(value: string): string[] {
+  return value
+    .replace(/\([^)]*\)/g, ' ')
+    .split(',')
+    .map(t => normalize(t))
+    .filter(Boolean);
+}
+
+/** True when two package tokens name the same footprint:
+ *   • identical, or
+ *   • one leaves the lead count open: "SOT-23" ≡ "SOT-23-3" (longer = shorter + a "-<1–2 digits>"),
+ *     while "SOT-23-3" vs "SOT-23-6" → false (both state a count and disagree) and "SOT-23" vs
+ *     "SOT-223" → false (the suffix must be a hyphen + 1–2 digits, and "-223" is three), or
+ *   • a pin-count word-order transposition: "8-SOIC" ≡ "SOIC-8" (see transposedPinCountMatch). */
+function packageTokensMatch(a: string, b: string): boolean {
+  if (a === b) return true;
+  const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+  const suffix = /^(.*)-\d{1,2}$/.exec(longer);
+  if (suffix && suffix[1] === shorter) return true;
+  return transposedPinCountMatch(a, b);
+}
+
+/** "8-SOIC" ≡ "SOIC-8": the SAME family name with one pin-count digit group moved front↔back — the
+ *  two industry word orders for an IC package. Requires identical family AND identical count, so it
+ *  can never cross "8-SOIC" to "8-MSOP". Discrete packages ("SOT-23-3") never start with a bare
+ *  digit group, so this leaves the lead-count rule above untouched. This is the ONE legitimate
+ *  cross-format the old evaluateIdentity numeric fallback used to (crudely) rescue. */
+function transposedPinCountMatch(a: string, b: string): boolean {
+  const front = /^(\d{1,3})-(.+)$/;   // "8-SOIC" → count "8", family "SOIC"
+  const back = /^(.+)-(\d{1,3})$/;    // "SOIC-8" → family "SOIC", count "8"
+  const fa = front.exec(a), bk = back.exec(b);
+  if (fa && bk && fa[1] === bk[2] && fa[2] === bk[1]) return true;
+  const fb = front.exec(b), ak = back.exec(a);
+  return !!(fb && ak && fb[1] === ak[2] && fb[2] === ak[1]);
+}
+
+/** Any name for the source's package matching any name for the candidate's. */
+export function packageValuesMatch(sourceValue: string, candidateValue: string): boolean {
+  const srcs = packageTokens(sourceValue);
+  const cands = packageTokens(candidateValue);
+  return srcs.some(s => cands.some(c => packageTokensMatch(s, c)));
 }
 
 /**
@@ -175,11 +253,23 @@ function evaluateIdentity(
     match = true;
   }
 
-  // Numeric comparison (with relative tolerance for float rounding) only
-  // when strings genuinely differ — catches "0.33µF" vs "330nF" style equivalence.
-  const srcNum = match ? null : getNumeric(sourceParam);
-  const candNum = match ? null : getNumeric(candidateParam);
-  if (!match && srcNum !== null && candNum !== null) {
+  // A package is an alias LIST, not a name — Digikey packs every name a footprint goes by into one
+  // comma-separated field ("TO-236-3, SC-59, SOT-23-3"). Compare it as the list it is. See
+  // `packageValuesMatch`; the lead count still has to agree when both sides state one.
+  if (!match && PACKAGE_ATTRIBUTE_IDS.has(rule.attributeId) && packageValuesMatch(sourceValue, candidateValue)) {
+    match = true;
+  }
+
+  // Numeric comparison (with relative tolerance for float rounding) only when strings genuinely
+  // differ — catches "0.33µF" vs "330nF" style equivalence. NEVER for a package: getNumeric reads
+  // the FIRST number, which for a package is the pin count, so "8-SOIC" and "8-MSOP" would both read
+  // 8 and be declared identical — two different footprints crossed as a clean pass. Packages are
+  // compared only as alias lists (above); a real cross-format like "8-SOIC" vs "SOIC-8" is handled
+  // there, not here.
+  const numericComparable = !match && !PACKAGE_ATTRIBUTE_IDS.has(rule.attributeId);
+  const srcNum = numericComparable ? getNumeric(sourceParam) : null;
+  const candNum = numericComparable ? getNumeric(candidateParam) : null;
+  if (numericComparable && srcNum !== null && candNum !== null) {
     const denom = Math.max(Math.abs(srcNum), Math.abs(candNum), 1e-30);
     match = Math.abs(srcNum - candNum) / denom < 1e-6;
   }
@@ -667,14 +757,54 @@ function evaluateThreshold(
   };
 }
 
+/**
+ * WHICH WAY DOES THIS RULE COMPARE? The single definition — the engine and the greenfield
+ * parametric FETCH must both read it from here.
+ *
+ * They used to each hold their own copy, and they disagreed. `fit` (component height, diameter
+ * — "the part must be no BIGGER than this") is evaluated `lte` below, but the fetch banded it
+ * with the `gte` branch: ask for "height ≤ 1 mm" and it went to Digikey for parts 1–10 mm tall,
+ * i.e. exactly the parts that cannot fit. 31 rules across 25 families. The fetch's own doc
+ * comment said "lte/fit → [0, v]" — the comment was right and the code was wrong, which is what
+ * a second copy of a truth always eventually becomes.
+ *
+ * Returns null for a rule that is not a numeric comparison at all.
+ */
+export function effectiveThresholdDirection(
+  rule: Pick<MatchingRule, 'logicType' | 'thresholdDirection'> | undefined,
+): ThresholdDirection | null {
+  if (!rule) return null;
+  if (rule.logicType === 'fit') return 'lte';
+  if (rule.logicType === 'threshold') return rule.thresholdDirection ?? 'gte';
+  return null;
+}
+
+/**
+ * Rule types that structurally CANNOT separate two parts. `application_review` returns a flat
+ * `review` (50% credit) and `operational` a flat 80% — NEITHER ever looks at the two values.
+ * That is the RIGHT verdict for a cross-reference ("the gain differs; a human should look"),
+ * and it is why these rules must never be retyped to make a search work.
+ *
+ * But it means a SEARCH cannot honour a spec typed this way: ask for "hFE 200-400" and every
+ * candidate — the 110, the 200, the 420 — scores identically. The two questions are genuinely
+ * different, so the search path compares stated bands ITSELF (see statedBands.ts) rather than
+ * bending the engine. This set is the boundary between them, and the ONE definition of it:
+ * `selectionDoc.findAskedButUncomparable` uses it to flag specs we ASK about and then ignore.
+ */
+export const CANNOT_COMPARE_LOGIC_TYPES: ReadonlySet<string> = new Set(['application_review', 'operational']);
+
+/** True when the engine's evaluator for this rule actually compares source vs candidate. */
+export function ruleCanCompare(rule: Pick<MatchingRule, 'logicType'> | undefined): boolean {
+  return !!rule && !CANNOT_COMPARE_LOGIC_TYPES.has(rule.logicType);
+}
+
 function evaluateFit(
   rule: MatchingRule,
   sourceParam: ParametricAttribute | undefined,
   candidateParam: ParametricAttribute | undefined
 ): RuleEvaluationResult {
-  // Fit rules are threshold with lte direction
   return evaluateThreshold(
-    { ...rule, thresholdDirection: 'lte' },
+    { ...rule, thresholdDirection: effectiveThresholdDirection(rule) ?? 'lte' },
     sourceParam,
     candidateParam
   );

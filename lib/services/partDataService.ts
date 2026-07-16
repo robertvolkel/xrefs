@@ -7,7 +7,7 @@
  * All functions are async and server-side only.
  */
 
-import { SearchResult, SearchDataSource, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource, ReplacementPriorities, DEFAULT_REPLACEMENT_PRIORITIES, isCertifiedCross, filterRecsByMismatchCount, countRealMismatches, AcceptanceCriteria, SearchConstraint } from '../types';
+import { SearchResult, SearchDataSource, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource, ReplacementPriorities, DEFAULT_REPLACEMENT_PRIORITIES, isCertifiedCross, filterRecsByMismatchCount, countRealMismatches, AcceptanceCriteria, SearchConstraint, NarrowingSuggestion } from '../types';
 import { keywordSearch, getProductDetails, warmCacheFromSearchResults, getCategoryParametricFacets, parametricFilterSearch, type DigikeyProduct } from './digikeyClient';
 import {
   mapKeywordResponseToSearchResult,
@@ -19,6 +19,8 @@ import {
   extractNumericValue,
 } from './digikeyMapper';
 import { buildSyntheticSource, computeOverSpecPenalty } from './searchConstraints';
+import { parseStatedBands, countStatedBandViolations } from './statedBands';
+import { pickNarrowingQuestion, NARROWING_ENABLED } from './guidedSelection';
 import { fetchGreenfieldParametricProducts, resolveCategoryIdsForFamily } from './greenfieldParametricFetch';
 import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates, type AtlasCandidateWidening } from './atlasClient';
 import { reportServiceFailure } from './serviceStatusTracker';
@@ -415,7 +417,18 @@ export async function searchParts(
   query: string,
   currency?: string,
   userId?: string,
-  options?: { skipFindchips?: boolean; manufacturer?: string; constraints?: SearchConstraint[]; partType?: string; familyId?: string },
+  options?: {
+    skipFindchips?: boolean;
+    manufacturer?: string;
+    constraints?: SearchConstraint[];
+    partType?: string;
+    familyId?: string;
+    /** Every spec the user has already addressed (including ones waived with "any"). Supplied
+     *  ONLY by the guided-selection flow — its presence is what opts a search into computing a
+     *  narrowing question. A plain `/api/search` or BOM validation passes nothing and is
+     *  byte-identical to before. */
+    answeredSpecIds?: string[];
+  },
 ): Promise<SearchResult> {
   const trimmed = query.trim();
   const isMpn = looksLikeMpn(trimmed);
@@ -431,11 +444,22 @@ export async function searchParts(
   // Stable signature of the vetting inputs (constraints + partType) so a
   // logic-vetted search doesn't collide with a constraint-less search of the
   // same query/MFR. Constraints sorted canonically; absent → empty string.
+  //
+  // ⚠️ `answeredSpecIds` is in the key, and it is LOAD-BEARING — not a nicety. A spec the user
+  // waives with "any" is ANSWERED but carries no value, so it never becomes a constraint. Without
+  // it in the key, waiving a narrowing question produces the identical key to the search that
+  // ASKED it, the cache hands back a result that still carries the question, and we ask it
+  // again — forever. The one escape hatch from the narrowing step would have been an infinite
+  // loop. (Caught by the end-to-end run, not by reasoning about it.)
+  // ⚠️ `c.bound` (min/max direction) is part of the key. "current at most 5A" and "current at least
+  // 5A" carry the SAME attribute+value+unit but bind in OPPOSITE directions and produce different
+  // results — without the direction in the key they collide, and whichever ran first is served to
+  // both. (Absent bound is its own third state and serializes to nothing, so it stays distinct.)
   const vettingKey = constraints
     ? `${(options?.familyId ?? '').toLowerCase()}|${(options?.partType ?? '').toLowerCase()}|${[...constraints]
-        .map(c => `${c.attribute.toLowerCase()}=${String(c.value).toLowerCase()}${(c.unit ?? '').toLowerCase()}`)
+        .map(c => `${c.attribute.toLowerCase()}=${String(c.value).toLowerCase()}${(c.unit ?? '').toLowerCase()}${c.bound ? `@${c.bound}` : ''}`)
         .sort()
-        .join(',')}`
+        .join(',')}|${[...(options?.answeredSpecIds ?? [])].sort().join(',')}`
     : '';
 
   // ── Search cache: L1 in-memory ──
@@ -587,6 +611,8 @@ export async function searchParts(
   // sources in the same priority order (Digikey wins on key collision). Used by
   // the logic-vetting pass below; empty when no source supplied attrs.
   const candidateAttrsByMpn = new Map<string, PartAttributes>();
+  // Set by the vetting block when the pool came back too big and a spec can actually split it.
+  let searchResultNarrowing: NarrowingSuggestion | undefined;
 
   for (let i = 0; i < settled.length; i++) {
     const settledResult = settled[i];
@@ -679,21 +705,65 @@ export async function searchParts(
           // genuinely meet the request — without rejecting anything (Decision #243 invariant).
           const constrainedIds = new Set(synthetic.source.parameters.map(p => p.parameterId));
           const confirmedByMpn = new Map<string, number>();
+
+          // ── How many of the user's stated specs we could even READ on this part ──
+          //
+          // ⚠️ NOT the same as "how many passed", and the difference is a LIE the app was telling.
+          // A rule only FAILS when a value DISAGREES; a value we cannot read never disagrees. So a
+          // part whose specs are unreadable collects zero failures and presents as a flawless match.
+          //
+          // Measured, for "a 30V N-channel MOSFET that can handle 1 to 5 amps": 20 of the 50 results
+          // were DUAL MOSFETs rated 0.115–0.95 A — parts that physically cannot carry the 1 A asked
+          // for — and every one was labelled "Fits your specs". Digikey names a dual's parameters
+          // differently, our map doesn't recognise them, so no rule could read anything and nothing
+          // could fail.
+          //
+          // Two labels ("fits" / "below spec") for THREE realities:
+          //     read it and it satisfies the ask   → fits
+          //     read it and it violates the ask    → below spec
+          //     COULD NOT READ IT                  → was silently reported as "fits"
+          //
+          // Counting what we READ (any verdict, as long as there is a real value) is what makes the
+          // third state expressible. Teaching the map the dual's parameter names would fix these 20
+          // parts; it would NOT fix the next shape we haven't seen. This does.
+          const readByMpn = new Map<string, number>();
+
           for (const rec of recs) {
             let n = 0;
+            let read = 0;
             for (const d of rec.matchDetails ?? []) {
               if (!constrainedIds.has(d.parameterId)) continue;
               const v = (d.replacementValue ?? '').toString().trim();
-              if (d.ruleResult === 'pass' && v && v !== 'N/A' && v !== '-') n++;
+              const hasRealValue = !!v && v !== 'N/A' && v !== '-';
+              if (hasRealValue) read++;
+              if (d.ruleResult === 'pass' && hasRealValue) n++;
             }
+            readByMpn.set(rec.part.mpn.toLowerCase(), read);
             confirmedByMpn.set(rec.part.mpn.toLowerCase(), n);
           }
+          // A spec the ENGINE cannot compare (`application_review` / `operational`) scores a flat
+          // 50% for every candidate, so a stated "hFE 200-400" left the 110-gain part, the
+          // 200-gain part and the 420-gain part indistinguishable. Those rule types are the RIGHT
+          // verdict for a cross-reference and must not be retyped, so the search checks the user's
+          // stated BANDS itself — search-only, engine untouched. A part outside a band the user
+          // explicitly stated is a mismatch against what they asked for, so it counts as one.
+          const statedBands = parseStatedBands(constraints, logicTable);
+          const attrsByMpnLower = new Map(scorable.map(a => [a.part.mpn.toLowerCase(), a]));
+          const bandRuleIndex = new Map(logicTable.rules.map(r => [r.attributeId, r]));
+          const effectiveFails = (rec: XrefRecommendation): number => {
+            const attrs = attrsByMpnLower.get(rec.part.mpn.toLowerCase());
+            const bandFails = attrs ? countStatedBandViolations(statedBands, logicTable, attrs, bandRuleIndex) : 0;
+            return countRealMismatches(rec) + bandFails;
+          };
+
           // Search-vetting order: fewest real mismatches → Active-first → most CONFIRMED specs →
           // closest fit (least over-spec) → match %. Self-contained (greenfield has no certified
           // buckets / composite scores, so the shared sort's later keys don't apply).
           const statusRank = (s?: string) => (!s || s === 'Active' ? 0 : 1);
+          const failsByMpn = new Map(recs.map(r => [r.part.mpn.toLowerCase(), effectiveFails(r)]));
+          const failsOf = (r: XrefRecommendation) => failsByMpn.get(r.part.mpn.toLowerCase()) ?? 0;
           recs.sort((a, b) => {
-            const fd = countRealMismatches(a) - countRealMismatches(b);
+            const fd = failsOf(a) - failsOf(b);
             if (fd !== 0) return fd;
             const sd = statusRank(a.part.status) - statusRank(b.part.status);
             if (sd !== 0) return sd;
@@ -713,10 +783,25 @@ export async function searchParts(
             const key = rec.part.mpn.toLowerCase();
             const summary = summaryByMpn.get(key);
             if (!summary || placed.has(key)) continue;
-            const fails = countRealMismatches(rec);
+            const fails = failsOf(rec);
             summary.matchScore = rec.matchPercentage;
             summary.failCount = fails;
             summary.hardFail = fails > 0;
+
+            // The honest three-state verdict. `hardFail` cannot express "we never checked" — it is
+            // false both when a part passes every stated spec AND when we could not read a single
+            // one of them. Decide it ONCE, here, and put it in the data: two separate surfaces (the
+            // card's chip and the "meets spec" filter) were each re-deriving it from `hardFail`, and
+            // each was therefore telling the same lie independently.
+            const stated = constrainedIds.size;
+            const read = readByMpn.get(key) ?? 0;
+            summary.specsStated = stated;
+            summary.specsRead = read;
+            summary.specFit = fails > 0
+              ? 'below_spec'          // we read a value and it disagrees with the ask — definitely wrong
+              : read >= stated
+                ? 'fits'              // we read every spec asked for, and none disagree — genuinely fits
+                : 'unconfirmed';      // we could not read some of what was asked — we DO NOT KNOW
             reordered.push(summary);
             placed.add(key);
           }
@@ -725,7 +810,20 @@ export async function searchParts(
           }
           mergedMatches.length = 0;
           mergedMatches.push(...reordered);
-          console.log(`[search-vetting] family=${synthetic.familyId} scored=${recs.length} constraints=${constraints.length}`);
+
+          // The pool is right here, with full parametrics — the only place the narrowing question
+          // can be chosen from the DATA rather than from a hand-ranked list. Riding it back on the
+          // result (rather than re-deriving it in the caller) also means it caches with the search,
+          // so a repeat query doesn't refetch 50 parts' attributes to ask the same question.
+          if (NARROWING_ENABLED && options?.answeredSpecIds && synthetic.familyId) {
+            const narrowing = pickNarrowingQuestion(
+              synthetic.familyId,
+              new Set(options.answeredSpecIds),
+              scorable,
+            );
+            if (narrowing) searchResultNarrowing = narrowing;
+          }
+          console.log(`[search-vetting] family=${synthetic.familyId} scored=${recs.length} constraints=${constraints.length} bands=${statedBands.size}`);
       }
     } catch (err) {
       // Vetting is a ranking enhancement — never fail the search on it.
@@ -752,6 +850,7 @@ export async function searchParts(
       type: mergedMatches.length === 1 ? 'single' : 'multiple',
       matches: mergedMatches,
       sourcesContributed,
+      ...(searchResultNarrowing ? { narrowing: searchResultNarrowing } : {}),
     };
 
     // ── Search cache: store in L1 + L2 (skip 'none' — may be transient failure) ──

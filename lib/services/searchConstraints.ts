@@ -57,8 +57,11 @@ function phraseInText(phrase: string, text: string): boolean {
 
 /** Resolve a human attribute term to a logic-table attributeId for this family.
  *  Order: family synonym → exact attrId/attrName → attrName-contains-term →
- *  term-contains-attrId. Returns null when nothing matches (caller drops it). */
-function resolveAttributeId(term: string, logicTable: LogicTable): string | null {
+ *  term-contains-attrId. Returns null when nothing matches (caller drops it).
+ *  Exported so statedBands.ts maps constraints through the SAME resolver — two copies of
+ *  "which attribute did the user mean?" would drift, and the fetch and the scoring pass
+ *  disagreeing about that is exactly how a stated spec goes silently unapplied. */
+export function resolveAttributeId(term: string, logicTable: LogicTable): string | null {
   const t = norm(term);
   if (!t) return null;
 
@@ -392,27 +395,16 @@ export function buildGreenfieldQuery(
   return [base, ...uniqSorted].filter(Boolean).join(' ').trim();
 }
 
-// ── Phase B: parametric pool filtering ────────────────────────
-// A base-SI numeric band used to parametric-filter the Digikey candidate POOL by a
-// stated spec (so e.g. "NPN hFE 200–400" fetches the hFE-band parts, not generic
-// 3904s). Distinct from the vetting pass, which only re-ranks whatever was fetched.
-export interface FetchBand {
-  attrId: string;
-  lo: number;
-  hi: number;
-  sourceNv: number;
-}
-
-/** gte band upper = lo × this. ProductCount-DESC + the MAX_PARAMETRIC_VALUES cap
- *  keep the selected values common, and the vetting over-spec penalty sinks the tail,
- *  so a generous upper is safe (it just keeps the pool inclusive). */
-const OVERSPEC_FETCH_FACTOR = 10;
-/** Inclusive ± margin on a two-sided band so boundary parts survive the FETCH (e.g. an
- *  hFE-420 part for a 200–400 ask, or the exact E-series neighbor for an identity value).
- *  The fetch is a relevance NET; the vetting pass does the precise ranking. */
-const FETCH_BAND_MARGIN = 0.15;
-
-const RANGE_RE = /(-?\d[\d.]*)\s*(?:-|–|~|to)\s*(-?\d[\d.]*)/i;
+// ── Numeric band parsing ─────────────────────────────────────
+// `pickFetchBand` USED to live here: it turned the raw constraints into ONE numeric band for
+// the Digikey pool filter. It was never wired to a production caller — and it carried the
+// `[v, v × 10]` over-spec CEILING that was the whole BC847 bug (a part rated far above what you
+// need is not a worse part; headroom on a max rating is free). A dead reference implementation
+// with a live bug in it, pinned by a passing test suite, is worse than no code at all: the next
+// person to need range parsing reaches for it and silently reintroduces the bug. It is deleted.
+//
+// Its range PARSING was the good half and is preserved in statedBands.ts — with the band
+// SHAPING removed, because that is the part that was wrong.
 
 /** Parse a number(+unit) to base SI the SAME way buildSyntheticSource + the candidate
  *  mappers do, so the band is comparable to Digikey's always-base-SI facet values.
@@ -430,104 +422,33 @@ export function toBaseSI(numStr: string, unit?: string): number | null {
 }
 
 /**
- * Pick the SINGLE most-selective numeric band to parametric-filter the Digikey pool on
- * (greenfield Phase B). Reads the RAW constraints — not the deduped synthetic source —
- * so a two-sided range expressed as a `"200-400"` value OR as separate min/max
- * constraints (e.g. the extractor's `current min` / `current max`) yields BOTH bounds.
- * Returns base-SI `{attrId, lo, hi, sourceNv}`, or null when nothing maps to a numeric band.
+ * Parse the LEADING MAGNITUDE of a catalog value string to base SI, discarding any trailing
+ * TEST CONDITION or range tail: `"420 @ 2mA, 5V"` → 420, `"5V ~ 10V"` → 5, `"1 µF"` → 1e-6.
  *
- * Band shape by rule: two-sided (range / identity) → [lo, hi] widened ±FETCH_BAND_MARGIN;
- * threshold gte → [v, v×OVERSPEC_FETCH_FACTOR] (strict floor); threshold lte → [0, v].
- * Selection: two-sided beats one-sided (more selective), then higher logic-rule weight,
- * then attributeId lexicographic — deterministic.
+ * ⚠️ Use this — NEVER a candidate's `numericValue` — for any spec whose value carries a test
+ * condition. Digikey's mapper regex locks onto the CONDITION, so a BC847C's gain of 420 arrives
+ * as `numericValue: 0.002` (that's the 2 mA it was measured at). Verified live: every BJT gain
+ * in the catalog is `"<gain> @ <Ic>, <Vce>"`, and every one of their numericValues is the test
+ * current. The value STRING is the truth. (Fixing the mapper itself serves all 43 families and
+ * is the highest-blast-radius change in the codebase — it is logged in BACKLOG, not done here.)
  */
-export function pickFetchBand(
-  constraints: SearchConstraint[] | undefined,
-  logicTable: LogicTable,
-): FetchBand | null {
-  if (!constraints || constraints.length === 0) return null;
-  const ruleById = new Map(logicTable.rules.map(r => [r.attributeId, r]));
-
-  // Accumulate per-attr values across constraints. The LLM labels bounds
-  // inconsistently — "hFE max", "hFE_max", or just two separate "IC" entries — so we
-  // collect explicit min/max-labelled values AND plain values, and infer the band below.
-  type Acc = { mins: number[]; maxs: number[]; plains: number[] };
-  const acc = new Map<string, Acc>();
-
-  for (const c of constraints) {
-    const rawValue = (typeof c.value === 'number' ? String(c.value) : c.value ?? '').trim();
-    if (!rawValue || !/\d/.test(rawValue)) continue; // numeric constraints only
-    const unit = c.unit?.trim() || undefined;
-
-    // A "min"/"max" label marks a one-sided bound. Normalize separators (_ - ) to spaces
-    // FIRST so "hFE_max" / "hfe-min" are detected AND stripped like "hFE max" — `\b` does
-    // not break between `_` and a letter, so the raw form would slip past both.
-    const normAttr = c.attribute.replace(/[_-]+/g, ' ');
-    const isMin = /\bmin(imum)?\b/i.test(normAttr);
-    const isMax = /\bmax(imum)?\b/i.test(normAttr);
-    const term = normAttr.replace(/\b(min|max|minimum|maximum)\b/gi, ' ').replace(/\s+/g, ' ').trim() || c.attribute;
-    const attrId = resolveAttributeId(term, logicTable);
-    if (!attrId) continue;
-
-    const e = acc.get(attrId) ?? { mins: [], maxs: [], plains: [] };
-    const m = rawValue.match(RANGE_RE);
-    if (m) {
-      const a = toBaseSI(m[1], unit);
-      const b = toBaseSI(m[2], unit);
-      if (a != null && b != null) { e.mins.push(Math.min(a, b)); e.maxs.push(Math.max(a, b)); }
-    } else {
-      const v = toBaseSI(rawValue, unit);
-      if (v != null) {
-        if (isMin) e.mins.push(v);
-        else if (isMax) e.maxs.push(v);
-        else e.plains.push(v);
-      }
-    }
-    acc.set(attrId, e);
-  }
-
-  const bands: Array<FetchBand & { twoSided: boolean; weight: number }> = [];
-  for (const [attrId, e] of acc) {
-    const rule = ruleById.get(attrId);
-    const weight = rule?.weight ?? 0;
-    const explicitLo = e.mins.length ? Math.min(...e.mins) : undefined;
-    const explicitHi = e.maxs.length ? Math.max(...e.maxs) : undefined;
-    let lo: number | undefined;
-    let hi: number | undefined;
-    let twoSided = false;
-    let sourceNv: number | undefined;
-
-    if (explicitLo != null && explicitHi != null) { lo = explicitLo; hi = explicitHi; twoSided = true; sourceNv = explicitLo; }
-    else if (explicitLo != null) { lo = explicitLo; hi = explicitLo * OVERSPEC_FETCH_FACTOR; sourceNv = explicitLo; } // min-only → gte
-    else if (explicitHi != null) { lo = 0; hi = explicitHi; sourceNv = explicitHi; }                                 // max-only → lte
-    else if (e.plains.length >= 2) { lo = Math.min(...e.plains); hi = Math.max(...e.plains); twoSided = true; sourceNv = lo; } // implicit range
-    else if (e.plains.length === 1) {
-      const v = e.plains[0];
-      sourceNv = v;
-      const dir = rule?.thresholdDirection ?? 'gte';
-      if (rule?.logicType === 'threshold' && dir === 'lte') { lo = 0; hi = v; }
-      else if (rule?.logicType === 'threshold') { lo = v; hi = v * OVERSPEC_FETCH_FACTOR; } // gte
-      else { lo = v; hi = v; twoSided = true; }                                             // identity → exact-ish
-    }
-    if (lo == null || hi == null || !Number.isFinite(lo) || !Number.isFinite(hi) || hi < lo) continue;
-    // Widen a two-sided band OUTWARD by |bound| × margin (sign-agnostic). For
-    // positive bounds this equals the old `lo *= 1-m` / `hi *= 1+m`; for a NEGATIVE
-    // bound a multiplicative form would move it the WRONG way (toward zero, or
-    // invert a degenerate negative identity band) — subtracting/adding |bound|×m
-    // always pushes lo down and hi up.
-    if (twoSided) {
-      lo -= Math.abs(lo) * FETCH_BAND_MARGIN;
-      hi += Math.abs(hi) * FETCH_BAND_MARGIN;
-    }
-    bands.push({ attrId, lo, hi, sourceNv: sourceNv ?? lo, twoSided, weight });
-  }
-
-  if (bands.length === 0) return null;
-  bands.sort((a, b) => {
-    if (a.twoSided !== b.twoSided) return a.twoSided ? -1 : 1;
-    if (a.weight !== b.weight) return b.weight - a.weight;
-    return a.attrId < b.attrId ? -1 : a.attrId > b.attrId ? 1 : 0;
-  });
-  const top = bands[0];
-  return { attrId: top.attrId, lo: top.lo, hi: top.hi, sourceNv: top.sourceNv };
+export function leadingMagnitudeToBaseSI(value: string): number | null {
+  // ⚠️ STRIP A LEADING ± FIRST, then split.
+  //
+  // `±` is in the split set because it separates a magnitude from a tolerance tail. But when it
+  // comes FIRST — and in Digikey's catalog it very often does: "±1%", "±20V", "±0.1%" — splitting
+  // on it leaves an EMPTY head, the regex finds no digits, and the value is silently discarded.
+  //
+  // Every `±N` value in the catalog was therefore invisible to us. Measured consequence: a search
+  // for a 10 Ω 1% 0402 resistor built a Tolerance filter out of the only values that DID parse
+  // ("0%", "-10%", "-20%") and never selected "±1%" — so the parametric search returned ZERO
+  // parts. Stripping the leading sign takes that same search from 0 results to 45 correct ones.
+  //
+  // A ± prefix means "plus or minus N", so its magnitude is N. The sign carries no information
+  // here (a "±20V" gate rating is a 20 V rating), which is why dropping it is correct and not a
+  // guess.
+  const head = (value ?? '').replace(/^\s*[±+]\s*/, '').split(/@|~|≤|≥|±/)[0].trim();
+  const m = head.match(/(-?\d[\d.]*)\s*([a-zA-Zµμ%°/√]+)?/);
+  if (!m) return null;
+  return toBaseSI(m[1], m[2] || undefined);
 }

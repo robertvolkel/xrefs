@@ -65,12 +65,22 @@ export function describeSearchFilterInput(f: SearchFilterInput): string {
 /**
  * Apply a SearchFilterInput to a search-result match list. Pure function.
  *
- * `meets_spec` uses the engine's own per-card verdict (`hardFail`, set true iff
- * the candidate had ≥1 real mismatch vs the stated specs) — the exact same signal
- * that drives the "Below spec" chip — so a "show me the ones that meet spec"
- * request returns EVERY green card, never a subset. Parts with no verdict
- * (unscored / unvetted search) are kept: missing data never causes rejection,
- * consistent with the matching engine's missing-data philosophy.
+ * `meets_spec` reads the card's own verdict (`specFit`) — the exact same signal that draws the chip,
+ * so "show me the ones that meet spec" returns precisely the cards labelled "Fits your specs",
+ * never a different set.
+ *
+ * ⚠️ IT USED TO SAY `hardFail !== true`, AND THAT WAS THE SAME LIE THE CHIP WAS TELLING. A rule only
+ * fails when a value DISAGREES, so a part whose specs we could not READ has no failures — and this
+ * filter kept it. Measured: a "1 to 5 A MOSFET" search returned 20 dual MOSFETs rated 0.115–0.95 A,
+ * and a "show me the ones that meet spec" request kept every one of them. The filter's name is a
+ * promise; a part we never managed to check does not meet the spec, it is simply UNKNOWN.
+ *
+ * Two surfaces were each re-deriving this rule from `hardFail`, so each told the lie independently.
+ * The verdict is now decided ONCE, server-side (partDataService), and both surfaces read it.
+ *
+ * `specFit === undefined` (a part-number lookup, or a description with no stated specs) is still
+ * KEPT: there is nothing to be unconfirmed about when the user stated no specs. That is the case the
+ * old "missing data never rejects" note was actually about, and it is preserved.
  */
 export function applySearchResultFilter(
   matches: PartSummary[],
@@ -79,7 +89,7 @@ export function applySearchResultFilter(
   let filtered = [...matches];
 
   if (input.meets_spec) {
-    filtered = filtered.filter(p => p.hardFail !== true);
+    filtered = filtered.filter(p => p.specFit === undefined || p.specFit === 'fits');
   }
   if (input.manufacturer_filter) {
     const query = input.manufacturer_filter.toLowerCase();

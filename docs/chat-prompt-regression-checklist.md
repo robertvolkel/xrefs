@@ -410,3 +410,35 @@ regression vs the Haiku baseline** on the model-sensitive subset; the determinis
 still the real grounding fix. A full 19-row re-baseline is warranted only on the next *prompt* edit. The
 unmasked-prose risk (a part-selection answer rendered WITHOUT a card substitution — refinement / "like part X")
 is exactly the BACKLOG "Conversational query-shape routing" surface — the model swap does not retire it.
+
+## `feat/selection-audit` merge gate — greenfield/guided subset (2026-07-14, Sonnet, in-process)
+
+**Why a subset, not the full 19.** The branch (search fixes + the reviewable-question-set work, Decisions
+#270/#272) touches **only the guided-selection path** — the two spec-extractor tool schemas and the new
+narrowing step. `SYSTEM_PROMPT` prose is **byte-identical to main** (verified: `git diff base..HEAD` shows no
+prompt-prose hunk), and the extractor schema I changed is the greenfield one, not a main-agentic tool. So the
+pure-prompt rows (A1/A2/A4/A5, B1–B6, C, D) receive an identical prompt + identical agentic tools and are out
+of scope. The **honest gate is branch-vs-main** (current production), not the June-19 baseline — because
+system-driven guided selection (Decision #262) merged to main **after** that baseline, so the literal E2/E3
+"search immediately" criterion is already superseded in production.
+
+**🟢 GATE PASSED — no regression vs main; the new narrowing step converges.**
+
+| ID | Tier | Branch behavior | vs main |
+|----|------|-----------------|---------|
+| E1 | HIGH | guides in 1 turn — "Which type?" + 5 buttons + escape hatch | identical |
+| E2 | CRITICAL (routing) | guides (asks required specs) — does not blind-search | identical (both guide; baseline superseded by #262) |
+| E3 | HIGH | asks N-Channel/P-Channel first — **3/3 runs each side** | identical (a 1-off value-first sample was extractor non-determinism) |
+| E4 | CRITICAL (no-leak) | system-authored "What Clamping Voltage…?" — **structurally cannot leak an MPN** | identical (both system-guide, no leak) |
+| E5 | HIGH | opinion Q with part loaded → answer-first, no guide loop | unchanged (answer-first path not touched) |
+| E6 | HIGH + **NEW #272** | full flow converges: dielectric→values→**narrowing ("50 parts — which tolerance?")**→search on "any". One narrowing question, no loop. | new behavior; converges correctly |
+| A3 | CRITICAL (leak-exempt) | routes to guided questions (routing only) | identical |
+| B1/B5/C3/B6 | HIGH/MED | search-first MPN / profile-tool / theory-no-search / new-MPN-restart all clean | unchanged (identical prompt) |
+
+**Ground truth behind E2/E3:** `getSelectionQuestions` tier2 (required-to-search) is **byte-identical
+branch↔main** for B5/B6/12 — including `channel_type` for MOSFETs. The only structural change is **tier3
+(narrows-results) additions** (e.g. B5 +`technology/aec_q101/qg`), the deliberate Decision #270 effect that
+feeds the #272 narrowing step, gated behind pool size. No tier2 spec was dropped.
+
+**Not re-run (justified):** A1/A2/A4/A5, C1/C2/C4/C5, D1/D2 — pure `SYSTEM_PROMPT`-prose rows, and the prose
+is byte-identical to main. A full 19-row re-baseline is only warranted on a prompt-prose edit.

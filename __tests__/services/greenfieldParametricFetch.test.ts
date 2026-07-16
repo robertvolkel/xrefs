@@ -107,13 +107,18 @@ describe('pickNumericValueIds', () => {
   const lteRule = { logicType: 'threshold', thresholdDirection: 'lte' } as unknown as NumRule;
   const identityRule = { logicType: 'identity' } as unknown as NumRule;
 
-  it('gte: keeps values from required up to ×10, excluding below-spec and far-over-spec', () => {
-    const ids = pickNumericValueIds(voltageFacet, 20, gteRule); // band [20, 200]
+  // REWRITTEN 2026-07-13. This test used to assert the ×10 ceiling ("250V > 20×10 → excluded")
+  // — i.e. it PINNED the bug. That ceiling encoded a false idea: that a part rated far above what
+  // you need is a worse answer. It is not. Headroom on a MAXIMUM RATING is free, and the ceiling
+  // is what excluded every ordinary 100 mA small-signal transistor from a "2 mA circuit" search,
+  // leaving 18 exotic parts. See greenfieldFetchBand.test.ts for the full story.
+  it('gte: keeps everything AT OR ABOVE the requirement — headroom on a max rating is free', () => {
+    const ids = pickNumericValueIds(voltageFacet, 20, gteRule); // band [20, ∞)
     expect(ids).toContain('132007'); // 25V
     expect(ids).toContain('228504'); // 50V
     expect(ids).toContain('267452'); // 100V
-    expect(ids).not.toContain('74515'); // 16V below spec
-    expect(ids).not.toContain('252155'); // 250V > 20×10 → excluded
+    expect(ids).toContain('252155'); // 250V — over-spec is FINE; it used to be excluded
+    expect(ids).not.toContain('74515'); // 16V — genuinely below spec, still excluded
   });
 
   it('lte: keeps values ≤ required (250V max → all ≤250V)', () => {

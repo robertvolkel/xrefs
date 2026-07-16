@@ -68,20 +68,35 @@ export default function PartOptionsSelector({ parts, onSelect }: PartOptionsSele
                 {part.status && (
                   <Chip label={part.status} size="small" color={part.status === 'Active' ? 'success' : 'warning'} variant="outlined" />
                 )}
-                {/* Logic-vetted descriptive search: a qualitative fit signal. We show
-                    a fit/below-spec chip (not a raw %) because match % vs a sparse
-                    synthetic spec is ~100 for every valid part — the ranking, not the
-                    number, carries the signal. Present only on vetted searches. */}
-                {typeof part.failCount === 'number' && (
-                  part.hardFail ? (
-                    <Tooltip title="Does not meet one or more of your stated specs — kept for reference, ranked last" arrow>
-                      <Chip label="Below spec" size="small" color="warning" variant="filled" sx={{ height: 18, fontSize: '0.6rem' }} />
-                    </Tooltip>
-                  ) : (
-                    <Tooltip title="Meets all of your stated specs" arrow>
-                      <Chip label="Fits your specs" size="small" color="success" variant="filled" sx={{ height: 18, fontSize: '0.6rem' }} />
-                    </Tooltip>
-                  )
+                {/* Logic-vetted descriptive search: a qualitative fit signal. We show a chip (not a
+                    raw %) because match % vs a sparse synthetic spec is ~100 for every valid part —
+                    the ranking, not the number, carries the signal.
+
+                    ⚠️ THREE states, not two. Read `specFit`, never `hardFail`: a rule only fails when
+                    a value DISAGREES, so a part whose specs we could not READ has no failures and
+                    used to render as "Fits your specs". Measured on a "1 to 5 A MOSFET" search: 20 of
+                    50 results were dual MOSFETs rated 0.115–0.95 A, every one shown as fitting. */}
+                {part.specFit === 'below_spec' && (
+                  <Tooltip title="Does not meet one or more of your stated specs — kept for reference, ranked last" arrow>
+                    <Chip label="Below spec" size="small" color="warning" variant="filled" sx={{ height: 18, fontSize: '0.6rem' }} />
+                  </Tooltip>
+                )}
+                {part.specFit === 'fits' && (
+                  <Tooltip title="Meets all of your stated specs" arrow>
+                    <Chip label="Fits your specs" size="small" color="success" variant="filled" sx={{ height: 18, fontSize: '0.6rem' }} />
+                  </Tooltip>
+                )}
+                {part.specFit === 'unconfirmed' && (
+                  <Tooltip
+                    title={`This manufacturer doesn't publish ${
+                      typeof part.specsStated === 'number' && typeof part.specsRead === 'number'
+                        ? `${part.specsStated - part.specsRead} of the ${part.specsStated} spec${part.specsStated === 1 ? '' : 's'} you asked for`
+                        : 'some of the specs you asked for'
+                    } in a form we can read, so we could not check them. The part may still be right — check the datasheet.`}
+                    arrow
+                  >
+                    <Chip label="Specs unconfirmed" size="small" color="default" variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+                  </Tooltip>
                 )}
                 {part.qualifications?.map(q => (
                   <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />

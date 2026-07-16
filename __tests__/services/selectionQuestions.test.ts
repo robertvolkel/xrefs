@@ -140,7 +140,9 @@ describe('getSelectionTier', () => {
   it('classifies tier membership', () => {
     expect(getSelectionTier('C1', 'output_type')).toBe('tier2');
     expect(getSelectionTier('C1', 'vdropout')).toBe('tier3');
-    expect(getSelectionTier('C1', 'psrr')).toBeNull();
+    // A spec nobody can answer is asked in no tier. (This used to be `psrr`, which the review
+    // promoted to tier 3 — pick something with a durable reason, not an accident of the list.)
+    expect(getSelectionTier('C1', 'rth_ja')).toBeNull();
     expect(getSelectionTier('ZZ', 'output_type')).toBeNull();
   });
 });
