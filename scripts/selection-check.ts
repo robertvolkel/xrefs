@@ -33,7 +33,28 @@ const fail = (headline: string, details: string[], remedy: string): never => {
   process.exit(1);
 };
 
-const { doc, errors } = parseSelectionDoc(readFileSync(DOC, 'utf8'));
+// Read the source doc. It lives under docs/, which production build/deploy environments often
+// EXCLUDE from the release tree (IT copies scripts/ + lib/ + app/ but not docs/). This check is a
+// DEV/CI drift guard, NOT a runtime dependency: the app imports the COMMITTED generated module
+// (lib/services/selectionTiers.generated.ts), and the same doc↔module completeness/staleness guard
+// runs as a jest test (`npm test`, see __tests__/services/selectionDoc.test.ts) where docs/ is
+// present. So when the doc is genuinely absent, skip cleanly instead of breaking `next build`.
+let docSource: string;
+try {
+  docSource = readFileSync(DOC, 'utf8');
+} catch (e) {
+  if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+    console.log(
+      `⚠ selection:check skipped — ${DOC} is not present in this environment.\n` +
+        `  The committed generated module is authoritative here; the doc↔module drift guard runs\n` +
+        `  in dev/CI via \`npm test\` (docs/ present there).`,
+    );
+    process.exit(0);
+  }
+  throw e;
+}
+
+const { doc, errors } = parseSelectionDoc(docSource);
 if (errors.length) {
   fail(
     'docs/min_attr_sets.md could not be parsed.',
