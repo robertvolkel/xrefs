@@ -179,8 +179,12 @@ export const RECS_CACHE_SCHEMA_VERSION = 'v20';
  *  failure looks identical to the feature never having been wired up.
  *  v14→v15 on 2026-07-15: the vetting key now includes each constraint's `bound` (min/max) direction.
  *  Before, "current at most 5A" and "current at least 5A" hashed identically and whichever ran first
- *  was served to both. v14 rows were keyed without direction and are ambiguous where a bound fired. */
-export const SEARCH_CACHE_SCHEMA_VERSION = 'v15';
+ *  was served to both. v14 rows were keyed without direction and are ambiguous where a bound fired.
+ *  v15→v16 on 2026-07-16: candidate ordering now puts an EXACT-MPN match first (above active-vs-not),
+ *  so naming a part returns that part rather than a sample-kit/variant box that Digikey floated ahead
+ *  of it. A v15 row cached under an MPN lookup carries the pre-fix order — served stale, it reads
+ *  exactly like the fix never shipped (the wrong row still wins matches[0]). */
+export const SEARCH_CACHE_SCHEMA_VERSION = 'v16';
 
 /** Not-found sentinel: 24 hours */
 export const TTL_NOT_FOUND_MS = 24 * 60 * 60 * 1000;

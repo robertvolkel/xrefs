@@ -614,12 +614,26 @@ export function getAllLogicTables(): LogicTable[] {
  * so "MOSFETs"/"transistors" still match a singular key.
  */
 export function resolveFamilyFromText(text: string | undefined): string | null {
+  return resolveFamilyMatch(text)?.familyId ?? null;
+}
+
+/**
+ * Like {@link resolveFamilyFromText} but also returns the subcategory KEY that matched.
+ * The matched key is what distinguishes a BARE supertype ("relay" → key "Relay") from a
+ * QUALIFIED one ("solid state relay" → key "Solid State Relay"): the guided-selection
+ * disambiguation (guidedSelectionController) only fires on the bare form, so it needs the
+ * key, not just the resolved family. `resolveFamilyFromText` delegates here so the two can
+ * never drift.
+ */
+export function resolveFamilyMatch(
+  text: string | undefined,
+): { familyId: string; key: string } | null {
   if (!text) return null;
   const hint = text.trim().toLowerCase();
   if (!hint) return null;
   // Exact (case-insensitive) key hit first.
   for (const key of Object.keys(subcategoryToFamily)) {
-    if (key.toLowerCase() === hint) return subcategoryToFamily[key];
+    if (key.toLowerCase() === hint) return { familyId: subcategoryToFamily[key], key };
   }
   // Whole-word match, longest key first to avoid a short key (e.g. "FET") winning
   // over a more specific one contained in the same hint.
@@ -627,7 +641,7 @@ export function resolveFamilyFromText(text: string | undefined): string | null {
   for (const key of keysByLen) {
     const escaped = key.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     if (new RegExp(`(?<![a-z0-9])${escaped}s?(?![a-z0-9])`).test(hint)) {
-      return subcategoryToFamily[key];
+      return { familyId: subcategoryToFamily[key], key };
     }
   }
   return null;
@@ -636,6 +650,23 @@ export function resolveFamilyFromText(text: string | undefined): string | null {
 /** Check if a subcategory has a logic table */
 export function isFamilySupported(subcategory: string): boolean {
   return subcategory in subcategoryToFamily;
+}
+
+/**
+ * Distinct family IDs whose subcategory key contains `word` as a whole word (plural-tolerant,
+ * same boundary rule as {@link resolveFamilyMatch}). Registry-backed primitive for completeness
+ * checks — e.g. asserting a guided-selection disambiguation head's options cover every family
+ * the catalog maps under that supertype ("relay" → {F1, F2}), so a future family sharing the
+ * word can't silently reopen a disambiguation gap.
+ */
+export function familiesUnderWord(word: string): string[] {
+  const escaped = word.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`(?<![a-z0-9])${escaped}s?(?![a-z0-9])`);
+  const fams = new Set<string>();
+  for (const [key, fam] of Object.entries(subcategoryToFamily)) {
+    if (re.test(key.toLowerCase())) fams.add(fam);
+  }
+  return [...fams];
 }
 
 /** Get human-readable names of all supported families (deduplicated) */

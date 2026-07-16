@@ -19,6 +19,8 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 - **System‑driven guided selection follow‑ups (#262) (P2/P3)** — a 2nd guided selection later in one chat falls to the LLM; an MPN typed mid‑questions is re‑asked. → *"System‑driven guided selection — follow‑ups (Decision #262)"*.
 - **Greenfield search relevance (#243) (P3)** — dual‑channel penalty, over‑spec tuning. → *"Greenfield search relevance — follow‑ups to logic‑vetted search (Decision #243)"*.
 - **`countStatedBandViolations` reads only the FIRST number of a stated range (P2).** → full entry below.
+- **More multi‑family supertypes could ask "which kind?" (P3).** relay / thermistor / inductor now disambiguate (2026‑07‑16); resistor, fuse, converter and others still auto‑pick a default. → *"Deferred multi‑family disambiguation supertypes"* below.
+- **Qualified‑but‑unlisted relay/inductor phrasings over‑disambiguate (P3).** "reed relay" / "toroidal inductor" now ask "which kind?" instead of pinning the correct family. → *"Over‑disambiguation on qualified non‑key phrasings"* below.
 
 ### B · Refinement & filtering — you narrow what's already on screen
 - **Attribute filtering on search‑result cards (#268) (P2)** — filter cards by any spec, not just MFR/status/origin. → *"Attribute filtering on search‑result cards (Phase 3 of Decision #268)"*.
@@ -43,6 +45,64 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 - **`selectionDoc` CANNOT_COMPARE set is duplicated** — dedupe against `matchingEngine.CANNOT_COMPARE_LOGIC_TYPES`.
 - **`scripts/search-regression-harness.ts` still reads `hardFail`** — update to `specFit` so the harness reflects the real shape.
 - **Greenfield category enumeration has no test / a silent zero‑category returns nothing** — add coverage so a mis‑resolved family is loud, not empty.
+
+---
+
+### Deferred multi‑family disambiguation supertypes (P3)
+
+**Shipped 2026‑07‑16:** a bare **relay** (→ EMR vs SSR), **thermistor** (→ NTC vs PTC), and **inductor**
+(→ power vs RF/signal) now show sub‑family buttons instead of silently picking one family, joining the
+existing regulator/transistor/capacitor/diode heads (`AMBIGUOUS_HEADS`, `guidedSelectionController.ts`).
+
+**Still auto‑picks a default (not yet disambiguated):** a registry scan found these supertype words also
+span more than one family, but each was left alone for now — most default sensibly or are rarely typed bare:
+- **resistor** → 52/53/54/55 (defaults to chip resistor, the overwhelmingly common case)
+- **fuse** → 66 (resettable/PTC) vs D2 (traditional) — a real split; "fuse" usually means the traditional cartridge
+- **converter** → C2 (DC‑DC) vs C9 (ADC) vs C10 (DAC) — genuinely ambiguous but a rare bare phrasing
+- **choke / crystal / reference / driver / rectifier** — mostly incidental keyword overlap; each resolves fine
+
+**Why there is no automatic "every multi‑family word must have a head" test.** A mechanical scan over the
+subcategory map is **noisy**: many words span families only through incidental keyword co‑occurrence
+(e.g. "transistor" also matches an optocoupler phototransistor leaf → E1; "regulator" matches a Zener
+reference → B3), and the curated heads are defined by *meaning* (the transistor head lists MOSFET/BJT/JFET,
+and "MOSFET" doesn't even contain the word "transistor"). So the guard test instead pins the three **clean
+two‑way splits** to the registry (`familiesUnderWord`) — if a future family adds an F3 relay / third
+thermistor, that test fails until the head gains the option. Adding resistor/fuse/converter is a product
+call (do users want to be asked, or is the default fine?), best answered from real usage logs, not a scan.
+
+---
+
+### Over‑disambiguation on qualified non‑key phrasings (P3)
+
+**The regression (introduced 2026‑07‑16 by the relay/thermistor/inductor disambiguation, Decision #274 Fix 2).**
+A phrasing that names a *specific* sub‑type the catalogue has no exact subcategory key for now shows the
+"which kind?" buttons instead of pinning the correct single family:
+- **"reed relay" / "latching relay"** → asks *Electromechanical vs Solid‑state* — but these are always
+  electromechanical (F1), so the Solid‑state option is nonsensical. (Pre‑fix pinned F1 directly.)
+- **"toroidal / wirewound / coupled inductor"** → asks *Power vs RF/signal* instead of pinning 71.
+
+**Not affected (still pin correctly):** any qualified form that IS a subcategory key —
+"signal relay", "power relay", "solid state relay", "power inductor", "RF inductor", "NTC/PTC thermistor".
+It is a redundant *question*, not a wrong *answer*: the user clicks the obvious option and proceeds.
+
+**Root cause.** `matchAmbiguityHead` ([guidedSelectionController.ts](../lib/services/guidedSelectionController.ts))
+decides bare‑vs‑qualified by calling `resolveFamilyMatch(text)` over the whole message. When the qualified
+form ("reed relay") isn't a key, the resolver falls back to the bare key ("Relay"), so the message *looks*
+bare. Only relay/thermistor/inductor have a bare key, so only they regress; the original four heads
+(regulator/transistor/capacitor/diode) have no bare key and are unaffected.
+
+**Why not fixed now — no clean fix exists.** Three options, all rejected: (a) add every relay/inductor type
+as a key — the whack‑a‑mole the guided design explicitly avoids (Decision #262 Phase 4); (b) a "is the
+supertype preceded by an adjective?" heuristic — mis‑fires on non‑type adjectives ("small relay" *should*
+still ask, but "small" reads as a qualifier → wrongly pins F1); (c) restrict the resolver to the head's own
+word — "reed relay" still returns the bare "Relay", so it doesn't help. The distinguishing signal
+("reed" ⇒ F1) requires domain knowledge the deterministic path doesn't have. **Related smell (same root):
+multi‑noun messages disambiguate the wrong noun** — "a transistor to drive a relay" shows relay chips —
+but this is *pre‑existing* (the old code also mis‑pinned relay here), so the fix didn't make it worse.
+
+**When to revisit.** If usage logs show these phrasings are common, either add the handful of frequent types
+as keys (reed/latching relay; toroidal/wirewound/coupled inductor) or route ambiguous‑after‑pin cases to a
+per‑family confirm step.
 
 ---
 

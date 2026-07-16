@@ -1,5 +1,5 @@
 import type { OrchestratorMessage, SearchConstraint, ChoiceOption } from '../types';
-import { resolveFamilyFromText, getLogicTable } from '../logicTables';
+import { resolveFamilyFromText, resolveFamilyMatch, getLogicTable } from '../logicTables';
 import { getSelectionQuestions } from './selectionQuestions';
 import { nextGuidedStep, GuidedAnswerMap } from './guidedSelection';
 import { buildGreenfieldQuery } from './searchConstraints';
@@ -115,13 +115,22 @@ function findGuidedEntryUserText(messages: OrchestratorMessage[]): string | null
 }
 
 // ── Ambiguous part-type heads (deterministic disambiguation) ──
-// Only heads that DON'T resolve to a single family via resolveFamilyFromText. Labels
-// MUST resolve back to their familyId (guard test pins this) so a clicked chip re-pins
-// the family on the next turn.
+// A supertype word that spans multiple families. Disambiguation shows sub-family chips
+// BEFORE the flow commits to one family. Labels MUST resolve back to their familyId (guard
+// test pins this) so a clicked chip re-pins the family on the next turn.
+//
+// `word` is the canonical singular of the supertype, used to tell a BARE mention ("relay")
+// from a QUALIFIED one ("solid state relay"). This matters because some supertypes DO have a
+// bare subcategory key (`Relay`→F1, `Thermistor`→67, `Inductor`→71), so resolveFamilyFromText
+// resolves the bare word to ONE family — pinFamily would then silently pick it instead of
+// asking. `matchAmbiguityHead` only treats the word as ambiguous when the matched key is the
+// bare word itself (or nothing resolved); a qualified key means the user already chose.
 interface AmbiguityOption { familyId: string; label: string }
-const AMBIGUOUS_HEADS: Array<{ test: RegExp; options: AmbiguityOption[] }> = [
+interface AmbiguityHead { test: RegExp; word: string; options: AmbiguityOption[] }
+const AMBIGUOUS_HEADS: AmbiguityHead[] = [
   {
     test: /\bregulators?\b/i,
+    word: 'regulator',
     options: [
       { familyId: 'C1', label: 'LDO' },
       { familyId: 'C2', label: 'Switching regulator' },
@@ -129,6 +138,7 @@ const AMBIGUOUS_HEADS: Array<{ test: RegExp; options: AmbiguityOption[] }> = [
   },
   {
     test: /\btransistors?\b/i,
+    word: 'transistor',
     options: [
       { familyId: 'B5', label: 'MOSFET' },
       { familyId: 'B6', label: 'BJT' },
@@ -140,6 +150,7 @@ const AMBIGUOUS_HEADS: Array<{ test: RegExp; options: AmbiguityOption[] }> = [
     // capacitor", "MLCC") resolves to its family in pinFamily BEFORE this runs, so
     // only the unqualified word reaches here.
     test: /\bcapacitors?\b/i,
+    word: 'capacitor',
     options: [
       { familyId: '12', label: 'MLCC' },
       { familyId: '58', label: 'Aluminum electrolytic' },
@@ -152,6 +163,7 @@ const AMBIGUOUS_HEADS: Array<{ test: RegExp; options: AmbiguityOption[] }> = [
     // Bare "diode". B2 Schottky + B4 TVS are VARIANT families not reachable via
     // resolveFamilyFromText, so the chip labels re-pin through LABEL_TO_FAMILY below.
     test: /\bdiodes?\b/i,
+    word: 'diode',
     options: [
       { familyId: 'B1', label: 'Rectifier' },
       { familyId: 'B2', label: 'Schottky' },
@@ -159,13 +171,63 @@ const AMBIGUOUS_HEADS: Array<{ test: RegExp; options: AmbiguityOption[] }> = [
       { familyId: 'B4', label: 'TVS' },
     ],
   },
+  {
+    // Bare "relay" = electromechanical (F1) vs solid-state (F2) — two genuinely different
+    // components. Both have a bare-ish key, so `Relay`→F1 shadows F2 in resolveFamilyFromText;
+    // the bare-word check below is what routes a plain "relay" to the chips instead.
+    test: /\brelays?\b/i,
+    word: 'relay',
+    options: [
+      { familyId: 'F1', label: 'Electromechanical (EMR)' },
+      { familyId: 'F2', label: 'Solid state (SSR)' },
+    ],
+  },
+  {
+    // Bare "thermistor" = NTC (67) vs PTC (68). `Thermistor`→67 shadows PTC.
+    test: /\bthermistors?\b/i,
+    word: 'thermistor',
+    options: [
+      { familyId: '67', label: 'NTC' },
+      { familyId: '68', label: 'PTC' },
+    ],
+  },
+  {
+    // Bare "inductor" = power (71) vs RF/signal (72). `Inductor`→71 shadows RF/signal.
+    test: /\binductors?\b/i,
+    word: 'inductor',
+    options: [
+      { familyId: '71', label: 'Power inductor' },
+      { familyId: '72', label: 'RF / signal inductor' },
+    ],
+  },
 ];
 
-export function detectAmbiguity(text: string): AmbiguityOption[] | null {
+/** True when `key` is the head's BARE supertype (singular or plural), e.g. "Relay"/"Relays"
+ *  for the relay head — as opposed to a qualified key like "Solid State Relay". */
+function isBareHeadKey(key: string, head: AmbiguityHead): boolean {
+  return key.trim().toLowerCase().replace(/s$/, '') === head.word;
+}
+
+/**
+ * The ambiguous head owning `text`, or null. Only fires on a BARE mention: if a more-specific
+ * subcategory key won the resolution ("solid state relay" → key "Solid State Relay" → F2), the
+ * user already disambiguated, so we return null and let pinFamily commit to that family. A word
+ * with no bare key (regulator/capacitor/diode/transistor resolve to nothing bare) is ambiguous
+ * by definition.
+ */
+export function matchAmbiguityHead(text: string): AmbiguityHead | null {
   for (const head of AMBIGUOUS_HEADS) {
-    if (head.test.test(text)) return head.options;
+    if (!head.test.test(text)) continue;
+    const match = resolveFamilyMatch(text);
+    if (!match || isBareHeadKey(match.key, head)) return head;
+    // Qualified for this head (a specific family was named) — keep scanning; another head
+    // in the same message could still be bare.
   }
   return null;
+}
+
+export function detectAmbiguity(text: string): AmbiguityOption[] | null {
+  return matchAmbiguityHead(text)?.options ?? null;
 }
 
 // Reverse index of every disambiguation chip label → its family, so a clicked chip
@@ -296,29 +358,32 @@ export async function decideGuidedTurn(
   // true and there's no on-screen context mid-questions.
   if (!inProgress && hasOnScreenContext) return null;
 
+  // ENTRY disambiguation — a curated ambiguous supertype ("regulator", "capacitor", "diode",
+  // "transistor", "relay", "thermistor", "inductor") shows sub-family chips BEFORE the flow
+  // commits to a family. Runs BEFORE pinFamily on purpose: some bare supertypes DO resolve to a
+  // single family via a bare subcategory key ("relay"→F1, "thermistor"→67, "inductor"→71), so
+  // pinning first would silently pick one instead of asking. detectAmbiguity is bare-aware — a
+  // QUALIFIED name ("solid state relay", "NTC thermistor", "power inductor") returns null and
+  // falls through to pinFamily. Fresh turns only (a continuation already has a pinned family or
+  // recovers via the classifier); a sourcing turn (explicit intent OR a bare type noun) that
+  // isn't theory.
+  if (!inProgress) {
+    const options = detectAmbiguity(userText);
+    if (options && !isLikelyTheory(userText) && (hasSelectionIntent(userText) || isBareNounPhrase(userText))) {
+      return {
+        kind: 'ask',
+        message: renderDisambiguationQuestion(),
+        choices: options.map(o => ({ id: o.familyId, label: o.label })),
+      };
+    }
+  }
+
   let pinned = pinFamily(messages);
   let viaClassifier = false;
 
-  // No specific family yet (deterministic recognizer missed) → disambiguate a curated
-  // supertype, else recover via the registry-backed classifier.
+  // No specific family yet (deterministic recognizer missed) → recover via the
+  // registry-backed classifier.
   if (!pinned) {
-    // ENTRY disambiguation: a curated ambiguous supertype ("regulator", "capacitor",
-    // "diode", "transistor") shows sub-family chips BEFORE any single-family guess.
-    // Fires whenever this reads as a sourcing turn (explicit intent OR a bare type noun)
-    // and is not a theory question — so a bare "regulator" disambiguates too (the old
-    // intent-only gate let a bare supertype fall through to a single-family classifier
-    // guess). Continuation never reaches here (a continuation has a pinned family, or the
-    // classifier-recovery below supplies one).
-    if (!inProgress) {
-      const options = detectAmbiguity(userText);
-      if (options && !isLikelyTheory(userText) && (hasSelectionIntent(userText) || isBareNounPhrase(userText))) {
-        return {
-          kind: 'ask',
-          message: renderDisambiguationQuestion(),
-          choices: options.map(o => ({ id: o.familyId, label: o.label })),
-        };
-      }
-    }
     // Classifier: the deterministic recognizer doesn't cover every phrasing ("low-dropout
     // reg", "a schottky", "an op amp"). The bounded, registry-backed classifier returns a
     // real familyId or null, so it recognizes the long tail without authoring prose. On a

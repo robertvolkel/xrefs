@@ -9,6 +9,8 @@ import {
   hasSelectionIntent,
   isLikelyTheory,
 } from '@/lib/services/guidedSelectionController';
+import { familiesUnderWord } from '@/lib/logicTables';
+import { getSelectionQuestions } from '@/lib/services/selectionQuestions';
 import type { OrchestratorMessage } from '@/lib/types';
 import type { GuidedAnswerMap } from '@/lib/services/guidedSelection';
 
@@ -51,6 +53,90 @@ describe('deterministic disambiguation', () => {
         expect(resolvePartTypeFamily(opt.label)).toBe(opt.familyId);
       }
     }
+  });
+});
+
+describe('multi-family supertypes ask which kind (relay / thermistor / inductor)', () => {
+  // These three bare words each resolve to ONE family via a bare subcategory key
+  // ("Relay"→F1, "Thermistor"→67, "Inductor"→71), so before the fix the flow pinned that
+  // family and NEVER asked. They span two genuinely different families and must disambiguate.
+  it('bare "relay" → EMR vs SSR (was silently pinned to F1)', () => {
+    expect(detectAmbiguity('I need a relay')?.map(o => o.familyId)).toEqual(['F1', 'F2']);
+  });
+  it('bare "thermistor" → NTC vs PTC (was silently pinned to 67)', () => {
+    expect(detectAmbiguity('I need a thermistor')?.map(o => o.familyId)).toEqual(['67', '68']);
+  });
+  it('bare "inductor" → power vs RF/signal (was silently pinned to 71)', () => {
+    expect(detectAmbiguity('I need an inductor')?.map(o => o.familyId)).toEqual(['71', '72']);
+  });
+
+  // A QUALIFIED name already picked a family — it must NOT disambiguate, it must pin.
+  it.each([
+    ['a solid state relay', 'F2'],
+    ['an electromechanical relay', 'F1'],
+    ['an NTC thermistor', '67'],
+    ['a PTC thermistor', '68'],
+    ['a power inductor', '71'],
+    ['an RF inductor', '72'],
+  ])('qualified "%s" is NOT ambiguous (pins %s)', (phrase, familyId) => {
+    expect(detectAmbiguity(`I need ${phrase}`)).toBeNull();
+    expect(resolvePartTypeFamily(phrase.replace(/^an? /, ''))).toBe(familyId);
+  });
+
+  it('ENTRY end-to-end: bare "I need a relay" → disambiguation buttons, parser never consulted', async () => {
+    let parserCalled = false;
+    const out = await decideGuidedTurn([u('I need a relay')], async () => { parserCalled = true; return {}; });
+    expect(parserCalled).toBe(false);
+    expect(out?.kind).toBe('ask');
+    if (out?.kind === 'ask') {
+      expect(out.message).toBe(renderDisambiguationQuestion());
+      expect(out.choices?.map(c => c.id)).toEqual(['F1', 'F2']);
+    }
+  });
+
+  it('ENTRY end-to-end: qualified "I need a solid state relay" pins F2 and asks its first spec (no chips)', async () => {
+    const out = await decideGuidedTurn([u('I need a solid state relay')], noAnswers);
+    expect(out?.kind).toBe('ask');
+    if (out?.kind === 'ask') expect(isSystemGuidedQuestion(out.message)).toBe(true);
+  });
+
+  it('clicking a relay chip ("Solid state (SSR)") is OWNED by the system', async () => {
+    const out = await decideGuidedTurn(
+      [u('I need a relay'), a('Which type do you need?'), u('Solid state (SSR)')],
+      noAnswers,
+    );
+    expect(out?.kind).toBe('ask');
+    if (out?.kind === 'ask') expect(isSystemGuidedQuestion(out.message)).toBe(true);
+  });
+});
+
+describe('every disambiguation head is well-formed (option integrity)', () => {
+  // Guards drift: a clicked chip must re-pin its family, and each family must be a real,
+  // guided-selectable family. Same discipline as the selection-tiers work — the list is the
+  // single source of truth and the test refuses a broken entry.
+  it('every option label re-pins to its familyId and names a guided-selectable family', () => {
+    for (const text of ['relay', 'thermistor', 'inductor', 'regulator', 'transistor', 'capacitor', 'diode']) {
+      const opts = detectAmbiguity(text);
+      expect(opts).not.toBeNull();
+      for (const opt of opts!) {
+        expect(resolvePartTypeFamily(opt.label)).toBe(opt.familyId); // chip re-pins
+        expect(getSelectionQuestions(opt.familyId)).not.toBeNull(); // real, selectable family
+      }
+    }
+  });
+
+  // Registry-backed completeness for the CLEAN two-way splits: relay/thermistor/inductor are
+  // defined by keyword (unlike the meaning-curated regulator/transistor heads), so the families
+  // the registry maps under that word must EQUAL the head's options. If a future family adds an
+  // F3 relay / third thermistor, this fails until the head gains the option — no silent gap.
+  it.each([
+    ['relay', ['F1', 'F2']],
+    ['thermistor', ['67', '68']],
+    ['inductor', ['71', '72']],
+  ])('the "%s" head options match every family the registry maps under that word', (word, expected) => {
+    const families = familiesUnderWord(word);
+    expect(families.sort()).toEqual([...expected].sort());
+    expect(detectAmbiguity(word)?.map(o => o.familyId).sort()).toEqual([...expected].sort());
   });
 });
 

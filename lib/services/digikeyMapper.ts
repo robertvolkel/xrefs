@@ -157,6 +157,12 @@ export function mapSubcategory(categoryName: string): string {
   if (lower.includes('tantalum')) return 'Tantalum';
   if (lower.includes('supercapacitor') || lower.includes('double layer')) return 'Supercapacitor';
   if (lower.includes('film capacitor')) return 'Film Capacitor';
+  // Mica capacitors (Family 13). Digikey's leaf is "Mica and PTFE Capacitors", which matches no
+  // other capacitor branch above and would fall through to the verbatim category name (not a
+  // registry key) → false "unsupported". 'Mica Capacitor' IS a key. Require BOTH tokens so a
+  // non-capacitor category that merely contains "mica" (e.g. a mica insulator/thermal sheet)
+  // isn't misclassified as a capacitor — Digikey's mica-capacitor leaf always carries "Capacitors".
+  if (lower.includes('mica') && lower.includes('capacitor')) return 'Mica Capacitor';
   if (lower.includes('thick film')) return 'Thick Film';
   if (lower.includes('thin film')) return 'Thin Film';
   if (lower.includes('chip resistor') || lower.includes('surface mount')) {
@@ -183,6 +189,11 @@ export function mapSubcategory(categoryName: string): string {
   if (lower.includes('tvs diode') || lower.includes('tvs -')) return 'TVS Diode';
   if (lower.includes('bridge rectifier')) return 'Diodes - Bridge Rectifiers';
   if (lower.includes('single diode')) return 'Rectifier Diode';
+  // Generic diode arrays (Family B1 base — the classifier refines to Schottky/Zener/TVS from the
+  // part's own attributes). Digikey's parent leaf "Diode Arrays" carries no Schottky/Zener/TVS
+  // qualifier, so it matched none of the branches above and fell through to the verbatim category
+  // name → false "unsupported". Mapping to B1 (not a variant) lets classifyFamily pick the variant.
+  if (lower.includes('diode array')) return 'Rectifier Diode';
   // Voltage References (Family C6) — must come before voltage regulator checks
   if (lower.includes('voltage reference')) return 'Voltage Reference';
   // Linear Voltage Regulators / LDOs (Family C1)
@@ -251,9 +262,14 @@ export function mapSubcategory(categoryName: string): string {
     if (lower.includes('npn')) return 'NPN BJT';
     return 'BJT';
   }
-  // Solid State Relays (Family F2) — must come before EMR check
+  // Solid State Relays (Family F2) — must come before EMR check.
+  // ⚠️ The industrial-mount string MUST stay plural ("Relays") to match the registry key
+  // ('Solid State Relays - Industrial Mount' → F2). Emitting the singular "Relay" here produced
+  // a string that is NOT a subcategoryToFamily key, so the family gate falsely reported the part
+  // "unsupported" — a false product limitation the user never retries past. (Guard: the
+  // familySupportGate test runs every covered-family leaf through this mapper.)
   if (lower.includes('solid state') && lower.includes('relay')) {
-    if (lower.includes('industrial')) return 'Solid State Relay - Industrial Mount';
+    if (lower.includes('industrial')) return 'Solid State Relays - Industrial Mount';
     return 'Solid State Relay';
   }
   // Electromechanical Relays (Family F1) — SSR guard prevents misclassification

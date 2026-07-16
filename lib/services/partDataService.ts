@@ -413,6 +413,40 @@ function deserializeBasePayload(s: SerializableBasePayload): BasePayload | null 
   };
 }
 
+/**
+ * Order merged search candidates for display / `matches[0]` selection.
+ *
+ * Two keys, in order:
+ *  1. **Exact-MPN match first** — when the user names a specific part number, that part is the
+ *     intended SOURCE (even if obsolete); its replacements are found afterward. Without this the
+ *     list is ordered only by active-vs-not, so Digikey can float a sample-kit box
+ *     ("SPM12565VT-D-KIT") or a longer ordering variant ("BSS138NH6327XTSA2") ABOVE the bare part
+ *     the user typed. `pickMfrAwareMatch` (returns `matches[0]` absent an MFR hit) and the first
+ *     search card then lock onto the wrong row — and a kit's catalog category is often unsupported,
+ *     so the user sees a false "we don't support this part".
+ *  2. **Active-first** — within each exact/non-exact group, live parts precede
+ *     Obsolete/Discontinued/NRND/Last Time Buy. Missing status counts as orderable (top).
+ *
+ * `Array.sort` is stable, so the caller's source-priority merge order (Digikey → Atlas → parts.io)
+ * is preserved within each rank group. **No-op for descriptive searches**: no candidate MPN equals
+ * a multi-word phrase, so `exactRank` is uniformly 1 and the ordering collapses to active-first —
+ * byte-identical to the pre-exact-match behaviour. Mutates `matches` in place and returns it.
+ *
+ * Exported so the ordering can be unit-tested directly (see multiSourceSearch.test.ts) rather than
+ * mocking the whole cache + Digikey + Atlas + alias I/O of `searchParts` just to assert an order.
+ */
+export function orderSearchCandidates<T extends { mpn: string; status?: string }>(
+  matches: T[],
+  query: string,
+): T[] {
+  const exactQueryLower = query.trim().toLowerCase();
+  const exactRank = (p: { mpn: string }) => (p.mpn.toLowerCase() === exactQueryLower ? 0 : 1);
+  const orderableRank = (p: { status?: string }) => (!p.status || p.status === 'Active' ? 0 : 1);
+  return matches.sort(
+    (a, b) => exactRank(a) - exactRank(b) || orderableRank(a) - orderableRank(b),
+  );
+}
+
 export async function searchParts(
   query: string,
   currency?: string,
@@ -635,15 +669,12 @@ export async function searchParts(
     }
   }
 
-  // Surface Active parts first regardless of source. The merge above already
-  // runs in source priority order (Digikey/western → Atlas → parts.io), and
-  // Array.sort is stable, so a sort keyed only on active-vs-not preserves that
-  // order within each group — yielding: western-active, atlas-active, … then
-  // all non-active (Obsolete/Discontinued/NRND/Last Time Buy) at the end.
-  // Missing status is treated as orderable (top) so unknown-status parts aren't
-  // buried below obsolete ones.
-  const orderableRank = (p: { status?: string }) => (!p.status || p.status === 'Active' ? 0 : 1);
-  mergedMatches.sort((a, b) => orderableRank(a) - orderableRank(b));
+  // Order the merged pool for display and matches[0] selection: EXACT-MPN match first (so naming a
+  // part returns that part, not a sample-kit/variant box Digikey floated ahead of it), then
+  // Active-first. The merge above already runs in source priority order (Digikey/western → Atlas →
+  // parts.io) and Array.sort is stable, so that order is preserved within each rank group. See
+  // orderSearchCandidates for the full rationale. Stable, mutates in place.
+  orderSearchCandidates(mergedMatches, trimmed);
 
   // Resolve canonical manufacturer origin per unique MFR (mirrors getRecommendations,
   // Decision #161) so the search-result "Chinese only" filter keys off identity, not the

@@ -3,7 +3,7 @@
  * searchMouserProducts, and the merged searchParts() flow.
  */
 
-import { looksLikeMpn } from '@/lib/services/partDataService';
+import { looksLikeMpn, orderSearchCandidates } from '@/lib/services/partDataService';
 import { mapPartsioListingToPartSummary } from '@/lib/services/partsioClient';
 import { mapMouserProductToPartSummary } from '@/lib/services/mouserClient';
 
@@ -186,5 +186,84 @@ describe('mapMouserProductToPartSummary', () => {
     expect(mapMouserProductToPartSummary(make('MOSFET Transistors') as never).category).toBe('Transistors');
     expect(mapMouserProductToPartSummary(make('Solid State Relays') as never).category).toBe('Relays');
     expect(mapMouserProductToPartSummary(make('Linear Voltage Regulators') as never).category).toBe('Voltage Regulators');
+  });
+});
+
+// ============================================================
+// orderSearchCandidates — exact-MPN-first, then Active-first
+// Fixes "variant lock-on": naming a part must return THAT part, not a
+// sample-kit box or a longer ordering variant that the source listed first.
+// ============================================================
+
+describe('orderSearchCandidates', () => {
+  type Cand = { mpn: string; status?: string };
+
+  it('floats the EXACT part above a sample-kit box the source listed first (the SPM12565VT-D case)', () => {
+    // Both Active — pre-fix (active-only sort) leaves the -KIT first because sort is stable.
+    const candidates: Cand[] = [
+      { mpn: 'SPM12565VT-D-KIT', status: 'Active' },
+      { mpn: 'SPM12565VT-D', status: 'Active' },
+    ];
+    const ordered = orderSearchCandidates(candidates, 'SPM12565VT-D');
+    expect(ordered[0].mpn).toBe('SPM12565VT-D'); // FAILS on the pre-fix active-only sort
+  });
+
+  it('floats the EXACT part above a longer ordering variant (the BSS138 case)', () => {
+    const ordered = orderSearchCandidates(
+      [
+        { mpn: 'BSS138NH6327XTSA2', status: 'Active' },
+        { mpn: 'BSS138', status: 'Active' },
+      ],
+      'BSS138',
+    );
+    expect(ordered[0].mpn).toBe('BSS138');
+  });
+
+  it('prefers the EXACT named part even when it is obsolete and a variant is Active (it is the intended SOURCE)', () => {
+    const ordered = orderSearchCandidates(
+      [
+        { mpn: 'LM317T', status: 'Active' }, // longer variant, active
+        { mpn: 'LM317', status: 'Obsolete' }, // the exact part the user named
+      ],
+      'LM317',
+    );
+    expect(ordered[0].mpn).toBe('LM317'); // named part wins; its replacements are found afterward
+  });
+
+  it('is case-insensitive on the exact match', () => {
+    const ordered = orderSearchCandidates(
+      [
+        { mpn: 'GRM188R61C106MA73D-TR', status: 'Active' },
+        { mpn: 'grm188r61c106ma73d', status: 'Active' },
+      ],
+      'GRM188R61C106MA73D',
+    );
+    expect(ordered[0].mpn).toBe('grm188r61c106ma73d');
+  });
+
+  it('is a NO-OP for descriptive searches — a multi-word phrase leaves Active-first ordering intact', () => {
+    // No candidate MPN equals the phrase, so exactRank is uniformly 1 → pure active-first.
+    const ordered = orderSearchCandidates(
+      [
+        { mpn: 'AAA-1', status: 'Obsolete' },
+        { mpn: 'BBB-2', status: 'Active' },
+        { mpn: 'CCC-3' }, // missing status → orderable (top)
+      ],
+      'low dropout voltage regulator 3.3V',
+    );
+    expect(ordered.map((c) => c.mpn)).toEqual(['BBB-2', 'CCC-3', 'AAA-1']);
+  });
+
+  it('keeps Active-first (and source order) among the non-exact remainder', () => {
+    const ordered = orderSearchCandidates(
+      [
+        { mpn: 'X-OLD', status: 'Obsolete' },
+        { mpn: 'X-EXACT', status: 'Active' },
+        { mpn: 'X-NEW', status: 'Active' },
+      ],
+      'X-EXACT',
+    );
+    // Exact first; then the two remaining Active-vs-Obsolete resolves Active-first, stable.
+    expect(ordered.map((c) => c.mpn)).toEqual(['X-EXACT', 'X-NEW', 'X-OLD']);
   });
 });
