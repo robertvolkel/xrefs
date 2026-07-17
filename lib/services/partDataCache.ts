@@ -213,6 +213,12 @@ export async function getCachedResponse<T>(
   mpn: string,
   variant: string = 'default',
 ): Promise<CacheReadResult<T> | null> {
+  // Test-only recompute switch. The L2 cache key does NOT include the provider
+  // flags, so during connector-abstraction characterization a broken new path
+  // could silently return the OLD path's cached result and look identical. The
+  // harness sets this to force every run to recompute from live sources. Dormant
+  // in production (env unset). See scripts/providers-characterize.ts.
+  if (process.env.PROVIDERS_HARNESS_NO_CACHE === '1') return null;
   try {
     const client = createServiceClient();
     const now = new Date().toISOString();
@@ -263,6 +269,8 @@ export async function getCachedResponseBatch<T>(
   variant: string = 'default',
 ): Promise<Map<string, T>> {
   const results = new Map<string, T>();
+  // Test-only recompute switch (see getCachedResponse). Force live recompute.
+  if (process.env.PROVIDERS_HARNESS_NO_CACHE === '1') return results;
   if (mpns.length === 0) return results;
 
   try {

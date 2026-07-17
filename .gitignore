@@ -49,3 +49,6 @@ next-env.d.ts
 # Atlas dedupe recovery snapshots (local reversibility artifacts)
 atlas-dedupe-snapshot-*.json
 atlas-rekey-snapshot-*.json
+
+# Connector-abstraction characterization artifacts (local, regenerated on demand)
+scripts/.characterization/
