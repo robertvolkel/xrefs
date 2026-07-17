@@ -34,7 +34,17 @@ jest.mock('../../lib/supabase/server', () => ({
   createClient: jest.fn(async () => ({
     from: (table: string) => {
       if (table === 'atlas_manufacturers') {
-        return { select: () => Promise.resolve({ data: atlasData, error: null }) };
+        // fetchAtlas() paginates: .select().order().range() (Decisions
+        // #206/#232/#249). Match the Western branches below — the flat
+        // .select()→Promise mock threw "order is not a function".
+        return {
+          select: () => ({
+            order: () => ({
+              range: (from: number, to: number) =>
+                Promise.resolve({ data: atlasData.slice(from, to + 1), error: null }),
+            }),
+          }),
+        };
       }
       if (table === 'manufacturer_companies') {
         return {
