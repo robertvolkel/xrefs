@@ -39,6 +39,9 @@ import { applyAcceptanceCriteriaToLogicTable } from './acceptanceModifier';
 import { fetchWideningKey, isFetchWideningCriterion, isParametricWideningCriterion, rangeKeywordTokens, criterionToValueSet, criterionToBounds, MAX_WIDEN_QUERIES } from './fetchWidening';
 import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns, searchPartsioProducts, mapPartsioStatus } from './partsioClient';
 import { mapPartsioProductToAttributes, extractPartsioLifecycle } from './partsioMapper';
+// Data-source provider abstraction (adoption is flag-gated per phase; see providers/).
+import { digikeyProvider } from './providers/digikeyProvider';
+import { atlasProvider } from './providers/atlasProvider';
 import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSuggestedMpn, MouserProduct } from './mouserClient';
 import { mapMouserLifecycle } from './mouserMapper';
 import { isFindchipsConfigured, getFindchipsResults, getFindchipsResultsBatch, hasFindchipsBudget, getCachedDistributorCounts } from './findchipsClient';
@@ -1101,6 +1104,12 @@ async function getAttributesRaw(
   mpn: string, currency?: string, userId?: string,
   options?: { skipFindchips?: boolean; preferredSource?: 'digikey' | 'atlas' | 'partsio'; manufacturer?: string },
 ): Promise<PartAttributes | null> {
+  // Phase 2 (connector abstraction): route the Digikey + Atlas part-lookups
+  // through the provider adapters when PROVIDERS_ATTRS=1. Flag off = byte-identical
+  // to the old inline path. The ladder order, the parts.io sparse-vs-Atlas-rich
+  // arbitration, and enrichSourceInParallel are all unchanged.
+  const useProviders = process.env.PROVIDERS_ATTRS === '1';
+
   // When the user explicitly clicked an Atlas card, fetch from Atlas FIRST.
   // The Digikey keyword-search fallback (further down) does a startsWith()
   // prefix match — so a click on Galaxy's "1.5KE100" would otherwise resolve
@@ -1108,7 +1117,9 @@ async function getAttributesRaw(
   // PartSummary carries dataSource + manufacturer; we honor both here.
   if (options?.preferredSource === 'atlas') {
     try {
-      const atlasAttrs = await getAtlasAttributes(mpn, options?.manufacturer);
+      const atlasAttrs = useProviders
+        ? await atlasProvider.getByMpn(mpn, { manufacturer: options?.manufacturer })
+        : await getAtlasAttributes(mpn, options?.manufacturer);
       if (atlasAttrs) {
         return await enrichSourceInParallel(atlasAttrs, userId, options?.skipFindchips);
       }
@@ -1119,35 +1130,46 @@ async function getAttributesRaw(
   }
 
   if (isDigikeyConfigured()) {
-    try {
-      const response = await getProductDetails(mpn, currency, userId);
-      if (response.Product) {
-        const attrs: PartAttributes = { ...mapDigikeyProductToAttributes(response.Product), dataSource: 'digikey' as const };
+    if (useProviders) {
+      // digikeyProvider.getByMpn encapsulates the SAME two-try (product details →
+      // keyword-prefix fallback), the same dataSource tag, and the same service-
+      // failure reporting; returns null on total miss so we fall through to
+      // parts.io exactly as before.
+      const attrs = await digikeyProvider.getByMpn(mpn, { currency, userId });
+      if (attrs) {
         return await enrichSourceInParallel(attrs, userId, options?.skipFindchips);
       }
-    } catch (error) {
-      console.warn('Digikey product details lookup failed for', mpn, '— trying keyword search fallback');
-      reportServiceFailure('digikey', 'unavailable', 'Product details failed');
-    }
+    } else {
+      try {
+        const response = await getProductDetails(mpn, currency, userId);
+        if (response.Product) {
+          const attrs: PartAttributes = { ...mapDigikeyProductToAttributes(response.Product), dataSource: 'digikey' as const };
+          return await enrichSourceInParallel(attrs, userId, options?.skipFindchips);
+        }
+      } catch (error) {
+        console.warn('Digikey product details lookup failed for', mpn, '— trying keyword search fallback');
+        reportServiceFailure('digikey', 'unavailable', 'Product details failed');
+      }
 
-    // Fallback: keyword search by MPN (handles cases where Product Details API
-    // doesn't recognize the MPN directly, e.g. NXP's "BC847CW,115")
-    try {
-      const searchResponse = await keywordSearch(mpn, { limit: 5 }, currency, userId);
-      const lowerMpn = mpn.toLowerCase();
-      // Try exact match first, then prefix match (e.g. "BC857C" → "BC857C,115")
-      const match = searchResponse.Products?.find(
-        (p) => p.ManufacturerProductNumber?.toLowerCase() === lowerMpn
-      ) ?? searchResponse.Products?.find(
-        (p) => p.ManufacturerProductNumber?.toLowerCase().startsWith(lowerMpn)
-      );
-      if (match) {
-        const attrs: PartAttributes = { ...mapDigikeyProductToAttributes(match), dataSource: 'digikey' as const };
-        return await enrichSourceInParallel(attrs, userId, options?.skipFindchips);
+      // Fallback: keyword search by MPN (handles cases where Product Details API
+      // doesn't recognize the MPN directly, e.g. NXP's "BC847CW,115")
+      try {
+        const searchResponse = await keywordSearch(mpn, { limit: 5 }, currency, userId);
+        const lowerMpn = mpn.toLowerCase();
+        // Try exact match first, then prefix match (e.g. "BC857C" → "BC857C,115")
+        const match = searchResponse.Products?.find(
+          (p) => p.ManufacturerProductNumber?.toLowerCase() === lowerMpn
+        ) ?? searchResponse.Products?.find(
+          (p) => p.ManufacturerProductNumber?.toLowerCase().startsWith(lowerMpn)
+        );
+        if (match) {
+          const attrs: PartAttributes = { ...mapDigikeyProductToAttributes(match), dataSource: 'digikey' as const };
+          return await enrichSourceInParallel(attrs, userId, options?.skipFindchips);
+        }
+      } catch {
+        console.warn('Digikey keyword search fallback also failed for', mpn);
+        reportServiceFailure('digikey', 'unavailable', 'Search fallback failed');
       }
-    } catch {
-      console.warn('Digikey keyword search fallback also failed for', mpn);
-      reportServiceFailure('digikey', 'unavailable', 'Search fallback failed');
     }
   }
 
@@ -1197,7 +1219,7 @@ async function getAttributesRaw(
   const partsioIsSparse = !partsioAttrs || partsioAttrs.parameters.length === 0;
   if (partsioIsSparse) {
     try {
-      const atlasAttrs = await getAtlasAttributes(mpn);
+      const atlasAttrs = useProviders ? await atlasProvider.getByMpn(mpn) : await getAtlasAttributes(mpn);
       if (atlasAttrs && atlasAttrs.parameters.length > 0) {
         // Atlas wins when parts.io was empty AND Atlas has actual parametric data.
         return await enrichSourceInParallel(atlasAttrs, userId, options?.skipFindchips);
