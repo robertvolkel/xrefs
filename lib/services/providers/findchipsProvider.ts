@@ -70,6 +70,8 @@ export const findchipsProvider: CommercialProvider = {
 
   async getDistributorCount(mpn: string): Promise<number | undefined> {
     const counts = await getCachedDistributorCounts([mpn]);
-    return counts.get(mpn);
+    // The map is keyed by LOWERCASED mpn (getCachedDistributorCounts → set(mpnLower)),
+    // so the lookup must lowercase too — matching the original consumer.
+    return counts.get(mpn.toLowerCase());
   },
 };

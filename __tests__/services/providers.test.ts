@@ -74,6 +74,7 @@ describe('registry — configured-state filtering + priority (evaluated at call 
     process.env.DIGIKEY_CLIENT_ID = 'x';
     process.env.DIGIKEY_CLIENT_SECRET = 'y';
     process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://example.supabase.co';
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'anon';
     process.env.PARTSIO_API_KEY = 'k';
     process.env.FINDCHIPS_API_KEY = 'k';
   }

@@ -41,8 +41,9 @@ export const atlasProvider: CatalogProvider = {
   kind: 'catalog',
   capabilities: CAPABILITIES,
 
-  // Atlas is the persistent store itself (Supabase); "configured" = Supabase reachable.
-  isConfigured: () => !!process.env.NEXT_PUBLIC_SUPABASE_URL,
+  // Atlas is the persistent store itself (Supabase); "configured" = Supabase URL
+  // AND an anon key present (URL alone doesn't make a query succeed).
+  isConfigured: () => !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
 
   getByMpn(mpn: string, opts?: LookupOpts): Promise<PartAttributes | null> {
     // getAtlasAttributes already sets dataSource:'atlas'.

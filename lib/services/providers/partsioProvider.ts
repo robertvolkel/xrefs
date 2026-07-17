@@ -87,6 +87,10 @@ export const partsioProvider: EnrichmentProvider = {
     const equivalents = extractEquivalentMpns(listing, mpn, 10);
     if (equivalents.length === 0) return [];
 
+    const fffCount = equivalents.filter((e) => e.type === 'fff').length;
+    const feCount = equivalents.filter((e) => e.type === 'functional').length;
+    console.log(`[parts.io] Found ${equivalents.length} equivalents for ${mpn} (${fffCount} FFF, ${feCount} FE)`);
+
     const results = await Promise.all(
       equivalents.map(async ({ mpn: eqMpn, type }) => {
         try {
