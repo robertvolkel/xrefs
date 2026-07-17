@@ -23,6 +23,21 @@
 
 process.env.PROVIDERS_HARNESS_NO_CACHE = '1';
 
+// Parts.io's QA endpoint is VPN-gated and slow (8s per-request timeout), which makes
+// it a NON-DETERMINISTIC input: two runs can disagree purely on parts.io answering vs
+// timing out — not on the code under test. Two OFF-flag runs recorded hours apart were
+// observed to differ solely in the recs case for this reason. When a phase does not
+// touch the parts.io path (e.g. Phase 2 = PROVIDERS_ATTRS, which only reroutes the
+// Digikey/Atlas MPN lookup), set HARNESS_NO_PARTSIO=1 to disable parts.io so the
+// off-vs-on diff isolates the actual change. isPartsioConfigured() reads this env var
+// at call time, so deleting it here (after --env-file has loaded .env.local) cleanly
+// short-circuits every parts.io path. Phase 3 routes parts.io THROUGH the connector and
+// will verify it with a deterministic record-and-replay instead of live calls.
+if (process.env.HARNESS_NO_PARTSIO === '1') {
+  delete process.env.PARTSIO_API_KEY;
+  console.log('[harness] HARNESS_NO_PARTSIO=1 — parts.io disabled for this run\n');
+}
+
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
 import { searchParts, getAttributes, getRecommendations } from '../lib/services/partDataService';
