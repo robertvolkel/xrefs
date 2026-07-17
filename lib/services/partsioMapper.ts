@@ -5,10 +5,29 @@
  * Used for gap-fill enrichment after Digikey data is loaded.
  */
 
-import type { ParametricAttribute } from '../types';
+import type { ParametricAttribute, Part } from '../types';
 import type { ParamMapping, ParamMapEntry } from './digikeyParamMap';
 import type { PartsioListing } from './partsioClient';
 import { findPartsioParamMap } from './partsioParamMap';
+
+/**
+ * Extract lifecycle / compliance / trade metadata from a parts.io listing into
+ * a Partial<Part>. Gap-fill semantics live at the call site (only unset fields
+ * are filled). Extracted from partDataService so the parts.io provider adapter
+ * and the orchestrator share ONE implementation (Decision: connector abstraction).
+ */
+export function extractPartsioLifecycle(listing: PartsioListing): Partial<Part> {
+  const result: Partial<Part> = {};
+  if (listing.YTEOL) result.yteol = parseFloat(listing.YTEOL);
+  if (listing['Risk Rank'] != null) result.riskRank = listing['Risk Rank'];
+  if (listing['Country Of Origin']) result.countryOfOrigin = listing['Country Of Origin'] as string;
+  if (listing['Reach Compliance Code']) result.reachCompliance = listing['Reach Compliance Code'];
+  if (listing['ECCN Code']) result.eccnCode = listing['ECCN Code'];
+  if (listing['HTS Code']) result.htsCode = listing['HTS Code'];
+  const leadTime = listing['Factory Lead Time'] as { Weeks?: number } | undefined;
+  if (leadTime?.Weeks) result.factoryLeadTimeWeeks = leadTime.Weeks;
+  return result;
+}
 
 // ============================================================
 // VALUE TRANSFORMERS

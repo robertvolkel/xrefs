@@ -8,7 +8,7 @@
  */
 
 import { SearchResult, SearchDataSource, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource, ReplacementPriorities, DEFAULT_REPLACEMENT_PRIORITIES, isCertifiedCross, filterRecsByMismatchCount, countRealMismatches, AcceptanceCriteria, SearchConstraint, NarrowingSuggestion } from '../types';
-import { keywordSearch, getProductDetails, warmCacheFromSearchResults, getCategoryParametricFacets, parametricFilterSearch, type DigikeyProduct } from './digikeyClient';
+import { keywordSearch, getProductDetails, warmCacheFromSearchResults, getCategoryParametricFacets, parametricFilterSearch, isDigikeyConfigured, type DigikeyProduct } from './digikeyClient';
 import {
   mapKeywordResponseToSearchResult,
   mapKeywordResponseToAttributesByMpn,
@@ -38,7 +38,7 @@ import { applyRuleOverrides, applyContextOverrides } from './overrideMerger';
 import { applyAcceptanceCriteriaToLogicTable } from './acceptanceModifier';
 import { fetchWideningKey, isFetchWideningCriterion, isParametricWideningCriterion, rangeKeywordTokens, criterionToValueSet, criterionToBounds, MAX_WIDEN_QUERIES } from './fetchWidening';
 import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns, searchPartsioProducts, mapPartsioStatus } from './partsioClient';
-import { mapPartsioProductToAttributes } from './partsioMapper';
+import { mapPartsioProductToAttributes, extractPartsioLifecycle } from './partsioMapper';
 import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSuggestedMpn, MouserProduct } from './mouserClient';
 import { mapMouserLifecycle } from './mouserMapper';
 import { isFindchipsConfigured, getFindchipsResults, getFindchipsResultsBatch, hasFindchipsBudget, getCachedDistributorCounts } from './findchipsClient';
@@ -62,19 +62,6 @@ import type { PartsioListing } from './partsioClient';
 import type { Part } from '../types';
 
 /** Extract lifecycle & compliance metadata from a parts.io listing into Part fields */
-function extractPartsioLifecycle(listing: PartsioListing): Partial<Part> {
-  const result: Partial<Part> = {};
-  if (listing.YTEOL) result.yteol = parseFloat(listing.YTEOL);
-  if (listing['Risk Rank'] != null) result.riskRank = listing['Risk Rank'];
-  if (listing['Country Of Origin']) result.countryOfOrigin = listing['Country Of Origin'] as string;
-  if (listing['Reach Compliance Code']) result.reachCompliance = listing['Reach Compliance Code'];
-  if (listing['ECCN Code']) result.eccnCode = listing['ECCN Code'];
-  if (listing['HTS Code']) result.htsCode = listing['HTS Code'];
-  const leadTime = listing['Factory Lead Time'] as { Weeks?: number } | undefined;
-  if (leadTime?.Weeks) result.factoryLeadTimeWeeks = leadTime.Weeks;
-  return result;
-}
-
 // ============================================================
 // PARTS.IO FAMILY DISAMBIGUATION
 // ============================================================
@@ -198,9 +185,8 @@ function disambiguatePartsioSubcategory(
 // CONFIGURATION CHECK
 // ============================================================
 
-function isDigikeyConfigured(): boolean {
-  return !!(process.env.DIGIKEY_CLIENT_ID && process.env.DIGIKEY_CLIENT_SECRET);
-}
+// isDigikeyConfigured now lives in ./digikeyClient (single source of truth shared
+// with the Digikey provider adapter; the Phase-6 kill-switch will live there).
 
 // ============================================================
 // SEARCH

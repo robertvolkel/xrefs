@@ -559,12 +559,11 @@ export interface MissingAttributeInfo {
   upgradeHierarchy?: string[];
 }
 
-/** Interface that both mock and real data providers must implement */
-export interface PartDataProvider {
-  search(query: string): Promise<SearchResult>;
-  getAttributes(mpn: string): Promise<PartAttributes | null>;
-  getRecommendations(mpn: string): Promise<XrefRecommendation[]>;
-}
+// NOTE: the former `PartDataProvider` interface was removed. It was at the wrong
+// altitude — it bundled `getRecommendations` (scoring/filtering/sorting), which a
+// swappable *data source* must never own. The data-source provider abstraction
+// lives in `lib/services/providers/` (capability-based, data-access only); scoring
+// stays in the matching engine.
 
 // ============================================================
 // APPLICATION CONTEXT TYPES

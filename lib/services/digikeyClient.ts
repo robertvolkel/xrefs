@@ -119,6 +119,21 @@ export interface DigikeySearchOptions {
 }
 
 // ============================================================
+// CONFIG
+// ============================================================
+
+/**
+ * Single source of truth for "is Digikey usable right now". Relocated here from
+ * partDataService so the orchestrator's guards AND the Digikey provider adapter
+ * share ONE predicate (the connector abstraction). The Phase-6 `DIGIKEY_PROVIDER_DISABLED`
+ * kill-switch will live inside THIS function — every existing guard already calls
+ * it, so no other call site needs editing.
+ */
+export function isDigikeyConfigured(): boolean {
+  return !!(process.env.DIGIKEY_CLIENT_ID && process.env.DIGIKEY_CLIENT_SECRET);
+}
+
+// ============================================================
 // TOKEN MANAGEMENT
 // ============================================================
 
