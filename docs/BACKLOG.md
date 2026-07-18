@@ -244,6 +244,15 @@ Fixed and merged to main. `searchParts` now resolves `PartSummary.mfrOrigin` per
 
 ---
 
+## Comma-containing MPNs get ZERO manufacturer cross-references (P2) — pre-existing, surfaced July 2026
+
+**Context.** `fetchManufacturerCrossRefs` (`lib/services/manufacturerCrossRefService.ts`) builds a PostgREST `.or()` filter with the raw MPN interpolated: `(original_mpn.ilike.<mpn>,xref_mpn.ilike.<mpn>)`. A comma is the delimiter *inside* `.or()`, so an MPN that contains one — e.g. NXP reel suffixes `BC847CW,115` / `,215` — splits the logic tree and Postgres rejects it:
+`failed to parse logic tree ((original_mpn.ilike.bc847cw,115,xref_mpn.ilike.bc847cw,115))`. The error is caught and the lookup returns empty, so nothing crashes — but **every comma-suffixed part silently gets no MFR cross-references**, which are a real cross-ref source (Decision #133 certified-cross bypass keys off them). Comma-suffixed MPNs are common, so this hits real parts. Surfaced (not caused) by the connector-abstraction `attributes:digikey-keyword-fallback` corpus case; entirely unrelated to that refactor.
+
+**Fix.** Escape/quote the MPN before embedding in `.or()` (PostgREST allows double-quoting a value to protect reserved chars: `original_mpn.ilike."<mpn>"`), or switch to two separate `.ilike` filters combined without the string-built `.or()`. Add a comma-containing MPN to the cross-ref service's test fixtures — no existing fixture carries one, which is why this went unnoticed (cf. the Decision #268 "test fixture must carry the shape" lesson). Verify against a known comma-suffix part that DOES have crosses.
+
+---
+
 ## Manufacturer profile pull should open the right-hand panel, not re-type the profile in chat (P3)
 
 **Context.** When a user asks the chat agent to pull a manufacturer profile — or accepts the agent's own "want me to pull a company profile?" offer — `get_manufacturer_profile` runs and the LLM renders the profile **inline in the chat bubble** as a markdown table + cert-audit + risk-read. It does **not** open the dedicated right-hand `ManufacturerProfilePanel` (Decisions #161 / #203), which today only opens on a manufacturer-name **click** (`handleManufacturerClick`). Net: the same data has two presentations depending on click-vs-ask, and the nicer structured panel is bypassed on the conversational path. Verified on a 3PEAK profile (June 2026) that the inline answer is **fully grounded** against the stored Atlas record (dual HQ, STAR Market listing, ISO 26262 + IATF 16949 certs all real; AEC-Q honestly flagged "not in our profile") — so this is a UX/consistency gap, **not** a correctness one. User chose to leave behavior **as-is** for now.
