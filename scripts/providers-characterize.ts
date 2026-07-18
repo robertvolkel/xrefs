@@ -66,6 +66,15 @@ const CORPUS: Case[] = [
     run: () => getAttributes('GRM188R71C104KA01D', undefined, undefined, { skipFindchips: true }),
   },
   {
+    // Comma-suffixed NXP MPN: Digikey product-details doesn't recognize it directly,
+    // so this resolves via the keyword-PREFIX fallback to a Digikey match — the one
+    // getByMpn branch the other cases never hit (they resolve via details or fall
+    // through to Atlas). Confirms Phase 2's provider swap on that branch too.
+    // (Watch the log for "product details lookup failed … trying keyword search".)
+    name: 'attributes:digikey-keyword-fallback',
+    run: () => getAttributes('BC847CW,115', undefined, undefined, { skipFindchips: true }),
+  },
+  {
     name: 'attributes:atlas-isc-schottky',
     run: () =>
       getAttributes('SRF10150CT', undefined, undefined, {
@@ -201,7 +210,11 @@ const ENRICH_CORPUS: EnrichCase[] = [
 
 async function enrichAb(): Promise<boolean> {
   // Isolate Phase 3: hold the Phase-2 lookup flag constant (already proven
-  // identical), toggle ONLY PROVIDERS_ENRICH.
+  // identical), toggle ONLY PROVIDERS_ENRICH. Snapshot + restore both flags in a
+  // finally so this mode can't leak forced flag state into a future in-process
+  // caller (e.g. a composed 'verify-all').
+  const savedAttrs = process.env.PROVIDERS_ATTRS;
+  const savedEnrich = process.env.PROVIDERS_ENRICH;
   process.env.PROVIDERS_ATTRS = '0';
   if (process.env.HARNESS_NO_PARTSIO === '1') {
     console.log('⚠ HARNESS_NO_PARTSIO=1 is set — the parts.io half of Phase 3 is NOT exercised. Unset it + enable the VPN for a full run.\n');
@@ -209,66 +222,82 @@ async function enrichAb(): Promise<boolean> {
 
   let differed = false;
   let meaningful = 0;
-  for (const c of ENRICH_CORPUS) {
-    // 1. Pre-warm the flaky parts.io endpoint into its L1 cache, retrying through
-    //    timeouts, so both flag states below read identical pinned data.
-    let warmed = false;
-    for (let i = 0; i < 5 && !warmed; i++) {
-      try { await getPartsioProductDetails(c.mpn); warmed = true; }
-      catch { /* parts.io timeout — retry */ }
-    }
-    // 2. Warm pass (discard) — runs the real enrich path with the flag off to
-    //    populate the FindChips L1 cache (and belt-and-suspenders parts.io).
-    process.env.PROVIDERS_ENRICH = '0';
-    await getAttributes(c.mpn, undefined, undefined, c.opts);
-
-    // 3. OFF then ON — both are now pure L1 reads (no network, no flakiness).
-    process.env.PROVIDERS_ENRICH = '0';
-    const off = await getAttributes(c.mpn, undefined, undefined, c.opts);
-    process.env.PROVIDERS_ENRICH = '1';
-    const on = await getAttributes(c.mpn, undefined, undefined, c.opts);
-
-    // Meaningfulness guard: the comparison is a placebo if enrichment produced
-    // nothing (both sides == un-enriched base). Require real parts.io or FC data.
-    const contributed = !!(
-      on?.enrichedFrom === 'partsio'
-      || on?.part.supplierQuotes
-      || on?.part.lifecycleInfo
-      || on?.part.complianceData
-    );
-    const warmNote = warmed ? '' : ' (parts.io never warmed — VPN off?)';
-
-    const sOff = stable(off, ENRICH_VOLATILE_KEYS);
-    const sOn = stable(on, ENRICH_VOLATILE_KEYS);
-    if (sOff !== sOn) {
-      differed = true;
-      console.log(`  ≠ enrich:${c.name}  DIFFERS${warmNote}`);
-      const la = sOff.split('\n'), lb = sOn.split('\n');
-      let shown = 0;
-      for (let i = 0; i < Math.max(la.length, lb.length) && shown < 8; i++) {
-        if (la[i] !== lb[i]) {
-          console.log(`      L${i + 1}  off: ${(la[i] ?? '∅').trim().slice(0, 90)}`);
-          console.log(`           on:  ${(lb[i] ?? '∅').trim().slice(0, 90)}`);
-          shown++;
-        }
+  let inconclusive = 0;
+  try {
+    for (const c of ENRICH_CORPUS) {
+      // 1. Pre-warm the flaky parts.io endpoint into its L1 cache, retrying through
+      //    timeouts, so both flag states below read identical pinned data.
+      let warmed = false;
+      for (let i = 0; i < 5 && !warmed; i++) {
+        try { await getPartsioProductDetails(c.mpn); warmed = true; }
+        catch { /* parts.io timeout — retry */ }
       }
-    } else if (contributed) {
-      meaningful++;
-      console.log(`  = enrich:${c.name}  (identical, with real enrichment data)`);
-    } else {
-      console.log(`  ⚠ enrich:${c.name}  identical but NO enrichment data — inconclusive${warmNote}`);
+      // If parts.io can't be pinned, off/on each hit the live source and may differ
+      // for reasons unrelated to the code — a FALSE ❌. Skip as inconclusive, never
+      // report it as a regression (the whole point of the in-process pinning).
+      if (!warmed) {
+        inconclusive++;
+        console.log(`  ⚠ enrich:${c.name}  parts.io could not be pinned (5 timeouts) — skipped as inconclusive`);
+        continue;
+      }
+
+      // 2. Warm pass (discard) — runs the real enrich path with the flag off to
+      //    populate the FindChips L1 cache (and belt-and-suspenders parts.io).
+      process.env.PROVIDERS_ENRICH = '0';
+      await getAttributes(c.mpn, undefined, undefined, c.opts);
+
+      // 3. OFF then ON — both are now pure L1 reads (no network, no flakiness).
+      process.env.PROVIDERS_ENRICH = '0';
+      const off = await getAttributes(c.mpn, undefined, undefined, c.opts);
+      process.env.PROVIDERS_ENRICH = '1';
+      const on = await getAttributes(c.mpn, undefined, undefined, c.opts);
+
+      // Meaningfulness guard: the comparison is a placebo if enrichment produced
+      // nothing (both sides == un-enriched base). Require real parts.io or FC data.
+      const contributed = !!(
+        on?.enrichedFrom === 'partsio'
+        || on?.part.supplierQuotes
+        || on?.part.lifecycleInfo
+        || on?.part.complianceData
+      );
+
+      const sOff = stable(off, ENRICH_VOLATILE_KEYS);
+      const sOn = stable(on, ENRICH_VOLATILE_KEYS);
+      if (sOff !== sOn) {
+        differed = true;
+        console.log(`  ≠ enrich:${c.name}  DIFFERS`);
+        const la = sOff.split('\n'), lb = sOn.split('\n');
+        let shown = 0;
+        for (let i = 0; i < Math.max(la.length, lb.length) && shown < 8; i++) {
+          if (la[i] !== lb[i]) {
+            console.log(`      L${i + 1}  off: ${(la[i] ?? '∅').trim().slice(0, 90)}`);
+            console.log(`           on:  ${(lb[i] ?? '∅').trim().slice(0, 90)}`);
+            shown++;
+          }
+        }
+      } else if (contributed) {
+        meaningful++;
+        console.log(`  = enrich:${c.name}  (identical, with real enrichment data)`);
+      } else {
+        inconclusive++;
+        console.log(`  ⚠ enrich:${c.name}  identical but NO enrichment data — inconclusive`);
+      }
     }
+  } finally {
+    if (savedAttrs === undefined) delete process.env.PROVIDERS_ATTRS; else process.env.PROVIDERS_ATTRS = savedAttrs;
+    if (savedEnrich === undefined) delete process.env.PROVIDERS_ENRICH; else process.env.PROVIDERS_ENRICH = savedEnrich;
   }
 
+  const tail = inconclusive ? ` (${inconclusive} inconclusive)` : '';
   if (differed) {
-    console.log('\n❌ DIFFERENCES FOUND (enrich off vs on)');
+    console.log(`\n❌ DIFFERENCES FOUND (enrich off vs on)${tail}`);
     return false;
   }
   if (meaningful === 0) {
     console.log('\n⚠ INCONCLUSIVE — no case produced enrichment data (VPN off, or FindChips/parts.io returned nothing). Not a valid proof.');
     return false;
   }
-  console.log(`\n✅ IDENTICAL (enrich off vs on; ${meaningful} case(s) verified with real parts.io + FindChips data)`);
+  console.log(`\n✅ IDENTICAL (enrich off vs on; ${meaningful} case(s) verified with real parts.io + FindChips data)${tail}`);
   return true;
 }
 

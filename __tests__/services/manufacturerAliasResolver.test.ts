@@ -49,7 +49,10 @@ jest.mock('../../lib/supabase/server', () => ({
           select: () => ({
             order: () => ({
               range: (from: number, to: number) => {
-                atlasSelectCalls++;
+                // Count resolver FETCHES, not pages: fetchAllPages always starts at
+                // from=0, so gate on that — robust to a future >1000-row fixture that
+                // would otherwise make one resolve increment this multiple times.
+                if (from === 0) atlasSelectCalls++;
                 if (atlasError) return Promise.resolve({ data: null, error: atlasError });
                 return Promise.resolve({ data: atlasData.slice(from, to + 1), error: null });
               },

@@ -43,6 +43,7 @@ import { mapPartsioProductToAttributes, extractPartsioLifecycle } from './partsi
 import { digikeyProvider } from './providers/digikeyProvider';
 import { atlasProvider } from './providers/atlasProvider';
 import { enrichmentProvider, commercialProvider } from './providers/providerRegistry';
+import { providersAttrsEnabled, providersEnrichEnabled } from './providers/flags';
 import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSuggestedMpn, MouserProduct } from './mouserClient';
 import { mapMouserLifecycle } from './mouserMapper';
 import { isFindchipsConfigured, getFindchipsResults, getFindchipsResultsBatch, hasFindchipsBudget, getCachedDistributorCounts } from './findchipsClient';
@@ -904,7 +905,7 @@ async function enrichWithPartsio(attrs: PartAttributes, userId?: string): Promis
   // isPartsioConfigured guard, gap-fill logic, lifecycle merge, try/catch and
   // reportServiceFailure — so flag-off vs flag-on is identical. A null provider
   // means parts.io is unconfigured, i.e. the same outcome as the guard below.
-  if (process.env.PROVIDERS_ENRICH === '1') {
+  if (providersEnrichEnabled()) {
     const provider = enrichmentProvider();
     return provider ? provider.enrich(attrs, userId) : attrs;
   }
@@ -999,7 +1000,7 @@ async function enrichWithFindchips(attrs: PartAttributes, userId?: string): Prom
     // mapFCToQuotes/Lifecycle/Compliance + same length-gated undefined), so
     // flag-off vs flag-on is byte-identical. Provider null only when FC is
     // unconfigured, but the guard at the top already returned in that case.
-    if (process.env.PROVIDERS_ENRICH === '1') {
+    if (providersEnrichEnabled()) {
       const provider = commercialProvider();
       const commercial = provider ? await provider.getCommercial(attrs.part.mpn, { source, userId }) : null;
       if (!commercial) return attrs;
@@ -1142,7 +1143,7 @@ async function getAttributesRaw(
   // through the provider adapters when PROVIDERS_ATTRS=1. Flag off = byte-identical
   // to the old inline path. The ladder order, the parts.io sparse-vs-Atlas-rich
   // arbitration, and enrichSourceInParallel are all unchanged.
-  const useProviders = process.env.PROVIDERS_ATTRS === '1';
+  const useProviders = providersAttrsEnabled();
 
   // When the user explicitly clicked an Atlas card, fetch from Atlas FIRST.
   // The Digikey keyword-search fallback (further down) does a startsWith()

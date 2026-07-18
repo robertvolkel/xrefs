@@ -94,6 +94,12 @@ export const digikeyProvider: ParametricCatalogProvider = {
     return null;
   },
 
+  // ⚠ ERROR CONTRACT (Phase 4 wiring): unlike getByMpn, this does NOT internalize
+  // a try/catch — it can THROW if keywordSearch rejects. That mirrors its inline
+  // origin (the searchParts Digikey branch), whose errors are absorbed by the
+  // caller's `Promise.allSettled` fan-out. Phase 4 MUST wire this inside that same
+  // allSettled (never a bare await), or a Digikey outage will abort the whole
+  // search instead of that one source contributing nothing — a behavior change.
   async searchByKeyword(query: string, opts?: KeywordSearchOpts): Promise<CatalogSearchResult> {
     const catId =
       opts?.category && typeof (opts.category.raw as { categoryId?: number })?.categoryId === 'number'

@@ -18,3 +18,9 @@ export {
   parametricProvider,
   providerById,
 } from './providerRegistry';
+export {
+  providersAttrsEnabled,
+  providersEnrichEnabled,
+  providersSearchEnabled,
+  providersRecsEnabled,
+} from './flags';
