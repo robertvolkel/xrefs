@@ -204,6 +204,37 @@ export function isNotFoundSentinel(data: unknown): data is typeof NOT_FOUND_SENT
 // READ
 // ============================================================
 
+// ── Test-only recompute switch ──────────────────────────────────────────────
+// The connector-abstraction characterization harness sets PROVIDERS_HARNESS_NO_CACHE=1
+// to force every read to recompute from live sources: the L2 cache key does NOT
+// include the provider flags, so without this a broken new path could silently
+// return the OLD path's cached result and look identical (see
+// scripts/providers-characterize.ts).
+//
+// This MUST NEVER take effect in a deployed app — with it on, every part lookup
+// bypasses L2 and hammers the live Digikey/parts.io/FindChips APIs (latency + cost
+// + rate-limit blowup). Two guards close the "stray env var nukes prod" hole:
+//   (1) honored ONLY outside production, so a leaked var can't disable prod caching;
+//   (2) a one-time warning so it can never engage — or be ignored in prod — SILENTLY.
+// NB: read at CALL TIME, never as a module-level const — the harness sets the env
+// var in a top-level statement that runs AFTER this module is imported (ES imports
+// are hoisted), so an import-time read would see it unset and the bypass would
+// silently never engage.
+let warnedHarnessNoCache = false;
+function harnessNoCache(): boolean {
+  const raw = process.env.PROVIDERS_HARNESS_NO_CACHE === '1';
+  const active = raw && process.env.NODE_ENV !== 'production';
+  if (raw && !warnedHarnessNoCache) {
+    warnedHarnessNoCache = true;
+    console.warn(
+      active
+        ? '[partDataCache] PROVIDERS_HARNESS_NO_CACHE=1 — L2 cache DISABLED (characterization harness only; never active in production).'
+        : '[partDataCache] PROVIDERS_HARNESS_NO_CACHE=1 is set but IGNORED in production — L2 caching stays ON. Unset it.',
+    );
+  }
+  return active;
+}
+
 /**
  * Read a single cached response. Returns null on miss or expired entry.
  * Increments hit_count and last_hit_at on successful read (fire-and-forget).
@@ -213,12 +244,7 @@ export async function getCachedResponse<T>(
   mpn: string,
   variant: string = 'default',
 ): Promise<CacheReadResult<T> | null> {
-  // Test-only recompute switch. The L2 cache key does NOT include the provider
-  // flags, so during connector-abstraction characterization a broken new path
-  // could silently return the OLD path's cached result and look identical. The
-  // harness sets this to force every run to recompute from live sources. Dormant
-  // in production (env unset). See scripts/providers-characterize.ts.
-  if (process.env.PROVIDERS_HARNESS_NO_CACHE === '1') return null;
+  if (harnessNoCache()) return null;
   try {
     const client = createServiceClient();
     const now = new Date().toISOString();
@@ -269,8 +295,7 @@ export async function getCachedResponseBatch<T>(
   variant: string = 'default',
 ): Promise<Map<string, T>> {
   const results = new Map<string, T>();
-  // Test-only recompute switch (see getCachedResponse). Force live recompute.
-  if (process.env.PROVIDERS_HARNESS_NO_CACHE === '1') return results;
+  if (harnessNoCache()) return results; // test-only recompute switch (see getCachedResponse)
   if (mpns.length === 0) return results;
 
   try {
