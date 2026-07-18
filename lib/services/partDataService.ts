@@ -43,7 +43,7 @@ import { mapPartsioProductToAttributes, extractPartsioLifecycle } from './partsi
 import { digikeyProvider } from './providers/digikeyProvider';
 import { atlasProvider } from './providers/atlasProvider';
 import { enrichmentProvider, commercialProvider } from './providers/providerRegistry';
-import { providersAttrsEnabled, providersEnrichEnabled } from './providers/flags';
+import { providersAttrsEnabled, providersEnrichEnabled, providersSearchEnabled } from './providers/flags';
 import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSuggestedMpn, MouserProduct } from './mouserClient';
 import { mapMouserLifecycle } from './mouserMapper';
 import { isFindchipsConfigured, getFindchipsResults, getFindchipsResultsBatch, hasFindchipsBudget, getCachedDistributorCounts } from './findchipsClient';
@@ -540,12 +540,40 @@ export async function searchParts(
   const guidedCategoryIds = guidedFamilyId ? await resolveCategoryIdsForFamily(guidedFamilyId) : [];
   const keywordCategoryId = guidedCategoryIds[0];
 
+  // Phase 4 (PROVIDERS_SEARCH): route the Digikey + Atlas catalog searches through
+  // the provider adapters. Flag off = byte-identical inline path. The seenMpns merge,
+  // orderSearchCandidates, the mfrOrigin block, and the whole logic-vetting pass are
+  // unchanged; parts.io search stays inline (an enrichment source, not a catalog
+  // provider); the greenfield parametric union stays inline (deferred island — see below).
+  const useSearchProviders = providersSearchEnabled();
+
   const searches: LabeledSearch[] = [
     // Digikey
     {
       source: 'digikey',
       promise: (async (): Promise<SourcePayload> => {
         if (!isDigikeyConfigured()) return { result: { type: 'none', matches: [] } };
+        // Route the PLAIN keyword search through the provider. The greenfield
+        // parametric union stays inline: it unions RAW Digikey products into the
+        // keyword pool BEFORE mapping, which the provider's map-inside
+        // searchByKeyword cannot express — so it remains the deferred island.
+        // (searchByKeyword does NOT internalize try/catch — wrap it here to match
+        // the inline path's error handling + the Promise.allSettled contract.)
+        if (useSearchProviders && !wantGreenfieldParametric) {
+          try {
+            return await digikeyProvider.searchByKeyword(trimmed, {
+              limit: 20,
+              category: keywordCategoryId != null ? { provider: 'digikey', raw: { categoryId: keywordCategoryId } } : undefined,
+              currency,
+              userId,
+              buildAttrs: !!constraints,
+            });
+          } catch (error) {
+            console.warn('Digikey search failed:', error);
+            reportServiceFailure('digikey', 'unavailable', 'Search failed');
+            return { result: { type: 'none', matches: [] } };
+          }
+        }
         try {
           // Keyword search + parametric spec-fetch run in PARALLEL — the parametric path
           // resolves its category from the family taxonomy, so it no longer waits on (or needs)
@@ -586,9 +614,14 @@ export async function searchParts(
       })(),
     },
     // Atlas — build scorable attrs only on logic-vetted (constraints) searches.
+    // atlasProvider.searchByKeyword is a pure pass-through to searchAtlasProducts
+    // (same args, same {result, attrsByMpn} shape), so flag on/off is identical.
     {
       source: 'atlas',
-      promise: searchAtlasProducts(trimmed, mfrHint, !!constraints).catch(() => ({ result: { type: 'none' as const, matches: [] }, attrsByMpn: new Map() })),
+      promise: (useSearchProviders
+        ? atlasProvider.searchByKeyword(trimmed, { manufacturer: mfrHint, buildAttrs: !!constraints })
+        : searchAtlasProducts(trimmed, mfrHint, !!constraints)
+      ).catch(() => ({ result: { type: 'none' as const, matches: [] }, attrsByMpn: new Map() })),
     },
   ];
 
