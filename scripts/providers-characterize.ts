@@ -41,6 +41,7 @@ if (process.env.HARNESS_NO_PARTSIO === '1') {
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
 import { searchParts, getAttributes, getRecommendations } from '../lib/services/partDataService';
+import { getPartsioProductDetails } from '../lib/services/partsioClient';
 
 const OUT_DIR = resolve(__dirname, '.characterization');
 
@@ -101,21 +102,28 @@ const VOLATILE_KEYS = new Set([
   'priceBreaks',
 ]);
 
-function normalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(normalize);
+// For the in-process enrich A/B (Phase 3) the client L1 caches pin the upstream
+// bytes identical across the off/on pair, so prices/quotes/stock are the SAME on
+// both sides and can be verified directly. The only field that still varies is
+// the map-time timestamp findchipsMapper stamps onto each quote (`fetchedAt`), so
+// strip just the time fields and keep the actual commercial values.
+const ENRICH_VOLATILE_KEYS = new Set(['fetchedAt', 'lastChecked']);
+
+function normalize(value: unknown, volatile: Set<string> = VOLATILE_KEYS): unknown {
+  if (Array.isArray(value)) return value.map((v) => normalize(v, volatile));
   if (value && typeof value === 'object') {
     const out: Record<string, unknown> = {};
     for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      if (VOLATILE_KEYS.has(key)) continue;
-      out[key] = normalize((value as Record<string, unknown>)[key]);
+      if (volatile.has(key)) continue;
+      out[key] = normalize((value as Record<string, unknown>)[key], volatile);
     }
     return out;
   }
   return value;
 }
 
-function stable(value: unknown): string {
-  return JSON.stringify(normalize(value), null, 2);
+function stable(value: unknown, volatile: Set<string> = VOLATILE_KEYS): string {
+  return JSON.stringify(normalize(value, volatile), null, 2);
 }
 
 // ── Modes ─────────────────────────────────────────────────────────────────
@@ -172,12 +180,107 @@ function diff(a: string, b: string): boolean {
   return allEqual;
 }
 
+// ── Phase 3: in-process enrich A/B ─────────────────────────────────────────
+// The parts.io + FindChips enrichment path returns live prices that change
+// minute-to-minute, so a cross-process off-vs-on `diff` would show spurious
+// differences from the source, not the code. Instead: run getAttributes twice in
+// ONE process, toggling only PROVIDERS_ENRICH, after pre-warming both sources
+// into their in-memory L1 caches. Both flag states then read identical pinned
+// upstream bytes, so any surviving difference is purely the provider swap. This
+// exercises parts.io + FindChips FOR REAL (parts.io must be reachable → VPN on),
+// and a meaningfulness guard rejects a vacuous "identical because both empty".
+interface EnrichCase {
+  name: string;
+  mpn: string;
+  opts?: { skipFindchips?: boolean; preferredSource?: 'digikey' | 'atlas' | 'partsio'; manufacturer?: string };
+}
+const ENRICH_CORPUS: EnrichCase[] = [
+  { name: 'digikey-mlcc', mpn: 'GRM188R71C104KA01D' },
+  { name: 'atlas-isc-schottky', mpn: 'SRF10150CT', opts: { preferredSource: 'atlas', manufacturer: 'ISC' } },
+];
+
+async function enrichAb(): Promise<boolean> {
+  // Isolate Phase 3: hold the Phase-2 lookup flag constant (already proven
+  // identical), toggle ONLY PROVIDERS_ENRICH.
+  process.env.PROVIDERS_ATTRS = '0';
+  if (process.env.HARNESS_NO_PARTSIO === '1') {
+    console.log('⚠ HARNESS_NO_PARTSIO=1 is set — the parts.io half of Phase 3 is NOT exercised. Unset it + enable the VPN for a full run.\n');
+  }
+
+  let differed = false;
+  let meaningful = 0;
+  for (const c of ENRICH_CORPUS) {
+    // 1. Pre-warm the flaky parts.io endpoint into its L1 cache, retrying through
+    //    timeouts, so both flag states below read identical pinned data.
+    let warmed = false;
+    for (let i = 0; i < 5 && !warmed; i++) {
+      try { await getPartsioProductDetails(c.mpn); warmed = true; }
+      catch { /* parts.io timeout — retry */ }
+    }
+    // 2. Warm pass (discard) — runs the real enrich path with the flag off to
+    //    populate the FindChips L1 cache (and belt-and-suspenders parts.io).
+    process.env.PROVIDERS_ENRICH = '0';
+    await getAttributes(c.mpn, undefined, undefined, c.opts);
+
+    // 3. OFF then ON — both are now pure L1 reads (no network, no flakiness).
+    process.env.PROVIDERS_ENRICH = '0';
+    const off = await getAttributes(c.mpn, undefined, undefined, c.opts);
+    process.env.PROVIDERS_ENRICH = '1';
+    const on = await getAttributes(c.mpn, undefined, undefined, c.opts);
+
+    // Meaningfulness guard: the comparison is a placebo if enrichment produced
+    // nothing (both sides == un-enriched base). Require real parts.io or FC data.
+    const contributed = !!(
+      on?.enrichedFrom === 'partsio'
+      || on?.part.supplierQuotes
+      || on?.part.lifecycleInfo
+      || on?.part.complianceData
+    );
+    const warmNote = warmed ? '' : ' (parts.io never warmed — VPN off?)';
+
+    const sOff = stable(off, ENRICH_VOLATILE_KEYS);
+    const sOn = stable(on, ENRICH_VOLATILE_KEYS);
+    if (sOff !== sOn) {
+      differed = true;
+      console.log(`  ≠ enrich:${c.name}  DIFFERS${warmNote}`);
+      const la = sOff.split('\n'), lb = sOn.split('\n');
+      let shown = 0;
+      for (let i = 0; i < Math.max(la.length, lb.length) && shown < 8; i++) {
+        if (la[i] !== lb[i]) {
+          console.log(`      L${i + 1}  off: ${(la[i] ?? '∅').trim().slice(0, 90)}`);
+          console.log(`           on:  ${(lb[i] ?? '∅').trim().slice(0, 90)}`);
+          shown++;
+        }
+      }
+    } else if (contributed) {
+      meaningful++;
+      console.log(`  = enrich:${c.name}  (identical, with real enrichment data)`);
+    } else {
+      console.log(`  ⚠ enrich:${c.name}  identical but NO enrichment data — inconclusive${warmNote}`);
+    }
+  }
+
+  if (differed) {
+    console.log('\n❌ DIFFERENCES FOUND (enrich off vs on)');
+    return false;
+  }
+  if (meaningful === 0) {
+    console.log('\n⚠ INCONCLUSIVE — no case produced enrichment data (VPN off, or FindChips/parts.io returned nothing). Not a valid proof.');
+    return false;
+  }
+  console.log(`\n✅ IDENTICAL (enrich off vs on; ${meaningful} case(s) verified with real parts.io + FindChips data)`);
+  return true;
+}
+
 async function main() {
   const [mode, arg1, arg2] = process.argv.slice(2);
   if (mode === 'record' && arg1) {
     await record(arg1);
   } else if (mode === 'diff' && arg1 && arg2) {
     const ok = diff(arg1, arg2);
+    process.exit(ok ? 0 : 1);
+  } else if (mode === 'enrich-ab') {
+    const ok = await enrichAb();
     process.exit(ok ? 0 : 1);
   } else if (mode === 'selftest' && arg1) {
     // Prove the harness is (a) deterministic and (b) sensitive to change.
@@ -197,7 +300,7 @@ async function main() {
     console.log(`\nSELFTEST: determinism=${stable1 ? 'PASS' : 'FAIL'}  sensitivity=${caughtChange ? 'PASS' : 'FAIL'}`);
     process.exit(stable1 && caughtChange ? 0 : 1);
   } else {
-    console.error('Usage: providers-characterize.ts record <label> | diff <a> <b> | selftest <label>');
+    console.error('Usage: providers-characterize.ts record <label> | diff <a> <b> | selftest <label> | enrich-ab');
     process.exit(2);
   }
 }

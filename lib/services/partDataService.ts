@@ -42,6 +42,7 @@ import { mapPartsioProductToAttributes, extractPartsioLifecycle } from './partsi
 // Data-source provider abstraction (adoption is flag-gated per phase; see providers/).
 import { digikeyProvider } from './providers/digikeyProvider';
 import { atlasProvider } from './providers/atlasProvider';
+import { enrichmentProvider, commercialProvider } from './providers/providerRegistry';
 import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSuggestedMpn, MouserProduct } from './mouserClient';
 import { mapMouserLifecycle } from './mouserMapper';
 import { isFindchipsConfigured, getFindchipsResults, getFindchipsResultsBatch, hasFindchipsBudget, getCachedDistributorCounts } from './findchipsClient';
@@ -898,6 +899,16 @@ export async function searchParts(
  * Digikey values always win — parts.io only fills gaps (missing parameterId).
  */
 async function enrichWithPartsio(attrs: PartAttributes, userId?: string): Promise<PartAttributes> {
+  // Phase 3 (PROVIDERS_ENRICH): route parts.io gap-fill through the enrichment
+  // provider. The provider mirrors this function byte-for-byte — the same
+  // isPartsioConfigured guard, gap-fill logic, lifecycle merge, try/catch and
+  // reportServiceFailure — so flag-off vs flag-on is identical. A null provider
+  // means parts.io is unconfigured, i.e. the same outcome as the guard below.
+  if (process.env.PROVIDERS_ENRICH === '1') {
+    const provider = enrichmentProvider();
+    return provider ? provider.enrich(attrs, userId) : attrs;
+  }
+
   if (!isPartsioConfigured()) return attrs;
 
   try {
@@ -979,6 +990,29 @@ async function enrichWithFindchips(attrs: PartAttributes, userId?: string): Prom
       }
     }
     const source = isAtlas ? 'parallel-both' : 'fc-with-oems-fallback';
+
+    // Phase 3 (PROVIDERS_ENRICH): route the FindChips fetch+map through the
+    // commercial provider. The isAtlas SOURCE SELECTION above stays here in the
+    // orchestrator — it needs resolveManufacturerAlias, which a provider must not
+    // import — so only the resolved `source` crosses the boundary. getCommercial
+    // mirrors the fetch+map below (same getFindchipsResults call + same
+    // mapFCToQuotes/Lifecycle/Compliance + same length-gated undefined), so
+    // flag-off vs flag-on is byte-identical. Provider null only when FC is
+    // unconfigured, but the guard at the top already returned in that case.
+    if (process.env.PROVIDERS_ENRICH === '1') {
+      const provider = commercialProvider();
+      const commercial = provider ? await provider.getCommercial(attrs.part.mpn, { source, userId }) : null;
+      if (!commercial) return attrs;
+      return {
+        ...attrs,
+        part: {
+          ...attrs.part,
+          supplierQuotes: commercial.supplierQuotes,
+          lifecycleInfo: commercial.lifecycleInfo,
+          complianceData: commercial.complianceData,
+        },
+      };
+    }
 
     const results = await getFindchipsResults(attrs.part.mpn, userId, { source });
     if (!results || results.length === 0) return attrs;
