@@ -135,6 +135,35 @@ function stable(value: unknown, volatile: Set<string> = VOLATILE_KEYS): string {
   return JSON.stringify(normalize(value, volatile), null, 2);
 }
 
+// ── Meaningfulness gate (the fix for the "identical because both empty/errored"
+//    false pass) ───────────────────────────────────────────────────────────────
+// A case only counts as REAL coverage if it produced actual data. An empty/null
+// result means the source was unreachable this run — comparing two such results
+// proves nothing about the provider swap. record() stores a sentinel for those,
+// and diff() treats a sentinel-on-BOTH-sides case as INCONCLUSIVE (never a pass),
+// so a phase can no longer be "verified IDENTICAL" while both runs found nothing.
+//
+// meaningfulOutput duck-types the THREE corpus output shapes — SearchResult.matches
+// / RecommendationResult.recommendations / PartAttributes.parameters (the old
+// `empty` check only looked at `.matches`, so an empty getAttributes / getRecommendations
+// recorded silently). An unrecognized shape is assumed meaningful so a real result
+// is never FALSE-flagged as empty.
+const EMPTY_SENTINEL = '__EMPTY__';
+
+function meaningfulOutput(out: unknown): boolean {
+  if (out == null) return false;
+  const o = out as { matches?: unknown[]; recommendations?: unknown[]; parameters?: unknown[] };
+  if (Array.isArray(o.matches)) return o.matches.length > 0;               // searchParts
+  if (Array.isArray(o.recommendations)) return o.recommendations.length > 0; // getRecommendations
+  if (Array.isArray(o.parameters)) return o.parameters.length > 0;         // getAttributes
+  return true;
+}
+
+/** A recorded case that carried no real data on this run (source down / not found). */
+function isInconclusive(recorded: string): boolean {
+  return recorded.startsWith('__ERROR__') || recorded === EMPTY_SENTINEL;
+}
+
 // ── Modes ─────────────────────────────────────────────────────────────────
 async function record(label: string): Promise<Record<string, string>> {
   const results: Record<string, string> = {};
@@ -142,10 +171,16 @@ async function record(label: string): Promise<Record<string, string>> {
     const t0 = Date.now();
     try {
       const out = await c.run();
-      results[c.name] = stable(out);
       const ms = Date.now() - t0;
-      const empty = out == null || (out as { matches?: unknown[] }).matches?.length === 0;
-      console.log(`  ✓ ${c.name}  (${ms}ms${empty ? ', EMPTY — source may be unreachable' : ''})`);
+      if (meaningfulOutput(out)) {
+        results[c.name] = stable(out);
+        console.log(`  ✓ ${c.name}  (${ms}ms)`);
+      } else {
+        // Empty/null on this run — store a sentinel, not the (empty) bytes, so diff()
+        // can tell "both runs found nothing" (inconclusive) from "both matched real data".
+        results[c.name] = EMPTY_SENTINEL;
+        console.log(`  ⚠ ${c.name}  (${ms}ms) EMPTY — source unreachable; will count as INCONCLUSIVE, not a pass`);
+      }
     } catch (err) {
       results[c.name] = `__ERROR__ ${err instanceof Error ? err.message : String(err)}`;
       console.log(`  ✗ ${c.name}  ERROR: ${err instanceof Error ? err.message : String(err)}`);
@@ -167,14 +202,26 @@ function diff(a: string, b: string): boolean {
   const B = load(b);
   const names = [...new Set([...Object.keys(A), ...Object.keys(B)])].sort();
   let allEqual = true;
+  let verified = 0;     // identical AND both runs carried real data — genuine coverage
+  let inconclusive = 0; // identical but empty/errored on both runs — proves nothing
   for (const name of names) {
-    if (A[name] === B[name]) {
-      console.log(`  = ${name}`);
+    const va = A[name];
+    const vb = B[name];
+    if (va === vb) {
+      // Equal AND both undefined can't happen: a name in the union exists in ≥1 file,
+      // and a name present in only one file makes va !== vb (handled below).
+      if (isInconclusive(va)) {
+        inconclusive++;
+        console.log(`  ⚠ ${name}  identical but NO data on either run (source unreachable) — INCONCLUSIVE`);
+      } else {
+        verified++;
+        console.log(`  = ${name}`);
+      }
     } else {
       allEqual = false;
       console.log(`  ≠ ${name}  DIFFERS`);
-      const linesA = (A[name] ?? '').split('\n');
-      const linesB = (B[name] ?? '').split('\n');
+      const linesA = (va ?? '').split('\n');
+      const linesB = (vb ?? '').split('\n');
       let shown = 0;
       for (let i = 0; i < Math.max(linesA.length, linesB.length) && shown < 8; i++) {
         if (linesA[i] !== linesB[i]) {
@@ -185,8 +232,24 @@ function diff(a: string, b: string): boolean {
       }
     }
   }
-  console.log(`\n${allEqual ? '✅ IDENTICAL' : '❌ DIFFERENCES FOUND'} (${a} vs ${b})`);
-  return allEqual;
+
+  // A valid proof requires: no differences, no inconclusive cases (every rerouted
+  // path was actually exercised on both runs), and at least one verified case.
+  const ok = allEqual && inconclusive === 0 && verified > 0;
+  if (!allEqual) {
+    const tail = inconclusive ? `  (+${inconclusive} inconclusive)` : '';
+    console.log(`\n❌ DIFFERENCES FOUND (${a} vs ${b})${tail}`);
+  } else if (inconclusive > 0) {
+    console.log(
+      `\n❌ NOT A VALID PROOF (${a} vs ${b}): ${verified} verified, ${inconclusive} inconclusive — ` +
+        `a case with no data on either run can't prove the paths match. Re-run with all sources reachable.`,
+    );
+  } else if (verified === 0) {
+    console.log(`\n❌ NOT A VALID PROOF (${a} vs ${b}): 0 cases produced data.`);
+  } else {
+    console.log(`\n✅ IDENTICAL (${a} vs ${b}; ${verified} case(s) verified with real data)`);
+  }
+  return ok;
 }
 
 // ── Phase 3: in-process enrich A/B ─────────────────────────────────────────

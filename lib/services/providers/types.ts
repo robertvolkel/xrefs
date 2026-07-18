@@ -30,8 +30,15 @@ import type {
 // ============================================================
 
 /** Provider id. Doubles as the PROVENANCE tag written to `dataSource`.
- *  NOT the same as `mfrOrigin` (a Chinese maker's part can arrive via Digikey). */
-export type ProviderId = 'digikey' | 'atlas' | 'partsio' | 'mouser' | 'findchips';
+ *  NOT the same as `mfrOrigin` (a Chinese maker's part can arrive via Digikey).
+ *
+ *  Mouser is DELIBERATELY absent: it is not a data-source provider. Its only live
+ *  use is the pure string helper `resolveMouserSuggestedMpn`, which stays in the
+ *  orchestrator (see findchipsProvider header + the plan). Advertising `'mouser'`
+ *  here would let `providerById('mouser')` type-check yet silently return null,
+ *  and imply a status row on future health/admin surfaces that has no backing
+ *  object — so the union lists only the four real providers. */
+export type ProviderId = 'digikey' | 'atlas' | 'partsio' | 'findchips';
 
 export type ProviderKind = 'catalog' | 'enrichment' | 'commercial';
 
