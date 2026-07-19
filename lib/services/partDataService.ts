@@ -8,7 +8,7 @@
  */
 
 import { SearchResult, SearchDataSource, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource, ReplacementPriorities, DEFAULT_REPLACEMENT_PRIORITIES, isCertifiedCross, filterRecsByMismatchCount, countRealMismatches, AcceptanceCriteria, SearchConstraint, NarrowingSuggestion } from '../types';
-import { keywordSearch, getProductDetails, warmCacheFromSearchResults, getCategoryParametricFacets, parametricFilterSearch, type DigikeyProduct } from './digikeyClient';
+import { keywordSearch, getProductDetails, warmCacheFromSearchResults, getCategoryParametricFacets, parametricFilterSearch, isDigikeyConfigured, type DigikeyProduct } from './digikeyClient';
 import {
   mapKeywordResponseToSearchResult,
   mapKeywordResponseToAttributesByMpn,
@@ -38,7 +38,12 @@ import { applyRuleOverrides, applyContextOverrides } from './overrideMerger';
 import { applyAcceptanceCriteriaToLogicTable } from './acceptanceModifier';
 import { fetchWideningKey, isFetchWideningCriterion, isParametricWideningCriterion, rangeKeywordTokens, criterionToValueSet, criterionToBounds, MAX_WIDEN_QUERIES } from './fetchWidening';
 import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns, searchPartsioProducts, mapPartsioStatus } from './partsioClient';
-import { mapPartsioProductToAttributes } from './partsioMapper';
+import { mapPartsioProductToAttributes, extractPartsioLifecycle } from './partsioMapper';
+// Data-source provider abstraction (adoption is flag-gated per phase; see providers/).
+import { digikeyProvider } from './providers/digikeyProvider';
+import { atlasProvider } from './providers/atlasProvider';
+import { enrichmentProvider, commercialProvider } from './providers/providerRegistry';
+import { providersAttrsEnabled, providersEnrichEnabled, providersSearchEnabled, providersRecsEnabled } from './providers/flags';
 import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSuggestedMpn, MouserProduct } from './mouserClient';
 import { mapMouserLifecycle } from './mouserMapper';
 import { isFindchipsConfigured, getFindchipsResults, getFindchipsResultsBatch, hasFindchipsBudget, getCachedDistributorCounts } from './findchipsClient';
@@ -62,19 +67,6 @@ import type { PartsioListing } from './partsioClient';
 import type { Part } from '../types';
 
 /** Extract lifecycle & compliance metadata from a parts.io listing into Part fields */
-function extractPartsioLifecycle(listing: PartsioListing): Partial<Part> {
-  const result: Partial<Part> = {};
-  if (listing.YTEOL) result.yteol = parseFloat(listing.YTEOL);
-  if (listing['Risk Rank'] != null) result.riskRank = listing['Risk Rank'];
-  if (listing['Country Of Origin']) result.countryOfOrigin = listing['Country Of Origin'] as string;
-  if (listing['Reach Compliance Code']) result.reachCompliance = listing['Reach Compliance Code'];
-  if (listing['ECCN Code']) result.eccnCode = listing['ECCN Code'];
-  if (listing['HTS Code']) result.htsCode = listing['HTS Code'];
-  const leadTime = listing['Factory Lead Time'] as { Weeks?: number } | undefined;
-  if (leadTime?.Weeks) result.factoryLeadTimeWeeks = leadTime.Weeks;
-  return result;
-}
-
 // ============================================================
 // PARTS.IO FAMILY DISAMBIGUATION
 // ============================================================
@@ -198,9 +190,8 @@ function disambiguatePartsioSubcategory(
 // CONFIGURATION CHECK
 // ============================================================
 
-function isDigikeyConfigured(): boolean {
-  return !!(process.env.DIGIKEY_CLIENT_ID && process.env.DIGIKEY_CLIENT_SECRET);
-}
+// isDigikeyConfigured now lives in ./digikeyClient (single source of truth shared
+// with the Digikey provider adapter; the Phase-6 kill-switch will live there).
 
 // ============================================================
 // SEARCH
@@ -549,12 +540,40 @@ export async function searchParts(
   const guidedCategoryIds = guidedFamilyId ? await resolveCategoryIdsForFamily(guidedFamilyId) : [];
   const keywordCategoryId = guidedCategoryIds[0];
 
+  // Phase 4 (PROVIDERS_SEARCH): route the Digikey + Atlas catalog searches through
+  // the provider adapters. Flag off = byte-identical inline path. The seenMpns merge,
+  // orderSearchCandidates, the mfrOrigin block, and the whole logic-vetting pass are
+  // unchanged; parts.io search stays inline (an enrichment source, not a catalog
+  // provider); the greenfield parametric union stays inline (deferred island — see below).
+  const useSearchProviders = providersSearchEnabled();
+
   const searches: LabeledSearch[] = [
     // Digikey
     {
       source: 'digikey',
       promise: (async (): Promise<SourcePayload> => {
         if (!isDigikeyConfigured()) return { result: { type: 'none', matches: [] } };
+        // Route the PLAIN keyword search through the provider. The greenfield
+        // parametric union stays inline: it unions RAW Digikey products into the
+        // keyword pool BEFORE mapping, which the provider's map-inside
+        // searchByKeyword cannot express — so it remains the deferred island.
+        // (searchByKeyword does NOT internalize try/catch — wrap it here to match
+        // the inline path's error handling + the Promise.allSettled contract.)
+        if (useSearchProviders && !wantGreenfieldParametric) {
+          try {
+            return await digikeyProvider.searchByKeyword(trimmed, {
+              limit: 20,
+              category: keywordCategoryId != null ? { provider: 'digikey', raw: { categoryId: keywordCategoryId } } : undefined,
+              currency,
+              userId,
+              buildAttrs: !!constraints,
+            });
+          } catch (error) {
+            console.warn('Digikey search failed:', error);
+            reportServiceFailure('digikey', 'unavailable', 'Search failed');
+            return { result: { type: 'none', matches: [] } };
+          }
+        }
         try {
           // Keyword search + parametric spec-fetch run in PARALLEL — the parametric path
           // resolves its category from the family taxonomy, so it no longer waits on (or needs)
@@ -595,9 +614,14 @@ export async function searchParts(
       })(),
     },
     // Atlas — build scorable attrs only on logic-vetted (constraints) searches.
+    // atlasProvider.searchByKeyword is a pure pass-through to searchAtlasProducts
+    // (same args, same {result, attrsByMpn} shape), so flag on/off is identical.
     {
       source: 'atlas',
-      promise: searchAtlasProducts(trimmed, mfrHint, !!constraints).catch(() => ({ result: { type: 'none' as const, matches: [] }, attrsByMpn: new Map() })),
+      promise: (useSearchProviders
+        ? atlasProvider.searchByKeyword(trimmed, { manufacturer: mfrHint, buildAttrs: !!constraints })
+        : searchAtlasProducts(trimmed, mfrHint, !!constraints)
+      ).catch(() => ({ result: { type: 'none' as const, matches: [] }, attrsByMpn: new Map() })),
     },
   ];
 
@@ -909,6 +933,16 @@ export async function searchParts(
  * Digikey values always win — parts.io only fills gaps (missing parameterId).
  */
 async function enrichWithPartsio(attrs: PartAttributes, userId?: string): Promise<PartAttributes> {
+  // Phase 3 (PROVIDERS_ENRICH): route parts.io gap-fill through the enrichment
+  // provider. The provider mirrors this function byte-for-byte — the same
+  // isPartsioConfigured guard, gap-fill logic, lifecycle merge, try/catch and
+  // reportServiceFailure — so flag-off vs flag-on is identical. A null provider
+  // means parts.io is unconfigured, i.e. the same outcome as the guard below.
+  if (providersEnrichEnabled()) {
+    const provider = enrichmentProvider();
+    return provider ? provider.enrich(attrs, userId) : attrs;
+  }
+
   if (!isPartsioConfigured()) return attrs;
 
   try {
@@ -990,6 +1024,29 @@ async function enrichWithFindchips(attrs: PartAttributes, userId?: string): Prom
       }
     }
     const source = isAtlas ? 'parallel-both' : 'fc-with-oems-fallback';
+
+    // Phase 3 (PROVIDERS_ENRICH): route the FindChips fetch+map through the
+    // commercial provider. The isAtlas SOURCE SELECTION above stays here in the
+    // orchestrator — it needs resolveManufacturerAlias, which a provider must not
+    // import — so only the resolved `source` crosses the boundary. getCommercial
+    // mirrors the fetch+map below (same getFindchipsResults call + same
+    // mapFCToQuotes/Lifecycle/Compliance + same length-gated undefined), so
+    // flag-off vs flag-on is byte-identical. Provider null only when FC is
+    // unconfigured, but the guard at the top already returned in that case.
+    if (providersEnrichEnabled()) {
+      const provider = commercialProvider();
+      const commercial = provider ? await provider.getCommercial(attrs.part.mpn, { source, userId }) : null;
+      if (!commercial) return attrs;
+      return {
+        ...attrs,
+        part: {
+          ...attrs.part,
+          supplierQuotes: commercial.supplierQuotes,
+          lifecycleInfo: commercial.lifecycleInfo,
+          complianceData: commercial.complianceData,
+        },
+      };
+    }
 
     const results = await getFindchipsResults(attrs.part.mpn, userId, { source });
     if (!results || results.length === 0) return attrs;
@@ -1115,6 +1172,12 @@ async function getAttributesRaw(
   mpn: string, currency?: string, userId?: string,
   options?: { skipFindchips?: boolean; preferredSource?: 'digikey' | 'atlas' | 'partsio'; manufacturer?: string },
 ): Promise<PartAttributes | null> {
+  // Phase 2 (connector abstraction): route the Digikey + Atlas part-lookups
+  // through the provider adapters when PROVIDERS_ATTRS=1. Flag off = byte-identical
+  // to the old inline path. The ladder order, the parts.io sparse-vs-Atlas-rich
+  // arbitration, and enrichSourceInParallel are all unchanged.
+  const useProviders = providersAttrsEnabled();
+
   // When the user explicitly clicked an Atlas card, fetch from Atlas FIRST.
   // The Digikey keyword-search fallback (further down) does a startsWith()
   // prefix match — so a click on Galaxy's "1.5KE100" would otherwise resolve
@@ -1122,7 +1185,9 @@ async function getAttributesRaw(
   // PartSummary carries dataSource + manufacturer; we honor both here.
   if (options?.preferredSource === 'atlas') {
     try {
-      const atlasAttrs = await getAtlasAttributes(mpn, options?.manufacturer);
+      const atlasAttrs = useProviders
+        ? await atlasProvider.getByMpn(mpn, { manufacturer: options?.manufacturer })
+        : await getAtlasAttributes(mpn, options?.manufacturer);
       if (atlasAttrs) {
         return await enrichSourceInParallel(atlasAttrs, userId, options?.skipFindchips);
       }
@@ -1133,35 +1198,46 @@ async function getAttributesRaw(
   }
 
   if (isDigikeyConfigured()) {
-    try {
-      const response = await getProductDetails(mpn, currency, userId);
-      if (response.Product) {
-        const attrs: PartAttributes = { ...mapDigikeyProductToAttributes(response.Product), dataSource: 'digikey' as const };
+    if (useProviders) {
+      // digikeyProvider.getByMpn encapsulates the SAME two-try (product details →
+      // keyword-prefix fallback), the same dataSource tag, and the same service-
+      // failure reporting; returns null on total miss so we fall through to
+      // parts.io exactly as before.
+      const attrs = await digikeyProvider.getByMpn(mpn, { currency, userId });
+      if (attrs) {
         return await enrichSourceInParallel(attrs, userId, options?.skipFindchips);
       }
-    } catch (error) {
-      console.warn('Digikey product details lookup failed for', mpn, '— trying keyword search fallback');
-      reportServiceFailure('digikey', 'unavailable', 'Product details failed');
-    }
+    } else {
+      try {
+        const response = await getProductDetails(mpn, currency, userId);
+        if (response.Product) {
+          const attrs: PartAttributes = { ...mapDigikeyProductToAttributes(response.Product), dataSource: 'digikey' as const };
+          return await enrichSourceInParallel(attrs, userId, options?.skipFindchips);
+        }
+      } catch (error) {
+        console.warn('Digikey product details lookup failed for', mpn, '— trying keyword search fallback');
+        reportServiceFailure('digikey', 'unavailable', 'Product details failed');
+      }
 
-    // Fallback: keyword search by MPN (handles cases where Product Details API
-    // doesn't recognize the MPN directly, e.g. NXP's "BC847CW,115")
-    try {
-      const searchResponse = await keywordSearch(mpn, { limit: 5 }, currency, userId);
-      const lowerMpn = mpn.toLowerCase();
-      // Try exact match first, then prefix match (e.g. "BC857C" → "BC857C,115")
-      const match = searchResponse.Products?.find(
-        (p) => p.ManufacturerProductNumber?.toLowerCase() === lowerMpn
-      ) ?? searchResponse.Products?.find(
-        (p) => p.ManufacturerProductNumber?.toLowerCase().startsWith(lowerMpn)
-      );
-      if (match) {
-        const attrs: PartAttributes = { ...mapDigikeyProductToAttributes(match), dataSource: 'digikey' as const };
-        return await enrichSourceInParallel(attrs, userId, options?.skipFindchips);
+      // Fallback: keyword search by MPN (handles cases where Product Details API
+      // doesn't recognize the MPN directly, e.g. NXP's "BC847CW,115")
+      try {
+        const searchResponse = await keywordSearch(mpn, { limit: 5 }, currency, userId);
+        const lowerMpn = mpn.toLowerCase();
+        // Try exact match first, then prefix match (e.g. "BC857C" → "BC857C,115")
+        const match = searchResponse.Products?.find(
+          (p) => p.ManufacturerProductNumber?.toLowerCase() === lowerMpn
+        ) ?? searchResponse.Products?.find(
+          (p) => p.ManufacturerProductNumber?.toLowerCase().startsWith(lowerMpn)
+        );
+        if (match) {
+          const attrs: PartAttributes = { ...mapDigikeyProductToAttributes(match), dataSource: 'digikey' as const };
+          return await enrichSourceInParallel(attrs, userId, options?.skipFindchips);
+        }
+      } catch {
+        console.warn('Digikey keyword search fallback also failed for', mpn);
+        reportServiceFailure('digikey', 'unavailable', 'Search fallback failed');
       }
-    } catch {
-      console.warn('Digikey keyword search fallback also failed for', mpn);
-      reportServiceFailure('digikey', 'unavailable', 'Search fallback failed');
     }
   }
 
@@ -1211,7 +1287,7 @@ async function getAttributesRaw(
   const partsioIsSparse = !partsioAttrs || partsioAttrs.parameters.length === 0;
   if (partsioIsSparse) {
     try {
-      const atlasAttrs = await getAtlasAttributes(mpn);
+      const atlasAttrs = useProviders ? await atlasProvider.getByMpn(mpn) : await getAtlasAttributes(mpn);
       if (atlasAttrs && atlasAttrs.parameters.length > 0) {
         // Atlas wins when parts.io was empty AND Atlas has actual parametric data.
         return await enrichSourceInParallel(atlasAttrs, userId, options?.skipFindchips);
@@ -1501,6 +1577,17 @@ export async function getRecommendations(
 
   const familyId = logicTable.familyId;
 
+  // Phase 5 (PROVIDERS_RECS): route the Atlas candidate fetch + parts.io equivalents
+  // through the provider adapters. Flag off = byte-identical inline path.
+  // fetchDigikeyCandidates stays a direct call (the deferred parametric-widening
+  // island); Mouser-suggestions and MFR-crossrefs are unchanged. The metadata maps,
+  // the recs merge, mfrOrigin, scoring, sort and filter are all untouched.
+  const useRecsProviders = providersRecsEnabled();
+  // Computed once so both flag branches use the IDENTICAL widening (pure fn of
+  // sourceAttrs + acceptanceCriteria). The provider round-trips this same band
+  // through the source-neutral CandidateWidening shape.
+  const atlasWiden = computeAtlasWidening(sourceAttrs, acceptanceCriteria);
+
   // Step 3: Fetch candidates from Digikey + Atlas + parts.io equivalents + Mouser suggestions in parallel
   console.time('[perf] fetchCandidates');
   let [digikeyCandidates, atlasCandidates, partsioEquivalents, mouserSuggestions, mfrCrossRefs] = await Promise.all([
@@ -1514,11 +1601,33 @@ export async function getRecommendations(
         return [];
       }
     })(),
-    fetchAtlasCandidates(familyId, computeAtlasWidening(sourceAttrs, acceptanceCriteria)).catch((error) => {
+    // atlasProvider.fetchCandidates delegates to the SAME fetchAtlasCandidates, converting
+    // the widening through the source-neutral CandidateWidening shape (attrId↔attributeId,
+    // sourceNv↔sourceValue) — a faithful round-trip, so flag on/off is identical. Guarded on
+    // the capability flag (not a `!` assertion) so that if Atlas ever drops candidate-fetch
+    // support this falls back to the direct fetch instead of crashing. currency/userId are
+    // omitted: the Atlas candidate fetch reads only familyId + widen.
+    (useRecsProviders && atlasProvider.capabilities.candidateFetch && atlasProvider.fetchCandidates
+      ? atlasProvider.fetchCandidates({
+          sourceAttrs,
+          familyId,
+          widen: atlasWiden
+            ? { attributeId: atlasWiden.attrId, lo: atlasWiden.lo, hi: atlasWiden.hi, sourceValue: atlasWiden.sourceNv }
+            : undefined,
+        })
+      : fetchAtlasCandidates(familyId, atlasWiden)
+    ).catch((error) => {
       console.warn('Atlas candidate fetch failed:', error);
       return [] as PartAttributes[];
     }),
-    fetchPartsioEquivalents(mpn, userId).catch((error) => {
+    // enrichmentProvider().getEquivalents mirrors fetchPartsioEquivalents byte-for-byte;
+    // a null provider means parts.io is unconfigured — the same [] the inline guard returns.
+    // The shared .catch() below wraps both branches (both are async, both can reject on the
+    // outer getPartsioProductDetails), so error handling is identical.
+    (useRecsProviders
+      ? (enrichmentProvider()?.getEquivalents(mpn, userId) ?? Promise.resolve([] as PartAttributes[]))
+      : fetchPartsioEquivalents(mpn, userId)
+    ).catch((error) => {
       console.warn('Parts.io equivalent fetch failed:', error);
       reportServiceFailure('partsio', 'degraded', 'Equivalent fetch failed');
       return [] as PartAttributes[];
