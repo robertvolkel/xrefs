@@ -42,6 +42,14 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
 import { searchParts, getAttributes, getRecommendations } from '../lib/services/partDataService';
 import { getPartsioProductDetails } from '../lib/services/partsioClient';
+// Pure verdict logic (no data-source imports) — unit-tested in
+// __tests__/scripts/characterizationCore.test.ts so the oracle can't silently break.
+import {
+  EMPTY_SENTINEL,
+  errorSentinel,
+  comparableOutput,
+  computeDiff,
+} from './lib/characterizationCore';
 
 const OUT_DIR = resolve(__dirname, '.characterization');
 
@@ -50,6 +58,11 @@ const OUT_DIR = resolve(__dirname, '.characterization');
 interface Case {
   name: string;
   run: () => Promise<unknown>;
+  /** Set only for a case whose query is EXPECTED to return an empty pool (none
+   *  today). Lets an empty result count as a comparable answer instead of
+   *  inconclusive — see comparableOutput. Default (absent) keeps data-expecting
+   *  cases safe: an empty result is inconclusive, never a silent pass. */
+  allowEmpty?: boolean;
 }
 
 const CORPUS: Case[] = [
@@ -135,35 +148,6 @@ function stable(value: unknown, volatile: Set<string> = VOLATILE_KEYS): string {
   return JSON.stringify(normalize(value, volatile), null, 2);
 }
 
-// ── Meaningfulness gate (the fix for the "identical because both empty/errored"
-//    false pass) ───────────────────────────────────────────────────────────────
-// A case only counts as REAL coverage if it produced actual data. An empty/null
-// result means the source was unreachable this run — comparing two such results
-// proves nothing about the provider swap. record() stores a sentinel for those,
-// and diff() treats a sentinel-on-BOTH-sides case as INCONCLUSIVE (never a pass),
-// so a phase can no longer be "verified IDENTICAL" while both runs found nothing.
-//
-// meaningfulOutput duck-types the THREE corpus output shapes — SearchResult.matches
-// / RecommendationResult.recommendations / PartAttributes.parameters (the old
-// `empty` check only looked at `.matches`, so an empty getAttributes / getRecommendations
-// recorded silently). An unrecognized shape is assumed meaningful so a real result
-// is never FALSE-flagged as empty.
-const EMPTY_SENTINEL = '__EMPTY__';
-
-function meaningfulOutput(out: unknown): boolean {
-  if (out == null) return false;
-  const o = out as { matches?: unknown[]; recommendations?: unknown[]; parameters?: unknown[] };
-  if (Array.isArray(o.matches)) return o.matches.length > 0;               // searchParts
-  if (Array.isArray(o.recommendations)) return o.recommendations.length > 0; // getRecommendations
-  if (Array.isArray(o.parameters)) return o.parameters.length > 0;         // getAttributes
-  return true;
-}
-
-/** A recorded case that carried no real data on this run (source down / not found). */
-function isInconclusive(recorded: string): boolean {
-  return recorded.startsWith('__ERROR__') || recorded === EMPTY_SENTINEL;
-}
-
 // ── Modes ─────────────────────────────────────────────────────────────────
 async function record(label: string): Promise<Record<string, string>> {
   const results: Record<string, string> = {};
@@ -172,18 +156,20 @@ async function record(label: string): Promise<Record<string, string>> {
     try {
       const out = await c.run();
       const ms = Date.now() - t0;
-      if (meaningfulOutput(out)) {
+      if (comparableOutput(out, c.allowEmpty)) {
         results[c.name] = stable(out);
         console.log(`  ✓ ${c.name}  (${ms}ms)`);
       } else {
-        // Empty/null on this run — store a sentinel, not the (empty) bytes, so diff()
-        // can tell "both runs found nothing" (inconclusive) from "both matched real data".
+        // Unreachable/unresolved on this run — store a sentinel, not the (empty)
+        // bytes, so diff() can tell "no data on either run" (inconclusive) from
+        // "both matched the same real data" (verified).
         results[c.name] = EMPTY_SENTINEL;
         console.log(`  ⚠ ${c.name}  (${ms}ms) EMPTY — source unreachable; will count as INCONCLUSIVE, not a pass`);
       }
     } catch (err) {
-      results[c.name] = `__ERROR__ ${err instanceof Error ? err.message : String(err)}`;
-      console.log(`  ✗ ${c.name}  ERROR: ${err instanceof Error ? err.message : String(err)}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      results[c.name] = errorSentinel(msg);
+      console.log(`  ✗ ${c.name}  ERROR: ${msg}`);
     }
   }
   if (!existsSync(OUT_DIR)) mkdirSync(OUT_DIR, { recursive: true });
@@ -197,31 +183,19 @@ function load(label: string): Record<string, string> {
   return JSON.parse(readFileSync(resolve(OUT_DIR, `${label}.json`), 'utf8'));
 }
 
+/** Classify + print a diff. Classification is the pure computeDiff (unit-tested);
+ *  this only renders it and returns the boolean verdict for the exit code. */
 function diff(a: string, b: string): boolean {
-  const A = load(a);
-  const B = load(b);
-  const names = [...new Set([...Object.keys(A), ...Object.keys(B)])].sort();
-  let allEqual = true;
-  let verified = 0;     // identical AND both runs carried real data — genuine coverage
-  let inconclusive = 0; // identical but empty/errored on both runs — proves nothing
-  for (const name of names) {
-    const va = A[name];
-    const vb = B[name];
-    if (va === vb) {
-      // Equal AND both undefined can't happen: a name in the union exists in ≥1 file,
-      // and a name present in only one file makes va !== vb (handled below).
-      if (isInconclusive(va)) {
-        inconclusive++;
-        console.log(`  ⚠ ${name}  identical but NO data on either run (source unreachable) — INCONCLUSIVE`);
-      } else {
-        verified++;
-        console.log(`  = ${name}`);
-      }
+  const outcome = computeDiff(load(a), load(b));
+  for (const c of outcome.cases) {
+    if (c.kind === 'verified') {
+      console.log(`  = ${c.name}`);
+    } else if (c.kind === 'inconclusive') {
+      console.log(`  ⚠ ${c.name}  identical but NO data on either run (source unreachable) — INCONCLUSIVE`);
     } else {
-      allEqual = false;
-      console.log(`  ≠ ${name}  DIFFERS`);
-      const linesA = (va ?? '').split('\n');
-      const linesB = (vb ?? '').split('\n');
+      console.log(`  ≠ ${c.name}  DIFFERS`);
+      const linesA = c.va.split('\n');
+      const linesB = c.vb.split('\n');
       let shown = 0;
       for (let i = 0; i < Math.max(linesA.length, linesB.length) && shown < 8; i++) {
         if (linesA[i] !== linesB[i]) {
@@ -233,10 +207,8 @@ function diff(a: string, b: string): boolean {
     }
   }
 
-  // A valid proof requires: no differences, no inconclusive cases (every rerouted
-  // path was actually exercised on both runs), and at least one verified case.
-  const ok = allEqual && inconclusive === 0 && verified > 0;
-  if (!allEqual) {
+  const { ok, verified, inconclusive, differing } = outcome;
+  if (differing > 0) {
     const tail = inconclusive ? `  (+${inconclusive} inconclusive)` : '';
     console.log(`\n❌ DIFFERENCES FOUND (${a} vs ${b})${tail}`);
   } else if (inconclusive > 0) {
@@ -380,17 +352,34 @@ async function main() {
     await record(`${arg1}__A`);
     console.log('Recording baseline run B (no code change — must be IDENTICAL)...');
     await record(`${arg1}__B`);
+
     console.log('\n[determinism] A vs B:');
-    const stable1 = diff(`${arg1}__A`, `${arg1}__B`);
-    // Sensitivity: mutate one recorded case and confirm the diff catches it.
+    diff(`${arg1}__A`, `${arg1}__B`); // human-readable view
+    const det = computeDiff(load(`${arg1}__A`), load(`${arg1}__B`));
+    // A determinism FAILURE is a genuine difference between two no-code-change runs.
+    // All-inconclusive (sources unreachable) can't VALIDATE determinism but isn't a
+    // failure — report SKIPPED so the selftest still passes offline (the machinery is
+    // covered by __tests__/scripts/characterizationCore.test.ts, which needs no network).
+    const determinismFailed = det.differing > 0;
+    const determinismLabel = determinismFailed
+      ? 'FAIL'
+      : det.verified > 0
+        ? 'PASS'
+        : 'SKIPPED (offline — no reachable data to compare)';
+
+    // Sensitivity: mutate one recorded case and confirm computeDiff flags it as a
+    // DIFFERENCE specifically (not merely "not ok", which inconclusive also yields).
     const mutated = load(`${arg1}__B`);
     const firstKey = Object.keys(mutated)[0];
     mutated[firstKey] = (mutated[firstKey] ?? '') + '\n__INJECTED_CHANGE__';
     writeFileSync(resolve(OUT_DIR, `${arg1}__MUT.json`), JSON.stringify(mutated, null, 2));
     console.log('\n[sensitivity] B vs MUT (must report a DIFFERENCE):');
-    const caughtChange = !diff(`${arg1}__B`, `${arg1}__MUT`);
-    console.log(`\nSELFTEST: determinism=${stable1 ? 'PASS' : 'FAIL'}  sensitivity=${caughtChange ? 'PASS' : 'FAIL'}`);
-    process.exit(stable1 && caughtChange ? 0 : 1);
+    diff(`${arg1}__B`, `${arg1}__MUT`); // human-readable view
+    const caughtChange = computeDiff(load(`${arg1}__B`), load(`${arg1}__MUT`)).differing > 0;
+
+    console.log(`\nSELFTEST: determinism=${determinismLabel}  sensitivity=${caughtChange ? 'PASS' : 'FAIL'}`);
+    // SKIPPED determinism is acceptable (offline); only a real difference fails it.
+    process.exit(!determinismFailed && caughtChange ? 0 : 1);
   } else {
     console.error('Usage: providers-characterize.ts record <label> | diff <a> <b> | selftest <label> | enrich-ab');
     process.exit(2);
