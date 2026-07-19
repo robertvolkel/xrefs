@@ -125,11 +125,19 @@ export interface DigikeySearchOptions {
 /**
  * Single source of truth for "is Digikey usable right now". Relocated here from
  * partDataService so the orchestrator's guards AND the Digikey provider adapter
- * share ONE predicate (the connector abstraction). The Phase-6 `DIGIKEY_PROVIDER_DISABLED`
- * kill-switch will live inside THIS function — every existing guard already calls
- * it, so no other call site needs editing.
+ * share ONE predicate (the connector abstraction).
+ *
+ * `DIGIKEY_PROVIDER_DISABLED=1` is the kill-switch (Phase 6): the ONE gate every
+ * Digikey guard already funnels through — all three engine entry points, both
+ * deferred-island fetchers, the provider adapter's isConfigured (so the registry
+ * drops Digikey from catalogProviders() and parametricProvider() returns null),
+ * and the health / data-sources routes. There is deliberately NO second
+ * registry-only disable check that could drift from this one. Read at CALL time,
+ * so toggling the env var takes effect without a restart. Unset in production ⇒
+ * identical to the plain creds check.
  */
 export function isDigikeyConfigured(): boolean {
+  if (process.env.DIGIKEY_PROVIDER_DISABLED === '1') return false;
   return !!(process.env.DIGIKEY_CLIENT_ID && process.env.DIGIKEY_CLIENT_SECRET);
 }
 
@@ -669,8 +677,11 @@ import type { ServiceStatusInfo } from '@/lib/types';
 export async function checkDigikeyHealth(): Promise<ServiceStatusInfo> {
   const now = new Date().toISOString();
   try {
-    if (!process.env.DIGIKEY_CLIENT_ID || !process.env.DIGIKEY_CLIENT_SECRET) {
-      return { service: 'digikey', status: 'unavailable', message: 'Not configured', lastChecked: now };
+    // Route through the single gate so the health probe honors the kill-switch
+    // (DIGIKEY_PROVIDER_DISABLED) as well as absent credentials — and never pings
+    // Digikey when it's disabled.
+    if (!isDigikeyConfigured()) {
+      return { service: 'digikey', status: 'unavailable', message: 'Not configured or disabled', lastChecked: now };
     }
     // Use cached token if valid; otherwise attempt OAuth handshake
     await getAccessToken();

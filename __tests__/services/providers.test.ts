@@ -12,6 +12,7 @@ import {
   type DataSourceProvider,
 } from '@/lib/services/providers';
 import { extractPartsioLifecycle } from '@/lib/services/partsioMapper';
+import { isDigikeyConfigured } from '@/lib/services/digikeyClient';
 import type { PartsioListing } from '@/lib/services/partsioClient';
 
 const ALL = [digikeyProvider, atlasProvider, partsioProvider, findchipsProvider];
@@ -139,5 +140,60 @@ describe('extractPartsioLifecycle (extracted from partDataService — must stay 
   it('omits absent fields (gap-fill semantics rely on undefined, not empty)', () => {
     const listing = { YTEOL: '1.0' } as unknown as PartsioListing;
     expect(extractPartsioLifecycle(listing)).toEqual({ yteol: 1.0 });
+  });
+});
+
+describe('Digikey kill-switch — DIGIKEY_PROVIDER_DISABLED (Phase 6, single gate)', () => {
+  const saved = { ...process.env };
+  afterEach(() => {
+    process.env = { ...saved };
+  });
+
+  function configureDigikeyAndAtlas() {
+    process.env.DIGIKEY_CLIENT_ID = 'x';
+    process.env.DIGIKEY_CLIENT_SECRET = 'y';
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://example.supabase.co';
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'anon';
+    delete process.env.DIGIKEY_PROVIDER_DISABLED;
+  }
+
+  it('is configured with creds present and the kill-switch unset', () => {
+    configureDigikeyAndAtlas();
+    expect(isDigikeyConfigured()).toBe(true);
+  });
+
+  it('DIGIKEY_PROVIDER_DISABLED=1 forces not-configured EVEN with creds present', () => {
+    configureDigikeyAndAtlas();
+    process.env.DIGIKEY_PROVIDER_DISABLED = '1';
+    expect(isDigikeyConfigured()).toBe(false);
+  });
+
+  it('the kill-switch drops Digikey from catalogProviders() (graceful degradation to Atlas)', () => {
+    configureDigikeyAndAtlas();
+    expect(catalogProviders().map((p) => p.id)).toEqual(['digikey', 'atlas']);
+    process.env.DIGIKEY_PROVIDER_DISABLED = '1';
+    expect(catalogProviders().map((p) => p.id)).toEqual(['atlas']);
+  });
+
+  it('the kill-switch makes parametricProvider() null (no facet source without Digikey)', () => {
+    configureDigikeyAndAtlas();
+    expect(parametricProvider()?.id).toBe('digikey');
+    process.env.DIGIKEY_PROVIDER_DISABLED = '1';
+    expect(parametricProvider()).toBeNull();
+  });
+
+  it('the Digikey provider adapter reports isConfigured() false under the kill-switch (one gate)', () => {
+    configureDigikeyAndAtlas();
+    expect(digikeyProvider.isConfigured()).toBe(true);
+    process.env.DIGIKEY_PROVIDER_DISABLED = '1';
+    expect(digikeyProvider.isConfigured()).toBe(false);
+  });
+
+  it('only the exact value "1" disables — other truthy-ish strings do not', () => {
+    configureDigikeyAndAtlas();
+    process.env.DIGIKEY_PROVIDER_DISABLED = 'true';
+    expect(isDigikeyConfigured()).toBe(true);
+    process.env.DIGIKEY_PROVIDER_DISABLED = '0';
+    expect(isDigikeyConfigured()).toBe(true);
   });
 });
