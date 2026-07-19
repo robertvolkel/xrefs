@@ -359,7 +359,9 @@ export interface AtlasParamMapping {
  *
  * Key = lowercase Atlas parameter name → AtlasParamMapping
  */
-const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> = {
+// Exported for tests: lets a test inject an entry exactly as the ingest-time
+// override-merge (loadAndApplyDictOverrides) does — keyed on the full raw name.
+export const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> = {
   // ─── C6 Voltage References ────────────────────────────
   C6: {
     'output voltage (v)': { attributeId: 'output_voltage', attributeName: 'Output Voltage', unit: 'V', sortOrder: 2 },
@@ -3384,7 +3386,13 @@ export function mapAtlasModel(
     if (gaia) {
       if (GAIA_SKIP_STEMS.has(gaia.stem)) continue;
 
+      // Standard-dict / DB-override entries (keyed on the FULL lowered raw name, e.g.
+      // 'gaia-open_loop_gain-min') take PRIORITY over the gaia stem dict, so an accepted
+      // mapping — which merges into the family dict under the full raw name — is honored
+      // for gaia params exactly like every other param. The gaia prefix reverts to pure
+      // provenance. Mirror: scripts/atlas-ingest.mjs (keep in lockstep).
       const gaiaMapping: GaiaParamMapping | undefined =
+        familyDict?.[lowerName] ?? sharedParamDictionary[lowerName] ?? metadataParamDictionary[lowerName] ??
         gaiaDict?.[gaia.stem] ?? gaiaSharedDictionary[gaia.stem];
 
       if (!gaiaMapping) {

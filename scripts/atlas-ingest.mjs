@@ -2766,7 +2766,12 @@ function mapModel(model, manufacturerName, sourceFile) {
     const gaia = parseGaiaParam(p.name);
     if (gaia) {
       if (GAIA_SKIP_STEMS.has(gaia.stem)) continue;
-      const gaiaMapping = gaiaDict?.[gaia.stem] ?? GAIA_SHARED[gaia.stem];
+      // Standard-dict / DB-override entries (keyed on the FULL lowered raw name) take
+      // PRIORITY over the gaia stem dict, so an accepted mapping (merged into FAMILY_PARAMS
+      // under the full raw name by loadAndApplyDictOverrides) is honored for gaia params
+      // like every other param. Mirror: lib/services/atlasMapper.ts (keep in lockstep).
+      const gaiaMapping = familyDict?.[lowerName] ?? SHARED_PARAMS[lowerName] ?? METADATA_PARAMS[lowerName] ??
+        gaiaDict?.[gaia.stem] ?? GAIA_SHARED[gaia.stem];
       if (!gaiaMapping) {
         // Store with auto-humanized name (nothing thrown away)
         if (!parameters[gaia.stem]) {

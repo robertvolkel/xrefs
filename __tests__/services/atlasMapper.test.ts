@@ -1,4 +1,4 @@
-import { reclassifyByParameterSignals, mapAtlasModel, type AtlasModel } from '@/lib/services/atlasMapper';
+import { reclassifyByParameterSignals, mapAtlasModel, atlasParamDictionaries, type AtlasModel, type AtlasParamMapping } from '@/lib/services/atlasMapper';
 
 const B1 = { category: 'Diodes' as const, subcategory: 'Rectifier Diode', familyId: 'B1' };
 
@@ -38,6 +38,47 @@ describe('gaia preferredSuffix — preference, not hard drop', () => {
     const trr = parameters.filter((p) => p.parameterId === 'trr');
     expect(trr).toHaveLength(1);
     expect(trr[0].value).toContain('75'); // Typ wins; Max not added
+  });
+});
+
+describe('gaia params honor the standard dictionary / DB overrides (unification fix)', () => {
+  // At ingest, loadAndApplyDictOverrides merges each accepted mapping into the family
+  // dict keyed on the FULL lowered raw name (e.g. 'gaia-forward_on_voltage-max').
+  // Before the fix the gaia branch never consulted the family dict, so those accepts
+  // were inert. We inject into the module dict here exactly as the override-merge does.
+  const injected: string[] = [];
+  const inject = (key: string, mapping: AtlasParamMapping) => {
+    atlasParamDictionaries.B1[key] = mapping;
+    injected.push(key);
+  };
+  afterEach(() => {
+    for (const k of injected) delete atlasParamDictionaries.B1[k];
+    injected.length = 0;
+  });
+
+  it('honors a full-name override on an otherwise-unmapped gaia param', () => {
+    // forward_on_voltage is NOT in the gaia dict → today it falls to the humanized
+    // fallback (parameterId = the raw stem). An accepted override must map it to vf.
+    inject('gaia-forward_on_voltage-max', { attributeId: 'vf', attributeName: 'Forward Voltage', unit: 'V', sortOrder: 5 });
+    const { parameters } = mapAtlasModel(
+      b1Model([{ name: 'gaia-forward_on_voltage-Max', value: '1.2 V' }]), 'TESTMFR');
+    expect(parameters.find((p) => p.parameterId === 'vf')?.value).toContain('1.2');
+    expect(parameters.find((p) => p.parameterId === 'forward_on_voltage')).toBeUndefined();
+  });
+
+  it('a full-name override BEATS the gaia stem dict', () => {
+    // reverse_recovery_time IS in the B1 gaia dict → trr. The accepted override wins.
+    inject('gaia-reverse_recovery_time-max', { attributeId: 'vf', attributeName: 'Overridden', unit: 'V', sortOrder: 5 });
+    const { parameters } = mapAtlasModel(
+      b1Model([{ name: 'gaia-reverse_recovery_time-Max', value: '160 ns' }]), 'TESTMFR');
+    expect(parameters.find((p) => p.parameterId === 'vf')).toBeDefined();
+    expect(parameters.find((p) => p.parameterId === 'trr')).toBeUndefined();
+  });
+
+  it('regression: a gaia param with NO override still maps via the gaia stem dict', () => {
+    const { parameters } = mapAtlasModel(
+      b1Model([{ name: 'gaia-reverse_recovery_time-Max', value: '160 ns' }]), 'TESTMFR');
+    expect(parameters.find((p) => p.parameterId === 'trr')?.value).toContain('160');
   });
 });
 
