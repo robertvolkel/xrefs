@@ -1603,13 +1603,14 @@ export async function getRecommendations(
     })(),
     // atlasProvider.fetchCandidates delegates to the SAME fetchAtlasCandidates, converting
     // the widening through the source-neutral CandidateWidening shape (attrId↔attributeId,
-    // sourceNv↔sourceValue) — a faithful round-trip, so flag on/off is identical.
-    (useRecsProviders
-      ? atlasProvider.fetchCandidates!({
+    // sourceNv↔sourceValue) — a faithful round-trip, so flag on/off is identical. Guarded on
+    // the capability flag (not a `!` assertion) so that if Atlas ever drops candidate-fetch
+    // support this falls back to the direct fetch instead of crashing. currency/userId are
+    // omitted: the Atlas candidate fetch reads only familyId + widen.
+    (useRecsProviders && atlasProvider.capabilities.candidateFetch && atlasProvider.fetchCandidates
+      ? atlasProvider.fetchCandidates({
           sourceAttrs,
           familyId,
-          currency,
-          userId,
           widen: atlasWiden
             ? { attributeId: atlasWiden.attrId, lo: atlasWiden.lo, hi: atlasWiden.hi, sourceValue: atlasWiden.sourceNv }
             : undefined,
