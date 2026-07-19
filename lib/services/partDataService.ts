@@ -43,7 +43,7 @@ import { mapPartsioProductToAttributes, extractPartsioLifecycle } from './partsi
 import { digikeyProvider } from './providers/digikeyProvider';
 import { atlasProvider } from './providers/atlasProvider';
 import { enrichmentProvider, commercialProvider } from './providers/providerRegistry';
-import { providersAttrsEnabled, providersEnrichEnabled, providersSearchEnabled } from './providers/flags';
+import { providersAttrsEnabled, providersEnrichEnabled, providersSearchEnabled, providersRecsEnabled } from './providers/flags';
 import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSuggestedMpn, MouserProduct } from './mouserClient';
 import { mapMouserLifecycle } from './mouserMapper';
 import { isFindchipsConfigured, getFindchipsResults, getFindchipsResultsBatch, hasFindchipsBudget, getCachedDistributorCounts } from './findchipsClient';
@@ -1577,6 +1577,17 @@ export async function getRecommendations(
 
   const familyId = logicTable.familyId;
 
+  // Phase 5 (PROVIDERS_RECS): route the Atlas candidate fetch + parts.io equivalents
+  // through the provider adapters. Flag off = byte-identical inline path.
+  // fetchDigikeyCandidates stays a direct call (the deferred parametric-widening
+  // island); Mouser-suggestions and MFR-crossrefs are unchanged. The metadata maps,
+  // the recs merge, mfrOrigin, scoring, sort and filter are all untouched.
+  const useRecsProviders = providersRecsEnabled();
+  // Computed once so both flag branches use the IDENTICAL widening (pure fn of
+  // sourceAttrs + acceptanceCriteria). The provider round-trips this same band
+  // through the source-neutral CandidateWidening shape.
+  const atlasWiden = computeAtlasWidening(sourceAttrs, acceptanceCriteria);
+
   // Step 3: Fetch candidates from Digikey + Atlas + parts.io equivalents + Mouser suggestions in parallel
   console.time('[perf] fetchCandidates');
   let [digikeyCandidates, atlasCandidates, partsioEquivalents, mouserSuggestions, mfrCrossRefs] = await Promise.all([
@@ -1590,11 +1601,32 @@ export async function getRecommendations(
         return [];
       }
     })(),
-    fetchAtlasCandidates(familyId, computeAtlasWidening(sourceAttrs, acceptanceCriteria)).catch((error) => {
+    // atlasProvider.fetchCandidates delegates to the SAME fetchAtlasCandidates, converting
+    // the widening through the source-neutral CandidateWidening shape (attrId↔attributeId,
+    // sourceNv↔sourceValue) — a faithful round-trip, so flag on/off is identical.
+    (useRecsProviders
+      ? atlasProvider.fetchCandidates!({
+          sourceAttrs,
+          familyId,
+          currency,
+          userId,
+          widen: atlasWiden
+            ? { attributeId: atlasWiden.attrId, lo: atlasWiden.lo, hi: atlasWiden.hi, sourceValue: atlasWiden.sourceNv }
+            : undefined,
+        })
+      : fetchAtlasCandidates(familyId, atlasWiden)
+    ).catch((error) => {
       console.warn('Atlas candidate fetch failed:', error);
       return [] as PartAttributes[];
     }),
-    fetchPartsioEquivalents(mpn, userId).catch((error) => {
+    // enrichmentProvider().getEquivalents mirrors fetchPartsioEquivalents byte-for-byte;
+    // a null provider means parts.io is unconfigured — the same [] the inline guard returns.
+    // The shared .catch() below wraps both branches (both are async, both can reject on the
+    // outer getPartsioProductDetails), so error handling is identical.
+    (useRecsProviders
+      ? (enrichmentProvider()?.getEquivalents(mpn, userId) ?? Promise.resolve([] as PartAttributes[]))
+      : fetchPartsioEquivalents(mpn, userId)
+    ).catch((error) => {
       console.warn('Parts.io equivalent fetch failed:', error);
       reportServiceFailure('partsio', 'degraded', 'Equivalent fetch failed');
       return [] as PartAttributes[];
