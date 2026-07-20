@@ -3384,16 +3384,18 @@ export function mapAtlasModel(
     // ── Gaia parameter handling ──────────────────────────────
     const gaia = parseGaiaParam(p.name);
     if (gaia) {
-      if (GAIA_SKIP_STEMS.has(gaia.stem)) continue;
+      // A full-name accept (loadAndApplyDictOverrides merges it into the family dict
+      // keyed on the raw name, e.g. 'gaia-open_loop_gain-min') is honored for gaia
+      // params exactly like every other param — and, like the standard path where a
+      // dict entry beats skipParams (hasDictMapping above), it wins even over
+      // GAIA_SKIP_STEMS. The gaia prefix reverts to pure provenance. Only the family
+      // dict can carry a gaia-named accept (shared/metadata never do), so it's the
+      // sole extra lookup. Mirror: scripts/atlas-ingest.mjs (keep in lockstep).
+      const overrideMapping = familyDict?.[lowerName];
+      if (!overrideMapping && GAIA_SKIP_STEMS.has(gaia.stem)) continue;
 
-      // Standard-dict / DB-override entries (keyed on the FULL lowered raw name, e.g.
-      // 'gaia-open_loop_gain-min') take PRIORITY over the gaia stem dict, so an accepted
-      // mapping — which merges into the family dict under the full raw name — is honored
-      // for gaia params exactly like every other param. The gaia prefix reverts to pure
-      // provenance. Mirror: scripts/atlas-ingest.mjs (keep in lockstep).
       const gaiaMapping: GaiaParamMapping | undefined =
-        familyDict?.[lowerName] ?? sharedParamDictionary[lowerName] ?? metadataParamDictionary[lowerName] ??
-        gaiaDict?.[gaia.stem] ?? gaiaSharedDictionary[gaia.stem];
+        overrideMapping ?? gaiaDict?.[gaia.stem] ?? gaiaSharedDictionary[gaia.stem];
 
       if (!gaiaMapping) {
         // Store with auto-humanized name (nothing thrown away)
@@ -3438,6 +3440,10 @@ export function mapAtlasModel(
 
       if (gaiaMapping.attributeId === 'operating_temp') {
         displayValue = normalizeTemperatureRange(p.value);
+      } else if (gaiaMapping.attributeId === 'input_voltage_range') {
+        // Mirror the standard branch so a range value formats consistently whether it
+        // arrives via the gaia dict or an accept.
+        displayValue = normalizeVoltageRange(p.value);
       }
 
       if (gaiaMapping.attributeId === 'package_case') {

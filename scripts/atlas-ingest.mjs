@@ -2765,13 +2765,13 @@ function mapModel(model, manufacturerName, sourceFile) {
     // ── Gaia parameter handling ──────────────────────────────
     const gaia = parseGaiaParam(p.name);
     if (gaia) {
-      if (GAIA_SKIP_STEMS.has(gaia.stem)) continue;
-      // Standard-dict / DB-override entries (keyed on the FULL lowered raw name) take
-      // PRIORITY over the gaia stem dict, so an accepted mapping (merged into FAMILY_PARAMS
-      // under the full raw name by loadAndApplyDictOverrides) is honored for gaia params
-      // like every other param. Mirror: lib/services/atlasMapper.ts (keep in lockstep).
-      const gaiaMapping = familyDict?.[lowerName] ?? SHARED_PARAMS[lowerName] ?? METADATA_PARAMS[lowerName] ??
-        gaiaDict?.[gaia.stem] ?? GAIA_SHARED[gaia.stem];
+      // A full-name accept (merged into FAMILY_PARAMS by loadAndApplyDictOverrides) is
+      // honored for gaia params like every other param, and wins even over
+      // GAIA_SKIP_STEMS. Only the family dict can carry a gaia-named accept.
+      // Mirror: lib/services/atlasMapper.ts (keep in lockstep).
+      const overrideMapping = familyDict?.[lowerName];
+      if (!overrideMapping && GAIA_SKIP_STEMS.has(gaia.stem)) continue;
+      const gaiaMapping = overrideMapping ?? gaiaDict?.[gaia.stem] ?? GAIA_SHARED[gaia.stem];
       if (!gaiaMapping) {
         // Store with auto-humanized name (nothing thrown away)
         if (!parameters[gaia.stem]) {
@@ -2798,6 +2798,7 @@ function mapModel(model, manufacturerName, sourceFile) {
       const parsed = parseGaiaValue(p.value);
       let displayValue = parsed.displayValue;
       if (gaiaMapping.attributeId === 'operating_temp') displayValue = normalizeTemp(p.value);
+      else if (gaiaMapping.attributeId === 'input_voltage_range') displayValue = normalizeVoltageRange(p.value);
       if (gaiaMapping.attributeId === 'package_case') packageValue = displayValue;
 
       // Hybrid: parsed.unit (from value string) wins over gaiaMapping.unit (dict guess).
