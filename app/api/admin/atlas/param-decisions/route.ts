@@ -129,11 +129,33 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const rows = (data ?? []) as unknown as DecisionRow[];
     const nameMap = await resolveAdminNames(rows.map((r) => r.decided_by));
 
+    // TRUE size of each batch represented on this page.
+    //
+    // A Batch Accept writes one row per param (one live batch wrote 54) and
+    // the panel collapses them into a single expandable line. Counting the
+    // rows visible on the page would understate that line whenever the batch
+    // straddles a page boundary — "Batch accepted 50 params" for a batch of
+    // 54, which is exactly the kind of quietly-wrong number this feature is
+    // supposed to stop producing. One HEAD count per distinct batch; a page
+    // holds at most `limit` rows so this is bounded, and capped besides.
+    const batchIds = [...new Set(rows.map((r) => r.batch_id).filter((b): b is string => !!b))].slice(0, 25);
+    const batchCounts: Record<string, number> = {};
+    await Promise.all(
+      batchIds.map(async (id) => {
+        const { count: n } = await supabase
+          .from('atlas_param_decisions')
+          .select('*', { count: 'exact', head: true })
+          .eq('batch_id', id);
+        if (typeof n === 'number') batchCounts[id] = n;
+      }),
+    );
+
     return NextResponse.json({
       success: true,
       total: count ?? 0,
       limit,
       offset,
+      batchCounts,
       items: rows.map((r) => ({
         id: r.id,
         // Show what the engineer actually saw; fall back to the canonical key.

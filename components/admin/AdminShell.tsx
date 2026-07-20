@@ -22,7 +22,7 @@ import ManufacturersPanel from './ManufacturersPanel';
 import AtlasDictionaryPanel from './AtlasDictionaryPanel';
 import AtlasIngestPanel from './atlasIngest/AtlasIngestPanel';
 import AtlasDictTriagePanel from './AtlasDictTriagePanel';
-import AtlasAiLogPanel from './AtlasAiLogPanel';
+import AtlasDecisionLogPanel from './AtlasDecisionLogPanel';
 import AtlasDomainCardsPanel from './AtlasDomainCardsPanel';
 import { getAtlasDictionaryFamilyIds, getAtlasL2DictionaryCategories } from '@/lib/services/atlasMapper';
 
@@ -111,6 +111,10 @@ const VALID_SECTIONS = new Set<AdminSection>(ADMIN_SECTION_ITEMS.map((s) => s.id
 const ADMIN_LEGACY_REDIRECTS: Record<string, AdminSection | null> = {
   // Renamed Atlas section
   atlas: 'manufacturers',
+  // The AI Investigation Log became the Decision Log: it showed only the
+  // decisions routed through the AI drawer (65 of 2,032 accepted mappings,
+  // none of the 80 deferred params), so it was inverted rather than renamed.
+  'atlas-ai-log': 'atlas-decision-log',
   // Sections that moved out to /monitoring
   'app-feedback': null,
   'qc-feedback': null,
@@ -315,9 +319,9 @@ function AdminShellInner() {
           <Box sx={{ flex: 1, overflowY: 'auto' }}>
             <AtlasDictTriagePanel />
           </Box>
-        ) : activeSection === 'atlas-ai-log' ? (
+        ) : activeSection === 'atlas-decision-log' ? (
           <Box sx={{ flex: 1, overflowY: 'auto' }}>
-            <AtlasAiLogPanel />
+            <AtlasDecisionLogPanel />
           </Box>
         ) : activeSection === 'atlas-domain-cards' ? (
           <Box sx={{ flex: 1, overflowY: 'auto' }}>

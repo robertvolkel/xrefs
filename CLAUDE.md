@@ -48,6 +48,8 @@ app/                          # Next.js App Router
   api/admin/atlas/dictionaries/batch/ # Batch-accept N Triage overrides in one request (POST, dedupe + per-family write + ONE invalidation, Decision #267)
   api/admin/atlas/dictionaries/batch/undo/ # One-click Undo of a just-completed Batch Accept (POST, deactivate by PK ids)
   api/admin/atlas/dictionaries/[overrideId]/ # Dictionary override update/delete (PATCH, DELETE)
+  api/admin/atlas/param-decisions/ # Decision Log list (GET, newest-first server-sorted, filters + batchCounts; ?include_evidence=1 for AI blobs)
+  api/admin/atlas/param-decisions/undo/ # Undo decisions by decision id (POST; appends the reversal, never edits)
   api/admin/atlas/family-schema/ # Canonical attributeId list per family (GET, no Anthropic call)
   api/admin/atlas/ingest/upload/ # Multipart folder upload → data/atlas/, returns staged files + new MFRs (Decision #174)
   api/admin/atlas/ingest/report/ # Generate per-MFR diff report → atlas_ingest_batches (POST)
@@ -131,6 +133,7 @@ components/                   # React components
     AtlasExplorerTab.tsx      # Atlas product search — debounced MPN/MFR search, results table, opens drawer
     AtlasExplorerDrawer.tsx   # Atlas product detail — schema comparison (L3 or L2), extra attrs, raw params
     AtlasDictionaryPanel.tsx  # Atlas translation dictionary viewer/editor (per-family + L2 category + shared)
+    AtlasDecisionLogPanel.tsx # Decision Log — every Triage param decision, newest first, Undo single/bulk, per-param history. REPLACED AtlasAiLogPanel (Decision #277)
     AtlasDictOverrideDrawer.tsx # Right-side drawer for editing dictionary overrides — schema Autocomplete, AI suggestion, sample values
     atlasIngest/              # Re-ingest UI components (Decision #174)
       AtlasIngestPanel.tsx    # Top-level orchestrator (Pending/Applied tabs, dashboard, batch list)
@@ -225,6 +228,8 @@ lib/
   services/atlasApiClient.ts  # Atlas external API client — manufacturer profile sync (server-side only)
   services/atlasMapper.ts     # Atlas JSON → internal ParametricAttribute[] conversion (28 L3 family + 14 L2 category dictionaries)
   services/triageQueueCompute.ts # Heavy Triage aggregation (computeTriageAggregation) + types/predicates; self-registers with triageQueueCache so ANY importer can rebuild a cold cache (Decision #224)
+  services/paramDecisionLog.ts # THE single writer of Triage param decisions (Decision #277) — recordParamDecision(s) + decisionForNoteWrite. Append-only; add a route that decides something and you MUST call this (guard test enumerates the six)
+  services/paramDecisionBackfill.ts # Pure, unit-tested reconstruction of the decision log from existing records (edit-vs-revoke split, revoke dating)
   services/atlasGaiaDictionaries.ts # Gaia datasheet-extracted param mapping (parse, skip stems, dict exports)
   services/atlas-gaia-dicts.json # Shared gaia dictionaries (12 families + shared, consumed by TS + MJS)
   services/atlasDictOverrides.ts # Server-only Supabase fetch/cache for dictionary overrides

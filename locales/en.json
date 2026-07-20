@@ -514,7 +514,7 @@
     "attrLogicGroup": "Attributes & Logic",
     "atlasDictionaries": "Dictionaries",
     "atlasDictTriage": "Mapping Triage",
-    "atlasAiLog": "Investigation Log",
+    "atlasDecisionLog": "Decision Log",
     "atlasDomainCards": "Domain Cards",
     "atlasIngest": "Ingestion",
     "atlasDictDesc": "Translation dictionaries mapping Atlas parameter names to internal attributes.",
