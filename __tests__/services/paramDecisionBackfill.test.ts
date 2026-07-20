@@ -151,6 +151,70 @@ describe('backfill: deactivated override — edit vs revoke', () => {
   });
 });
 
+/**
+ * Review findings #1 and #6 — both produced WRONG HISTORY that the earlier
+ * count-based verification could not see, because the counts were right and
+ * only the dates and meanings were wrong.
+ */
+describe('backfill: revocations are dated when they were revoked', () => {
+  it('uses updated_at, not created_at, for a revoke', () => {
+    const { decisions } = classifyOverrideRows([
+      row({
+        id: 'dead',
+        created_at: '2026-05-12T03:40:22Z',
+        updated_at: '2026-05-27T17:05:44Z', // revoked 15 days later
+        is_active: false,
+      }),
+    ]);
+    const revoke = decisions.find((d) => d.decision === 'mapping_revoked')!;
+    // The first version reported 2026-05-12T03:40:22Z here — the same instant
+    // as the accept — so the log read "Accepted 03:40:22 -> Revoked 03:40:22"
+    // for a mapping that lived 15 days.
+    expect(revoke.decidedAt).toBe('2026-05-27T17:05:44Z');
+    expect(revoke.approximate).toBeFalsy();
+  });
+
+  it('never dates a revoke at the same instant as its own accept', () => {
+    const { decisions } = classifyOverrideRows([
+      row({ id: 'dead', created_at: '2026-05-12T03:40:22Z', updated_at: '2026-05-27T17:05:44Z', is_active: false }),
+    ]);
+    const accept = decisions.find((d) => d.decision === 'mapping_accepted')!;
+    const revoke = decisions.find((d) => d.decision === 'mapping_revoked')!;
+    expect(revoke.decidedAt).not.toBe(accept.decidedAt);
+    expect(new Date(revoke.decidedAt).getTime()).toBeGreaterThan(new Date(accept.decidedAt).getTime());
+  });
+
+  it('marks the date approximate when there is no updated_at to use', () => {
+    const { decisions } = classifyOverrideRows([
+      row({ id: 'dead', created_at: '2026-05-12T03:40:22Z', updated_at: null, is_active: false }),
+    ]);
+    const revoke = decisions.find((d) => d.decision === 'mapping_revoked')!;
+    expect(revoke.decidedAt).toBe('2026-05-12T03:40:22Z');
+    // Falling back is fine; pretending it's exact is not.
+    expect(revoke.approximate).toBe(true);
+  });
+});
+
+describe('backfill: one ordering for sort and successor', () => {
+  it('picks the chronologically nearest successor when sub-second precision varies', () => {
+    // PostgREST returns whole seconds without a fractional part. ICU collates
+    // '.' before '+', so localeCompare ranks '…15+00:00' AFTER '…15.5+00:00'
+    // while the instants say the opposite. A sort and a predicate that
+    // disagree pick the wrong successor — misdating the edit and attaching
+    // the wrong attribute and author to it.
+    const { decisions } = classifyOverrideRows([
+      row({ id: 'a', created_at: '2026-05-06T07:03:14+00:00', is_active: false }),
+      row({ id: 'b', created_at: '2026-05-06T07:03:15+00:00', is_active: false, attribute_id: 'correct' }),
+      row({ id: 'c', created_at: '2026-05-06T07:03:15.5+00:00', is_active: true, attribute_id: 'later' }),
+    ]);
+    const editOfA = decisions.find(
+      (d) => d.decision === 'mapping_edited' && d.decidedAt === '2026-05-06T07:03:15+00:00',
+    );
+    expect(editOfA).toBeTruthy();
+    expect(editOfA!.attributeId).toBe('correct');
+  });
+});
+
 describe('backfill: batch id parsing', () => {
   it('extracts the uuid from a real change_reason', () => {
     expect(

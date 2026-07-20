@@ -32,6 +32,9 @@
 
 import { createServiceClient } from '@/lib/supabase/service';
 
+/** Matches the backfill script's chunk size. */
+const INSERT_CHUNK_SIZE = 500;
+
 /** Every decision type the log understands. Mirrors the CHECK constraint
  *  in the schema — keep the two in lockstep (the schema's constraint is
  *  written DROP-then-ADD precisely so this set can grow). */
@@ -152,19 +155,27 @@ export async function recordParamDecisions(inputs: ParamDecisionInput[]): Promis
 
   try {
     const supabase = createServiceClient();
-    const { error } = await supabase
-      .from('atlas_param_decisions')
-      .insert(inputs.map(toRow));
 
-    if (error) {
-      // Non-fatal: surface it in logs, let the caller's action succeed.
-      console.error(
-        `[paramDecisionLog] failed to record ${inputs.length} decision(s):`,
-        error.message,
-      );
-      return false;
+    // Chunked. A Batch Accept has no cap on how many params it can approve,
+    // and a single oversized insert fails as ONE unit — so a 400-param batch
+    // would lose its entire audit trail to one rejected request, silently
+    // (writes here are non-fatal). Chunking bounds the blast radius to 500
+    // and lets the rest land.
+    let ok = true;
+    for (let i = 0; i < inputs.length; i += INSERT_CHUNK_SIZE) {
+      const chunk = inputs.slice(i, i + INSERT_CHUNK_SIZE);
+      const { error } = await supabase.from('atlas_param_decisions').insert(chunk.map(toRow));
+      if (error) {
+        // Non-fatal: surface it in logs, let the caller's action succeed.
+        console.error(
+          `[paramDecisionLog] failed to record ${chunk.length} decision(s) ` +
+            `(chunk ${i / INSERT_CHUNK_SIZE + 1} of ${Math.ceil(inputs.length / INSERT_CHUNK_SIZE)}):`,
+          error.message,
+        );
+        ok = false;
+      }
     }
-    return true;
+    return ok;
   } catch (err) {
     console.error('[paramDecisionLog] unexpected error recording decision(s):', err);
     return false;

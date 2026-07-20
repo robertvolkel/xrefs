@@ -22,6 +22,11 @@ export interface OverrideRow {
   change_reason: string | null;
   created_by: string;
   created_at: string;
+  /** When the row was last touched. For a row deactivated with nothing
+   *  replacing it, this IS the revocation time — the only record of it that
+   *  exists anywhere. Omitting it dated 9 live revokes to their own creation
+   *  instant, understating one by 18 days. */
+  updated_at?: string | null;
   is_active: boolean;
 }
 
@@ -32,12 +37,17 @@ export interface ReconstructedDecision {
     | 'mapping_edited'
     | 'mapping_revoked'
     | 'deferred'
+    | 'reopened'
     | 'marked_unmappable'
     | 'flagged_wrong_family'
     | 'confirmed_in_family'
     | 'note_added';
   decidedBy: string;
   decidedAt: string;
+  /** True when decidedAt is the best available proxy rather than the exact
+   *  moment (a revoke with no updated_at). Lets the UI say so instead of
+   *  implying precision that isn't there. */
+  approximate?: boolean;
   familyId?: string | null;
   attributeId?: string | null;
   attributeName?: string | null;
@@ -72,12 +82,22 @@ export function parseBatchId(changeReason: string | null | undefined): string | 
  *   superseded (a newer ACTIVE row exists for the same param+family) → edit
  *   nothing replaced it                                              → revoke
  *
- * The creation event's `decided_at` is the row's own created_at. The ending
- * event is dated from the SUPERSEDING row's created_at when there is one
- * (that is when the change actually happened); a true revoke has no such
- * successor, so it falls back to the row's updated_at if supplied, else its
- * created_at — flagged via `endedAtIsApproximate` so the caller can be
- * honest about it rather than inventing precision.
+ * DATING THE EVENTS — this is where the first version was wrong.
+ *
+ *   creation → the row's own `created_at`.
+ *   edit     → the SUPERSEDING row's `created_at`; that is the instant the
+ *              change actually happened.
+ *   revoke   → the row's `updated_at`. A deactivation is an UPDATE, so
+ *              `updated_at` is the revocation time and the only record of it
+ *              that exists. The first version used `created_at` here, which
+ *              dated every revoke to the same instant as its own accept —
+ *              the log read "Accepted 03:40:22 → Revoked 03:40:22" for a
+ *              mapping that lived 15 days, and the identical timestamps made
+ *              the two render in arbitrary order.
+ *
+ * `approximate` is set when a revoke has no `updated_at` to fall back on, so
+ * the caller can say so instead of implying a precision it doesn't have.
+ * Nothing here ever invents a timestamp.
  */
 export function classifyOverrideRows(rows: OverrideRow[]): {
   decisions: ReconstructedDecision[];
@@ -99,8 +119,18 @@ export function classifyOverrideRows(rows: OverrideRow[]): {
     arr.push(r);
     byKey.set(k, arr);
   }
+  // ONE ordering, used for both the sort and the successor predicate below.
+  //
+  // These used to disagree: the sort used localeCompare while the predicate
+  // used ASCII `>`. ICU collates '.' before '+', so on PostgREST-shaped
+  // timestamps '…07:03:15+00:00' vs '…07:03:15.5+00:00' localeCompare says
+  // the whole-second value is LATER while ASCII (and reality) say earlier.
+  // A sort and a predicate that disagree can pick a successor that isn't the
+  // chronologically nearest one — misdating the edit and attaching the wrong
+  // attribute and author to it. Comparing instants sidesteps the whole class.
+  const at = (r: OverrideRow) => new Date(r.created_at).getTime();
   for (const arr of byKey.values()) {
-    arr.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    arr.sort((a, b) => at(a) - at(b));
   }
 
   const decisions: ReconstructedDecision[] = [];
@@ -129,7 +159,8 @@ export function classifyOverrideRows(rows: OverrideRow[]): {
     // 2. What ended it — the next mapping created on the same key.
     // Nothing after it ⇒ nothing replaced it ⇒ a genuine revoke.
     const key = canonicalKey(r.param_name, r.family_id);
-    const successor = (byKey.get(key) ?? []).find((a) => a.created_at > r.created_at);
+    // Same instant-based ordering as the sort above — see the note there.
+    const successor = (byKey.get(key) ?? []).find((a) => at(a) > at(r));
 
     if (successor) {
       decisions.push({
@@ -146,11 +177,16 @@ export function classifyOverrideRows(rows: OverrideRow[]): {
       });
       counts.edited++;
     } else {
+      // A deactivation is an UPDATE, so updated_at IS the revocation time.
+      // Falling back to created_at (the first version's behaviour) claims the
+      // mapping was revoked the instant it was created.
+      const revokedAt = r.updated_at ?? r.created_at;
       decisions.push({
         paramName: r.param_name,
         decision: 'mapping_revoked',
         decidedBy: r.created_by,
-        decidedAt: r.created_at,
+        decidedAt: revokedAt,
+        approximate: !r.updated_at,
         familyId: r.family_id,
         attributeId: r.attribute_id,
         attributeName: r.attribute_name,

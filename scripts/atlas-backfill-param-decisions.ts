@@ -37,6 +37,23 @@ import {
 
 const APPLY = process.argv.includes('--apply');
 
+/**
+ * --rebuild: delete every source='backfill' row, then re-derive.
+ *
+ * This is NOT a violation of the append-only rule, and the distinction
+ * matters. An OBSERVED decision (source ui/batch/script) is real history and
+ * is never deleted — the table has no DELETE policy, and a correction to one
+ * is a new row. A source='backfill' row is a DERIVED ARTIFACT: a
+ * reconstruction of events recorded elsewhere. When the reconstruction logic
+ * is found to be wrong, the honest fix is to re-derive it, not to layer
+ * corrections on top of known-bad rows and leave both for a reader to
+ * untangle.
+ *
+ * Deletes are scoped with .eq('source','backfill') so an observed decision
+ * can never be caught by it.
+ */
+const REBUILD = process.argv.includes('--rebuild');
+
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 if (!url || !key) {
@@ -45,12 +62,32 @@ if (!url || !key) {
 }
 const sb = createClient(url, key);
 
-/** Page past PostgREST's 1000-row cap. STOPS on error — a failed page must
- *  never silently truncate the backfill into a partial reconstruction. */
-async function fetchAll<T>(table: string, cols: string): Promise<T[]> {
+/** Page past PostgREST's 1000-row cap.
+ *
+ *  STOPS on error — a failed page must never silently truncate the backfill
+ *  into a partial reconstruction.
+ *
+ *  ORDERS explicitly. Postgres guarantees no ordering across pages without an
+ *  ORDER BY, so an unordered `.range()` loop can return the same row twice
+ *  and skip another — and a skipped override simply has no history in the
+ *  log, with nothing to report it. `id` is the tiebreak so the order is
+ *  total, not merely partial. */
+async function fetchAll<T>(
+  table: string,
+  cols: string,
+  orderBy = 'created_at',
+  // atlas_unmapped_param_notes has NO id column — its primary key is
+  // param_name — so the tiebreak column has to be per-table.
+  tiebreak = 'id',
+): Promise<T[]> {
   const out: T[] = [];
   for (let from = 0; ; from += 1000) {
-    const { data, error } = await sb.from(table).select(cols).range(from, from + 999);
+    const { data, error } = await sb
+      .from(table)
+      .select(cols)
+      .order(orderBy, { ascending: true })
+      .order(tiebreak, { ascending: true })
+      .range(from, from + 999);
     if (error) throw new Error(`${table}: ${error.message}`);
     if (!data || data.length === 0) break;
     out.push(...(data as T[]));
@@ -83,18 +120,49 @@ interface NoteRow {
 }
 
 async function main() {
-  console.log(`\nAtlas Decision Log backfill — ${APPLY ? 'APPLY' : 'DRY RUN'}\n${'='.repeat(60)}`);
+  console.log(
+    `\nAtlas Decision Log backfill — ${APPLY ? 'APPLY' : 'DRY RUN'}${REBUILD ? ' (REBUILD)' : ''}\n${'='.repeat(60)}`,
+  );
+
+  if (REBUILD && APPLY) {
+    // Scoped to reconstructed rows ONLY. An observed decision is never
+    // touched by this — see the note on REBUILD above.
+    const { count: before } = await sb
+      .from('atlas_param_decisions')
+      .select('*', { count: 'exact', head: true })
+      .eq('source', 'backfill');
+    const { error: delErr } = await sb.from('atlas_param_decisions').delete().eq('source', 'backfill');
+    if (delErr) {
+      console.error(`REBUILD failed to clear prior reconstruction: ${delErr.message}`);
+      process.exit(1);
+    }
+    const { count: observed } = await sb
+      .from('atlas_param_decisions')
+      .select('*', { count: 'exact', head: true })
+      .neq('source', 'backfill');
+    console.log(`REBUILD: cleared ${before ?? 0} reconstructed rows; ${observed ?? 0} observed rows untouched.\n`);
+  } else if (REBUILD) {
+    console.log('REBUILD requested — will clear prior reconstructed rows when run with --apply.\n');
+  }
 
   const [overrides, investigations, notes] = await Promise.all([
     fetchAll<OverrideRow>(
       'atlas_dictionary_overrides',
-      'id, param_name, family_id, attribute_id, attribute_name, change_reason, created_by, created_at, is_active',
+      // updated_at is REQUIRED: for a row deactivated with nothing replacing
+      // it, that column is the revocation time and the only record of it.
+      'id, param_name, family_id, attribute_id, attribute_name, change_reason, created_by, created_at, updated_at, is_active',
     ),
     fetchAll<InvestigationRow>(
       'atlas_triage_investigations',
       'id, param_name, scope_kind, scope_key, action_taken, action_at, ran_by, ran_at, raw_response, resulting_override_id, reverted_at, reverted_by',
+      'ran_at',
     ),
-    fetchAll<NoteRow>('atlas_unmapped_param_notes', 'param_name, note, status, updated_by, updated_at'),
+    fetchAll<NoteRow>(
+      'atlas_unmapped_param_notes',
+      'param_name, note, status, updated_by, updated_at',
+      'updated_at',
+      'param_name',
+    ),
   ]);
 
   console.log(`sources: ${overrides.length} overrides · ${investigations.length} investigations · ${notes.length} notes`);
@@ -116,8 +184,15 @@ async function main() {
   // created an override). We do NOT emit a duplicate accept — instead the
   // evidence is grafted onto the matching override-derived decision, so one
   // decision keeps one row and gains the reasoning behind it.
+  // Key on (overrideId, 'mapping_accepted') — NOT overrideId alone. Every
+  // mapping_edited row shares its override_id with the mapping_accepted row
+  // for the same override, so a plain map is last-write-wins and which one
+  // receives the AI evidence would depend on fetch order. The evidence
+  // belongs to the decision that CREATED the mapping.
   const byOverrideId = new Map<string, ReconstructedDecision>();
-  for (const d of decisions) if (d.overrideId) byOverrideId.set(d.overrideId, d);
+  for (const d of decisions) {
+    if (d.overrideId && d.decision === 'mapping_accepted') byOverrideId.set(d.overrideId, d);
+  }
 
   let evidenceAttached = 0;
   let investigationOnly = 0;
@@ -156,9 +231,16 @@ async function main() {
   let reverts = 0;
   for (const inv of investigations) {
     if (!inv.reverted_at || !inv.reverted_by) continue;
+    // Reverting a non-mapping action REOPENS the param — it does not
+    // "confirm it in family". Un-marking "this can't be mapped" is the
+    // removal of a claim, not the assertion of a different, stronger one.
+    // The first version wrote confirmed_in_family here, which fabricated the
+    // only row of that type in the entire log. The live revert route
+    // (triage-investigations/[id]/revert) already gets this right — the two
+    // disagreed, and this one was wrong.
     decisions.push({
       paramName: inv.param_name,
-      decision: inv.action_taken === 'override_created' ? 'mapping_revoked' : 'confirmed_in_family',
+      decision: inv.action_taken === 'override_created' ? 'mapping_revoked' : 'reopened',
       decidedBy: inv.reverted_by,
       decidedAt: inv.reverted_at,
       overrideId: inv.resulting_override_id,
@@ -173,19 +255,27 @@ async function main() {
   // Skip params whose status decision is already represented by an
   // investigation-derived row, so a drawer-made "mark unmappable" isn't
   // counted twice.
+  // Dedupe on (param, DECISION) — not the param alone.
+  //
+  // Keying on the param alone meant ANY status investigation on P suppressed
+  // ANY later note-derived status for P. A param marked `unmappable` via the
+  // drawer in May and then changed to `wrong_family` via the notes route in
+  // June would lose the June decision entirely, leaving the log's latest
+  // state contradicting what Triage actually shows. Nothing diverges in the
+  // current data, so this fixes a live-but-unexercised hole.
   const statusAlready = new Set(
     decisions
-      .filter((d) => ['marked_unmappable', 'flagged_wrong_family', 'confirmed_in_family'].includes(d.decision))
-      .map((d) => canonicalKey(d.paramName, '')),
+      .filter((d) =>
+        ['marked_unmappable', 'flagged_wrong_family', 'confirmed_in_family'].includes(d.decision),
+      )
+      .map((d) => `${canonicalKey(d.paramName, '')}|${d.decision}`),
   );
 
   let noteDecisions = 0;
   for (const n of notes) {
     const decision = decisionForNoteRow(n.status, n.note);
     if (!decision) continue;
-    if (statusAlready.has(canonicalKey(n.param_name, '')) && decision !== 'deferred' && decision !== 'note_added') {
-      continue;
-    }
+    if (statusAlready.has(`${canonicalKey(n.param_name, '')}|${decision}`)) continue;
     decisions.push({
       paramName: n.param_name,
       decision,

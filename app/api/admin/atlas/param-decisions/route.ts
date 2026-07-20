@@ -96,8 +96,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       query = query.ilike('param_name', `%${needle}%`);
     }
 
+    // `id` is a REQUIRED tiebreak, not decoration. Ties on decided_at are
+    // routine here: an edit is dated at the successor mapping's creation,
+    // which is also that mapping's own accept — 218 rows share an instant
+    // with another row in live data. Without a total order, tied rows render
+    // in arbitrary order (an accept could appear below its own revoke) and
+    // pagination can repeat or skip rows across pages.
     const { data, error, count } = await query
       .order('decided_at', { ascending: false })
+      .order('id', { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (error) {

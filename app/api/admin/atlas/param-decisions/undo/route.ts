@@ -31,7 +31,17 @@ import { invalidateDictOverrideCache } from '@/lib/services/atlasDictOverrides';
 import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
 import { recordParamDecisions, type ParamDecisionInput } from '@/lib/services/paramDecisionLog';
 
-const UNDOABLE_MAPPING = new Set(['mapping_accepted', 'mapping_edited']);
+// Only a FIRST mapping can be undone here.
+//
+// `mapping_edited` is deliberately excluded. Its override_id points at the
+// SUCCESSOR mapping (the "after" of the edit), and 172 of the 209 edits in
+// live data point at a mapping that is currently active. Deactivating it does
+// NOT restore the predecessor — the parameter would go from mapped-to-B to
+// not mapped at all, silently degrading ingest translation coverage while the
+// log honestly reported "revoked". Undoing an edit means RESTORING the prior
+// version, which needs the full Triage context (sample values, the AI
+// suggestion, product counts). So we refuse and point there.
+const UNDOABLE_MAPPING = new Set(['mapping_accepted']);
 const UNDOABLE_STATUS = new Set([
   'deferred',
   'marked_unmappable',
@@ -85,11 +95,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const mappingRows = rows.filter((r) => UNDOABLE_MAPPING.has(r.decision) && r.override_id);
     if (mappingRows.length > 0) {
       const overrideIds = mappingRows.map((r) => r.override_id as string);
-      const { error: updErr } = await supabase
+      // `.select()` is load-bearing, not decoration: `.eq('is_active', true)`
+      // means the update can legitimately match ZERO rows (the override was
+      // already deactivated in Triage, or this decision was undone a moment
+      // ago). Without reading back what changed, we'd append a
+      // `mapping_revoked` row crediting this admin, now, for a revocation
+      // that already happened — and an append-only table can never take it
+      // back. Log ONLY what this request actually changed.
+      const { data: reverted, error: updErr } = await supabase
         .from('atlas_dictionary_overrides')
         .update({ is_active: false, updated_at: new Date().toISOString() })
         .in('id', overrideIds)
-        .eq('is_active', true);
+        .eq('is_active', true)
+        .select('id');
 
       if (updErr) {
         return NextResponse.json(
@@ -98,7 +116,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
       }
 
+      const actuallyReverted = new Set(((reverted ?? []) as Array<{ id: string }>).map((x) => x.id));
       for (const r of mappingRows) {
+        if (!actuallyReverted.has(r.override_id as string)) {
+          skipped.push({ id: r.id, reason: 'mapping was already inactive — nothing to undo' });
+          continue;
+        }
         if (r.family_id) families.add(r.family_id);
         appended.push({
           paramName: r.param_name,
@@ -123,11 +146,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const displayName = r.param_name_display || r.param_name;
       const { data: note } = await supabase
         .from('atlas_unmapped_param_notes')
-        .select('param_name, note')
+        .select('param_name, note, status')
         .eq('param_name', displayName)
         .maybeSingle();
 
-      if (note && typeof note.note === 'string' && note.note.trim().length > 0) {
+      // Nothing parked ⇒ nothing to reopen. Logging "reopened" here would
+      // assert a state transition that did not happen — and undoing twice
+      // would append a second phantom row that can never be removed.
+      if (!note || !note.status) {
+        skipped.push({ id: r.id, reason: 'status was already cleared — nothing to undo' });
+        continue;
+      }
+
+      if (typeof note.note === 'string' && note.note.trim().length > 0) {
+        // Keep the engineer's reasoning, drop only the status.
         await supabase
           .from('atlas_unmapped_param_notes')
           .update({
@@ -138,10 +170,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             updated_at: new Date().toISOString(),
           })
           .eq('param_name', displayName);
-      } else if (note) {
+      } else {
         await supabase.from('atlas_unmapped_param_notes').delete().eq('param_name', displayName);
       }
-      // note == null ⇒ the status was already gone; still log the intent.
 
       appended.push({
         paramName: r.param_name,
@@ -154,7 +185,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     for (const r of rows) {
-      if (!UNDOABLE_MAPPING.has(r.decision) && !UNDOABLE_STATUS.has(r.decision)) {
+      if (r.decision === 'mapping_edited') {
+        skipped.push({
+          id: r.id,
+          reason:
+            'undoing an edit means restoring the previous mapping — do that in Triage, ' +
+            'where the sample values and suggestion are visible',
+        });
+      } else if (!UNDOABLE_MAPPING.has(r.decision) && !UNDOABLE_STATUS.has(r.decision)) {
         skipped.push({ id: r.id, reason: `"${r.decision}" is itself an undo — re-apply it from Triage` });
       } else if (UNDOABLE_MAPPING.has(r.decision) && !r.override_id) {
         skipped.push({ id: r.id, reason: 'no linked mapping to revert' });
