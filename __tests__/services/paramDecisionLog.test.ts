@@ -3,10 +3,21 @@ import path from 'path';
 import {
   canonicalizeParamName,
   decisionForNoteStatus,
+  decisionForNoteWrite,
 } from '@/lib/services/paramDecisionLog';
 
 const ROOT = path.join(__dirname, '..', '..');
 const read = (rel: string) => readFileSync(path.join(ROOT, rel), 'utf-8');
+
+/** Isolate one exported handler so a guard about the DELETE path can't be
+ *  satisfied by a line that happens to sit in PATCH. */
+function handlerBody(src: string, name: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'): string {
+  const start = src.indexOf(`export async function ${name}(`);
+  if (start < 0) return '';
+  const rest = src.slice(start + 1);
+  const next = rest.indexOf('\nexport async function ');
+  return next < 0 ? rest : rest.slice(0, next);
+}
 
 /**
  * THE ANTI-DRIFT GUARD.
@@ -91,6 +102,169 @@ describe('decision log: param-name canonicalization is pinned to the overrides r
   it('folds case and surrounding whitespace', () => {
     expect(canonicalizeParamName('  VR(V) ')).toBe('vr(v)');
     expect(canonicalizeParamName('Vr(v)')).toBe('vr(v)');
+  });
+});
+
+/**
+ * REVIEW FINDING — the log's one blind spot was the destruction of reasoning.
+ *
+ * Two routes mutate atlas_unmapped_param_notes (PUT and DELETE) and each
+ * carried its own inline copy of "what did this write decide". They disagreed.
+ * Both copies guarded note-logging on the NEW note being non-empty, so
+ * *erasing* an engineer's rationale fell through and recorded nothing at all —
+ * the single event this feature exists to prevent, in the one code path that
+ * performs it irreversibly.
+ *
+ * These fail against both old copies.
+ */
+describe('decision log: erasing an engineer\'s note is itself a decision', () => {
+  const empty = { status: null, note: null, flagged: false };
+
+  it('clearing a note-only row records note_cleared', () => {
+    // Old behaviour: null — the note vanished with no trace.
+    expect(
+      decisionForNoteWrite({ status: null, note: 'looks like a test condition', flagged: false }, empty),
+    ).toBe('note_cleared');
+  });
+
+  it('deleting a row that held only a note records note_cleared', () => {
+    // A DELETE is just a write whose next state is empty. The DELETE
+    // handler's old inline copy logged ONLY when a status was present.
+    expect(decisionForNoteWrite({ status: null, note: 'vendor test condition', flagged: false }, empty)).toBe(
+      'note_cleared',
+    );
+  });
+
+  it('deleting a parked row still records the reopen', () => {
+    expect(decisionForNoteWrite({ status: 'deferred', note: 'revisit', flagged: false }, empty)).toBe('reopened');
+  });
+
+  it('does not manufacture an entry when nothing changed', () => {
+    // Re-saving an identical note must not append a row that can never be
+    // removed — the table has no DELETE policy.
+    const same = { status: 'deferred', note: 'same text', flagged: true };
+    expect(decisionForNoteWrite(same, { ...same })).toBeNull();
+    expect(decisionForNoteWrite(empty, empty)).toBeNull();
+  });
+
+  it('adding a note to an untouched param records note_added', () => {
+    expect(decisionForNoteWrite(empty, { status: null, note: 'checked the datasheet', flagged: false })).toBe(
+      'note_added',
+    );
+  });
+
+  it('ranks status above note above flag, so one action is one row', () => {
+    // Deferring while also writing a note is a DEFER, not two entries.
+    expect(
+      decisionForNoteWrite(empty, { status: 'deferred', note: 'revisit next batch', flagged: true }),
+    ).toBe('deferred');
+    // No status change, so the note wins over the flag.
+    expect(
+      decisionForNoteWrite({ status: 'deferred', note: null, flagged: false },
+        { status: 'deferred', note: 'why', flagged: true }),
+    ).toBe('note_added');
+    // Nothing but the bookmark moved.
+    expect(
+      decisionForNoteWrite({ status: null, note: 'x', flagged: false }, { status: null, note: 'x', flagged: true }),
+    ).toBe('flag_toggled');
+  });
+});
+
+/**
+ * REVIEW FINDINGS — route-level guards.
+ *
+ * These assert the specific safety property each fix installed, scoped to the
+ * handler that needs it. They are structural because the alternative is no
+ * control at all: this repo's whole problem was that nothing failed when a
+ * route skipped the log, and three of the findings below are the SAME defect
+ * appearing in a sibling path that an earlier fix didn't sweep.
+ */
+describe('decision log: a write is logged only if it actually happened', () => {
+  it('DELETE of an override guards on is_active before logging a revoke', () => {
+    // Without the guard, deactivating an ALREADY-inactive override "succeeds"
+    // (0 rows, no error) and appends a second permanent mapping_revoked row
+    // crediting this admin, now, for a revocation that happened earlier. The
+    // undo route was fixed for exactly this; this sibling path was not.
+    const body = handlerBody(read('app/api/admin/atlas/dictionaries/[overrideId]/route.ts'), 'DELETE');
+    expect(body).toMatch(/\.eq\('is_active',\s*true\)/);
+    expect(body).toMatch(/\.select\(/);
+  });
+
+  it('PATCH of an override does not log an edit when the body changed nothing', () => {
+    // A PATCH carrying no recognized field used to still bump updated_at and
+    // append mapping_edited. Worse than noise: updated_at IS the revocation
+    // timestamp for a row later deactivated with nothing replacing it.
+    const body = handlerBody(read('app/api/admin/atlas/dictionaries/[overrideId]/route.ts'), 'PATCH');
+    expect(body).toMatch(/Object\.keys\(update\)\.length === 0/);
+    // updated_at must be set AFTER that check, not seeded into the literal.
+    const decl = body.match(/const update: Record<string, unknown> = \{([^}]*)\}/);
+    expect(decl).toBeTruthy();
+    expect(decl![1]).not.toMatch(/updated_at/);
+  });
+
+  it('undoing a status checks the write succeeded before appending "reopened"', () => {
+    // An unchecked write let the log assert a state transition that never
+    // happened — the param still parked in Triage, the log permanently
+    // claiming otherwise, with no way to retract it.
+    const src = read('app/api/admin/atlas/param-decisions/undo/route.ts');
+    const body = handlerBody(src, 'POST');
+    expect(body).toMatch(/writeErr/);
+    // Both branches (keep-the-note update, and delete) must surface an error.
+    expect(body).toMatch(/error:\s*updErr\s*\}/);
+    expect(body).toMatch(/error:\s*delErr\s*\}/);
+  });
+
+  it('the undo route documents what it actually refuses', () => {
+    // The header claimed `mapping_edited` was undoable while UNDOABLE_MAPPING
+    // excluded it — a reader trusting the comment would conclude the feature
+    // was broken. This repo has been burned twice by a rule that lived only in
+    // a comment (the misdated revokes came from a documented fallback nobody
+    // implemented), so the comment gets a test.
+    const src = read('app/api/admin/atlas/param-decisions/undo/route.ts');
+    const header = src.slice(0, src.indexOf('*/'));
+    const deactivateLine = header.split('\n').find((l) => l.includes('deactivate the override')) ?? '';
+    expect(deactivateLine).not.toMatch(/mapping_edited/);
+    expect(header).toMatch(/mapping_edited[\s\S]*?refused/);
+  });
+
+  it('the undo route answers for every id it was given', () => {
+    // Ids matching no row were dropped in silence: the caller asked to undo N
+    // and got back `undone: N-1` with no explanation of the missing one.
+    const body = handlerBody(read('app/api/admin/atlas/param-decisions/undo/route.ts'), 'POST');
+    expect(body).toMatch(/no such decision/);
+  });
+
+  it('a batch that replaces live mappings logs edits, not fresh accepts', () => {
+    // A batch re-pointing 50 existing mappings read as 50 brand-new ones —
+    // hiding precisely the change an auditor cares about. Same accept-vs-edit
+    // distinction the single-accept route already drew with `hadPrior`.
+    const src = read('app/api/admin/atlas/dictionaries/batch/route.ts');
+    expect(src).toMatch(/supersededKeys/);
+    expect(src).toMatch(/mapping_edited/);
+  });
+});
+
+describe('decision log: callers hand over the raw param name', () => {
+  it('the accept route does not pre-normalize away the display name', () => {
+    // The helper canonicalizes for its join key and separately stores what it
+    // was given as the DISPLAY name. Passing the already-lowercased form threw
+    // away the only copy of what the engineer saw ("RDS(ON) Max. (mΩ)"), and
+    // the log is append-only, so it could never be recovered.
+    const src = read('app/api/admin/atlas/dictionaries/route.ts');
+    const call = src.match(/await recordParamDecision\(\{[\s\S]*?\n    \}\);/);
+    expect(call).toBeTruthy();
+    expect(call![0]).not.toMatch(/paramName:\s*canonicalParamName/);
+    expect(call![0]).toMatch(/paramName:\s*body\.paramName/);
+  });
+});
+
+describe('decision log: the list endpoint does not ship AI blobs', () => {
+  it('returns evidence only when explicitly asked', () => {
+    // hasEvidence exists so the list can render its chip without the payload.
+    // Returning both meant multi-KB blobs per row for a 500-row page.
+    const src = read('app/api/admin/atlas/param-decisions/route.ts');
+    expect(src).toMatch(/include_evidence/);
+    expect(src).not.toMatch(/^\s*evidence: r\.evidence,/m);
   });
 });
 

@@ -154,6 +154,7 @@ BEGIN
       'flagged_wrong_family',
       'confirmed_in_family',
       'note_added',
+      'note_cleared',           -- an engineer's written rationale was erased
       'flag_toggled'
     ));
 

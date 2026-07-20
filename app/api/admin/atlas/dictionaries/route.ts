@@ -241,7 +241,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Absent ⇒ evidence is null, which is the honest record of a decision
     // made without AI (the common case — 97% of accepts had no investigation).
     await recordParamDecision({
-      paramName: canonicalParamName,
+      // The RAW name, not `canonicalParamName`. The helper canonicalizes for
+      // its join key and separately stores what was passed as the DISPLAY
+      // name — so handing it the already-lowercased form threw away the only
+      // copy of what the engineer actually saw on screen. Vendor params carry
+      // meaningful case ("RDS(ON) Max. (mΩ)" → "rds(on) max. (mΩ)"), and the
+      // log is append-only, so it could never be recovered. The helper's own
+      // doc says callers must not pre-normalize; this was the one that did.
+      paramName: body.paramName as string,
       decision: hadPrior ? 'mapping_edited' : 'mapping_accepted',
       decidedBy: user!.id,
       familyId: body.familyId as string,

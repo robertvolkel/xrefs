@@ -9,6 +9,11 @@
  * max 500) + `offset`. Mirrors the response contract of the panel it
  * replaces: { success, items, total, limit, offset }.
  *
+ * `include_evidence=1` adds the raw AI blob to each item. OFF by default —
+ * every row reports `hasEvidence` regardless, which is all the list needs to
+ * render its chip; the blobs are multi-KB each and only the per-parameter
+ * history view actually expands them.
+ *
  * SORTING IS SERVER-SIDE, ALWAYS. The primary use case is "find what I just
  * did and act on it", so the newest row must be on page 1. Sorting a page
  * slice client-side would reorder 50 arbitrary rows and look correct while
@@ -65,6 +70,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // "Mine" quick-filter — resolved server-side so the client never has to
     // know its own user id.
     const mineOnly = sp.get('mine') === '1';
+    // The AI DeepAnalysis blob is multi-KB per row. The list needs to know
+    // only WHETHER one exists (that's what `hasEvidence` is for) — shipping
+    // the payloads for a 500-row page to render a chip is megabytes of
+    // transfer nobody reads. The per-parameter history view, which fetches a
+    // handful of rows and actually expands them, opts in.
+    const includeEvidence = sp.get('include_evidence') === '1';
 
     const supabase = createServiceClient();
     let query = supabase
@@ -133,7 +144,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         decision: r.decision,
         note: r.note,
         hasEvidence: r.evidence != null,
-        evidence: r.evidence,
+        ...(includeEvidence ? { evidence: r.evidence } : {}),
         attributeId: r.attribute_id,
         attributeName: r.attribute_name,
         overrideId: r.override_id,

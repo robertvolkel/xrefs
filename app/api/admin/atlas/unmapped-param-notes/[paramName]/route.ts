@@ -27,7 +27,8 @@ import { resolveAdminNames } from '@/lib/services/overrideHistoryHelper';
 import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
 import {
   recordParamDecision,
-  decisionForNoteStatus,
+  decisionForNoteWrite,
+  type NoteState,
   type ParamDecisionType,
 } from '@/lib/services/paramDecisionLog';
 
@@ -94,19 +95,17 @@ export async function PUT(
     const priorNote = (prior?.note as string | null) ?? null;
     const priorFlagged = (prior?.is_flagged as boolean | null) ?? false;
 
-    /** Pick the single most significant change this write represents.
-     *  One click = one decision row; logging three rows for one action
-     *  would drown the log. Precedence: status > note > flag. */
-    function resolveDecision(
+    const priorState: NoteState = { status: priorStatus, note: priorNote, flagged: priorFlagged };
+
+    /** Pick the single most significant change this write represents. The
+     *  rule itself lives in paramDecisionLog so the DELETE handler below
+     *  applies the identical one — they used to diverge. */
+    const resolveDecision = (
       nextStatus: string | null,
       nextNote: string | null,
       nextFlagged: boolean,
-    ): ParamDecisionType | null {
-      if (nextStatus !== priorStatus) return decisionForNoteStatus(nextStatus, priorStatus);
-      if (nextNote !== priorNote && nextNote) return 'note_added';
-      if (nextFlagged !== priorFlagged) return 'flag_toggled';
-      return null;
-    }
+    ): ParamDecisionType | null =>
+      decisionForNoteWrite(priorState, { status: nextStatus, note: nextNote, flagged: nextFlagged });
 
     // Row needs at least one signal to persist (matches the schema CHECK).
     // Empty note + null status + flagged=false → no reason to keep the row;
@@ -230,7 +229,7 @@ export async function DELETE(
     // is unrecoverable, so the log entry has to be built from the prior state.
     const { data: prior } = await supabase
       .from('atlas_unmapped_param_notes')
-      .select('status, note')
+      .select('status, note, is_flagged')
       .eq('param_name', decodedParamName)
       .maybeSingle();
 
@@ -243,13 +242,29 @@ export async function DELETE(
       return NextResponse.json({ success: false, error: error.message }, { status: 500 });
     }
 
-    // Clearing a status returns the param to the open queue — a real decision.
-    if (prior?.status) {
+    // What this delete destroyed — through the SAME rule the PUT path uses,
+    // rather than a second hand-written copy of it. The old inline version
+    // logged only when a status was present, so wiping a row that held
+    // nothing but an engineer's written rationale erased it with no record
+    // that it had ever existed: the exact loss this log exists to prevent, in
+    // the one code path that performs it irreversibly. A delete is simply a
+    // write whose next state is empty.
+    const priorNote = (prior?.note as string | null) ?? null;
+    const decision: ParamDecisionType | null = decisionForNoteWrite(
+      {
+        status: (prior?.status as string | null) ?? null,
+        note: priorNote,
+        flagged: (prior?.is_flagged as boolean | null) ?? false,
+      },
+      { status: null, note: null, flagged: false },
+    );
+
+    if (decision) {
       await recordParamDecision({
         paramName: decodedParamName,
-        decision: 'reopened',
+        decision,
         decidedBy: user!.id,
-        note: (prior.note as string | null) ?? null,
+        note: priorNote,
         source: 'ui',
       });
     }

@@ -48,6 +48,11 @@ export type ParamDecisionType =
   | 'flagged_wrong_family'
   | 'confirmed_in_family'
   | 'note_added'
+  /** An engineer's written rationale was erased. Distinct from `reopened`
+   *  (which is about a STATUS returning to the queue) because destroying the
+   *  reasoning behind a decision is precisely the loss this log exists to
+   *  prevent — it must not be the one event that leaves no trace. */
+  | 'note_cleared'
   | 'flag_toggled';
 
 /** How the decision was made. 'backfill' marks a row RECONSTRUCTED from
@@ -180,6 +185,51 @@ export async function recordParamDecisions(inputs: ParamDecisionInput[]): Promis
     console.error('[paramDecisionLog] unexpected error recording decision(s):', err);
     return false;
   }
+}
+
+/** The three things an `atlas_unmapped_param_notes` row can carry. */
+export interface NoteState {
+  status: string | null;
+  note: string | null;
+  flagged: boolean;
+}
+
+/**
+ * What one write to the notes table DECIDED, given what was there before.
+ *
+ * WHY THIS IS SHARED CODE. Two routes mutate that table — the PUT (upsert or
+ * clear) and the DELETE — and each used to carry its own inline version of
+ * this rule. They disagreed, and the disagreement was invisible: the DELETE
+ * copy logged only when a STATUS was present, so wiping a row that held
+ * nothing but an engineer's written rationale destroyed it and recorded
+ * nothing. A log whose single blind spot is "somebody deleted the reasoning"
+ * is blind exactly where it matters most.
+ *
+ * At the second consumer, the rule moves out of the route. One function, two
+ * callers, one behaviour.
+ *
+ * PRECEDENCE: status > note > flag. One user action produces ONE row — a
+ * defer that also saves a note is a defer, not two entries. The order runs
+ * most-consequential first.
+ *
+ * Returns null when nothing meaningful changed, so a no-op write (re-saving
+ * an identical note) doesn't manufacture an entry that can never be removed.
+ */
+export function decisionForNoteWrite(
+  prior: NoteState,
+  next: NoteState,
+): ParamDecisionType | null {
+  if (next.status !== prior.status) {
+    return decisionForNoteStatus(next.status, prior.status);
+  }
+  if (next.note !== prior.note) {
+    if (next.note) return 'note_added';
+    // Erasing rationale is a decision. Guarding this on `next.note` being
+    // truthy — the original bug — silently dropped every clear.
+    return prior.note ? 'note_cleared' : null;
+  }
+  if (next.flagged !== prior.flagged) return 'flag_toggled';
+  return null;
 }
 
 /**

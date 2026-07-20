@@ -69,6 +69,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const failed: Array<{ paramName: string; familyId: string; reason: string }> = [];
     const affectedFamilies = new Set<string>();
 
+    // Params that already had a LIVE mapping to a different attribute — this
+    // batch replaced it. That is an EDIT, not a first-time accept, and the
+    // decision log recorded all of them as `mapping_accepted` until now: a
+    // batch that silently re-pointed 50 existing mappings read as 50 brand-new
+    // ones, hiding exactly the change an auditor would care about. Same defect
+    // the single-accept route already fixed with its `hadPrior` check.
+    //
+    // Keyed on rawParamName because that is what `approved` carries; safe
+    // because prepareBatchItems dedupes on the NORMALIZED (familyId,
+    // paramName), so one request holds at most one raw name per key.
+    const supersededKeys = new Set<string>();
+
     if (prepared.length === 0) {
       return NextResponse.json({ success: true, batchId: null, approvedIds, approved, skipped, failed, deduped });
     }
@@ -131,6 +143,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         return true;
       });
       if (toWrite.length === 0) return;
+
+      // Recorded BEFORE the deactivate below, while the prior state is still
+      // observable. `activeAttrByName` holds only rows that were active a
+      // moment ago; a toWrite item present in it had a live mapping to a
+      // DIFFERENT attribute (same-attribute ones were filtered out as
+      // already-mapped), so writing over it is an edit.
+      for (const it of toWrite) {
+        if (activeAttrByName.has(it.paramName)) {
+          supersededKeys.add(`${familyId}::${it.rawParamName}`);
+        }
+      }
 
       affectedFamilies.add(familyId);
       const writeNames = toWrite.map((i) => i.paramName);
@@ -233,7 +256,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     await recordParamDecisions(
       approved.map((a) => ({
         paramName: a.paramName,
-        decision: 'mapping_accepted' as const,
+        decision: supersededKeys.has(`${a.familyId}::${a.paramName}`)
+          ? ('mapping_edited' as const)
+          : ('mapping_accepted' as const),
         decidedBy: user!.id,
         familyId: a.familyId,
         attributeId: (a.override.attributeId as string | null) ?? null,

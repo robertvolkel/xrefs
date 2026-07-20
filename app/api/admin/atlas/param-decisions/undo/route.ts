@@ -14,14 +14,22 @@
  * consumer).
  *
  * Reversal by decision type:
- *   mapping_accepted / mapping_edited  → deactivate the override
+ *   mapping_accepted                   → deactivate the override
  *   deferred / marked_unmappable /
  *   flagged_wrong_family /
  *   confirmed_in_family                → clear the notes status (reopen)
+ *   mapping_edited                     → refused. Undoing an edit means
+ *                                        RESTORING the predecessor, which this
+ *                                        route cannot do — see UNDOABLE_MAPPING.
  *   mapping_revoked / reopened         → refused: these ARE undos. Re-applying
  *                                        a mapping needs the full Triage
  *                                        context, so we send the user there
  *                                        rather than guess.
+ *
+ * Keep this list in step with UNDOABLE_MAPPING / UNDOABLE_STATUS below. It
+ * previously claimed `mapping_edited` was undoable while the code refused it —
+ * the same "a rule in a comment is not a rule" trap that produced the misdated
+ * revokes in the backfill.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -91,6 +99,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const families = new Set<string>();
     const skipped: Array<{ id: string; reason: string }> = [];
 
+    // A requested id that matched no row was silently dropped before: the
+    // caller asked to undo N decisions, got `undone: N-1` and no explanation.
+    // Every id the caller sends gets an answer.
+    const found = new Set(rows.map((r) => r.id));
+    for (const id of ids) {
+      if (!found.has(id)) skipped.push({ id, reason: 'no such decision' });
+    }
+
     // ── Mapping undos: deactivate the overrides in one indexed update ────
     const mappingRows = rows.filter((r) => UNDOABLE_MAPPING.has(r.decision) && r.override_id);
     if (mappingRows.length > 0) {
@@ -158,9 +174,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         continue;
       }
 
+      // The write's error is CHECKED before anything is logged. Appending
+      // `reopened` off an unchecked write would assert a state transition
+      // that may not have happened — the param would still be parked in
+      // Triage while the log permanently claimed it had been reopened, and an
+      // append-only table cannot retract that. A log that can be wrong about
+      // the thing it exists to record is worse than no log.
+      let writeErr: string | null = null;
       if (typeof note.note === 'string' && note.note.trim().length > 0) {
         // Keep the engineer's reasoning, drop only the status.
-        await supabase
+        const { error: updErr } = await supabase
           .from('atlas_unmapped_param_notes')
           .update({
             status: null,
@@ -170,8 +193,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             updated_at: new Date().toISOString(),
           })
           .eq('param_name', displayName);
+        writeErr = updErr?.message ?? null;
       } else {
-        await supabase.from('atlas_unmapped_param_notes').delete().eq('param_name', displayName);
+        const { error: delErr } = await supabase
+          .from('atlas_unmapped_param_notes')
+          .delete()
+          .eq('param_name', displayName);
+        writeErr = delErr?.message ?? null;
+      }
+
+      if (writeErr) {
+        skipped.push({ id: r.id, reason: `could not clear the status: ${writeErr}` });
+        continue;
       }
 
       appended.push({
@@ -199,7 +232,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     }
 
-    await recordParamDecisions(appended);
+    // Logging is non-fatal everywhere else, but this action was initiated FROM
+    // the log — so if the append failed, say so rather than letting the page
+    // imply an entry that isn't there.
+    const logged = await recordParamDecisions(appended);
 
     for (const fam of families) invalidateDictOverrideCache(fam);
     await invalidateTriageQueueCache();
@@ -207,6 +243,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({
       success: true,
       undone: appended.length,
+      logged,
       skipped,
     });
   } catch (err) {
