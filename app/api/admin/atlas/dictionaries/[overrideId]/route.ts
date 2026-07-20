@@ -3,6 +3,7 @@ import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
 import { invalidateDictOverrideCache } from '@/lib/services/atlasDictOverrides';
 import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
+import { recordParamDecision } from '@/lib/services/paramDecisionLog';
 
 /** PATCH /api/admin/atlas/dictionaries/:overrideId */
 export async function PATCH(
@@ -10,7 +11,7 @@ export async function PATCH(
   { params }: { params: Promise<{ overrideId: string }> },
 ): Promise<NextResponse> {
   try {
-    const { error: authError } = await requireAdmin();
+    const { user, error: authError } = await requireAdmin();
     if (authError) return authError;
 
     const { overrideId } = await params;
@@ -40,12 +41,26 @@ export async function PATCH(
       );
     }
 
-    // Get familyId to invalidate correct cache
+    // Get familyId to invalidate correct cache (widened for the decision log).
     const { data: row } = await supabase
       .from('atlas_dictionary_overrides')
-      .select('family_id')
+      .select('family_id, param_name, attribute_id, attribute_name')
       .eq('id', overrideId)
       .single();
+
+    if (row) {
+      await recordParamDecision({
+        paramName: row.param_name as string,
+        decision: 'mapping_edited',
+        decidedBy: user!.id,
+        familyId: row.family_id as string,
+        attributeId: (row.attribute_id as string | null) ?? null,
+        attributeName: (row.attribute_name as string | null) ?? null,
+        overrideId,
+        note: (body.changeReason as string | undefined) ?? null,
+        source: 'ui',
+      });
+    }
 
     if (row) invalidateDictOverrideCache(row.family_id as string);
     // Single-flight per-row mutation — see dictionaries/route.ts:236 for rationale.
@@ -67,16 +82,17 @@ export async function DELETE(
   { params }: { params: Promise<{ overrideId: string }> },
 ): Promise<NextResponse> {
   try {
-    const { error: authError } = await requireAdmin();
+    const { user, error: authError } = await requireAdmin();
     if (authError) return authError;
 
     const { overrideId } = await params;
     const supabase = await createClient();
 
-    // Get familyId before deactivating
+    // Read before deactivating — afterwards the row is inactive and we'd
+    // still need its identity for the log entry.
     const { data: row } = await supabase
       .from('atlas_dictionary_overrides')
-      .select('family_id')
+      .select('family_id, param_name, attribute_id, attribute_name')
       .eq('id', overrideId)
       .single();
 
@@ -91,6 +107,21 @@ export async function DELETE(
         { success: false, error: 'Failed to delete dictionary override' },
         { status: 500 },
       );
+    }
+
+    // A soft-delete with nothing replacing it is a genuine revoke (unlike
+    // the accept route's deactivate-then-insert, which is an edit).
+    if (row) {
+      await recordParamDecision({
+        paramName: row.param_name as string,
+        decision: 'mapping_revoked',
+        decidedBy: user!.id,
+        familyId: row.family_id as string,
+        attributeId: (row.attribute_id as string | null) ?? null,
+        attributeName: (row.attribute_name as string | null) ?? null,
+        overrideId,
+        source: 'ui',
+      });
     }
 
     if (row) invalidateDictOverrideCache(row.family_id as string);

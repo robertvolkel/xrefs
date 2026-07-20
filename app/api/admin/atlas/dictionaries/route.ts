@@ -234,6 +234,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Append to the decision log. This is the path that covered only 65 of
     // 2,032 accepted mappings before — everything not routed through the AI
     // Investigate drawer was invisible.
+    // `analysis` / `investigationId` are OPTIONAL and travel with the request
+    // when the engineer had run the AI Investigate pass first. They must
+    // arrive here rather than being attached later: the decision log is
+    // append-only, so evidence not present at insert time can never be added.
+    // Absent ⇒ evidence is null, which is the honest record of a decision
+    // made without AI (the common case — 97% of accepts had no investigation).
     await recordParamDecision({
       paramName: canonicalParamName,
       decision: hadPrior ? 'mapping_edited' : 'mapping_accepted',
@@ -243,6 +249,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       attributeName: (body.attributeName as string | undefined) ?? null,
       overrideId: data.id as string,
       note: (body.changeReason as string | undefined) ?? null,
+      evidence: (body.analysis as Record<string, unknown> | undefined) ?? null,
+      investigationId: (body.investigationId as string | undefined) ?? null,
       source: 'ui',
     });
 

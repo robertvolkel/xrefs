@@ -178,6 +178,11 @@ export async function PUT(
         decision,
         decidedBy: user!.id,
         note,
+        // Optional, and only present when the engineer ran the AI pass first.
+        // Must arrive with the request — the log is append-only, so evidence
+        // absent at insert time can never be attached afterwards.
+        evidence: (body?.analysis as Record<string, unknown> | undefined) ?? null,
+        investigationId: (body?.investigationId as string | undefined) ?? null,
         source: 'ui',
       });
     }
