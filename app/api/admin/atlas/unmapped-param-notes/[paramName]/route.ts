@@ -25,6 +25,11 @@ import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createServiceClient } from '@/lib/supabase/service';
 import { resolveAdminNames } from '@/lib/services/overrideHistoryHelper';
 import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
+import {
+  recordParamDecision,
+  decisionForNoteStatus,
+  type ParamDecisionType,
+} from '@/lib/services/paramDecisionLog';
 
 const MAX_NOTE_LENGTH = 5000;
 const VALID_STATUS = new Set(['wrong_family', 'confirmed_in_family', 'unmappable', 'deferred']);
@@ -76,6 +81,33 @@ export async function PUT(
 
     const supabase = createServiceClient();
 
+    // Read the PRIOR state before mutating. This row is last-write-wins with
+    // no history of its own, so "what was it before" is only knowable here —
+    // and it's what distinguishes a `deferred` from a `reopened` in the
+    // decision log. Cheap: single-row PK lookup.
+    const { data: prior } = await supabase
+      .from('atlas_unmapped_param_notes')
+      .select('status, note, is_flagged')
+      .eq('param_name', decodedParamName)
+      .maybeSingle();
+    const priorStatus = (prior?.status as string | null) ?? null;
+    const priorNote = (prior?.note as string | null) ?? null;
+    const priorFlagged = (prior?.is_flagged as boolean | null) ?? false;
+
+    /** Pick the single most significant change this write represents.
+     *  One click = one decision row; logging three rows for one action
+     *  would drown the log. Precedence: status > note > flag. */
+    function resolveDecision(
+      nextStatus: string | null,
+      nextNote: string | null,
+      nextFlagged: boolean,
+    ): ParamDecisionType | null {
+      if (nextStatus !== priorStatus) return decisionForNoteStatus(nextStatus, priorStatus);
+      if (nextNote !== priorNote && nextNote) return 'note_added';
+      if (nextFlagged !== priorFlagged) return 'flag_toggled';
+      return null;
+    }
+
     // Row needs at least one signal to persist (matches the schema CHECK).
     // Empty note + null status + flagged=false → no reason to keep the row;
     // delete it so the auto-flag registry can re-fire on the next render.
@@ -86,6 +118,19 @@ export async function PUT(
         .eq('param_name', decodedParamName);
       if (delErr) {
         return NextResponse.json({ success: false, error: delErr.message }, { status: 500 });
+      }
+
+      // Clearing everything sends the param back to the open queue. That is
+      // a real decision ("I un-parked this") and used to leave no trace.
+      const cleared = resolveDecision(null, null, false);
+      if (cleared) {
+        await recordParamDecision({
+          paramName: decodedParamName,
+          decision: cleared,
+          decidedBy: user!.id,
+          note: priorNote,
+          source: 'ui',
+        });
       }
       return NextResponse.json({ success: true, deleted: true });
     }
@@ -122,6 +167,21 @@ export async function PUT(
 
     const nameMap = await resolveAdminNames([user!.id]);
 
+    // Append to the decision log. This endpoint serves SIX different
+    // decisions (defer / reopen / unmappable / wrong-family / confirm /
+    // note) and the row it writes keeps no history, so without this the
+    // decision is unrecoverable the moment it's overwritten.
+    const decision = resolveDecision(status, note, isFlagged);
+    if (decision) {
+      await recordParamDecision({
+        paramName: decodedParamName,
+        decision,
+        decidedBy: user!.id,
+        note,
+        source: 'ui',
+      });
+    }
+
     // Note status changes affect classification (wrong_family suppresses
     // synonym workflow; confirmed_in_family suppresses auto-flag). Bust the
     // cache so the next Triage load reflects the new state.
@@ -153,13 +213,22 @@ export async function DELETE(
   { params }: { params: Promise<{ paramName: string }> },
 ): Promise<NextResponse> {
   try {
-    const { error: authError } = await requireAdmin();
+    const { user, error: authError } = await requireAdmin();
     if (authError) return authError;
 
     const { paramName } = await params;
     const decodedParamName = decodeURIComponent(paramName);
 
     const supabase = createServiceClient();
+
+    // Capture what we're about to erase — once the row is gone its status
+    // is unrecoverable, so the log entry has to be built from the prior state.
+    const { data: prior } = await supabase
+      .from('atlas_unmapped_param_notes')
+      .select('status, note')
+      .eq('param_name', decodedParamName)
+      .maybeSingle();
+
     const { error } = await supabase
       .from('atlas_unmapped_param_notes')
       .delete()
@@ -167,6 +236,17 @@ export async function DELETE(
 
     if (error) {
       return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    }
+
+    // Clearing a status returns the param to the open queue — a real decision.
+    if (prior?.status) {
+      await recordParamDecision({
+        paramName: decodedParamName,
+        decision: 'reopened',
+        decidedBy: user!.id,
+        note: (prior.note as string | null) ?? null,
+        source: 'ui',
+      });
     }
 
     invalidateTriageQueueCache();

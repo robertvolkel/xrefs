@@ -18,10 +18,19 @@ import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
 import { invalidateDictOverrideCache } from '@/lib/services/atlasDictOverrides';
 import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
+import { recordParamDecisions } from '@/lib/services/paramDecisionLog';
+
+interface UndoneRow {
+  id: string;
+  family_id: string;
+  param_name: string;
+  attribute_id: string | null;
+  attribute_name: string | null;
+}
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    const { error: authError } = await requireAdmin();
+    const { user, error: authError } = await requireAdmin();
     if (authError) return authError;
 
     const body = await request.json().catch(() => null);
@@ -35,20 +44,39 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const supabase = await createClient();
+    // Widened from `family_id` alone so the decision log can record WHICH
+    // params were undone, not just how many.
     const { data, error } = await supabase
       .from('atlas_dictionary_overrides')
       .update({ is_active: false, updated_at: new Date().toISOString() })
       .in('id', overrideIds)
       .eq('is_active', true)
-      .select('family_id');
+      .select('id, family_id, param_name, attribute_id, attribute_name');
 
     if (error) {
       return NextResponse.json({ success: false, error: 'Failed to undo batch' }, { status: 500 });
     }
 
+    // Undo is itself a decision. It APPENDS `mapping_revoked` rows rather
+    // than deleting the original `mapping_accepted` ones, so the log reads
+    // "Accepted 09:00 → Reverted 09:05" instead of losing what happened.
+    await recordParamDecisions(
+      ((data ?? []) as UndoneRow[]).map((r) => ({
+        paramName: r.param_name,
+        decision: 'mapping_revoked' as const,
+        decidedBy: user!.id,
+        familyId: r.family_id,
+        attributeId: r.attribute_id ?? null,
+        attributeName: r.attribute_name ?? null,
+        overrideId: r.id,
+        note: 'Batch Accept undone',
+        source: 'ui' as const,
+      })),
+    );
+
     // Invalidate each affected family's dict cache, then ONE triage invalidation.
     const families = new Set<string>();
-    for (const r of (data ?? []) as Array<{ family_id: string }>) families.add(r.family_id);
+    for (const r of (data ?? []) as UndoneRow[]) families.add(r.family_id);
     for (const fam of families) invalidateDictOverrideCache(fam);
     if (families.size > 0) await invalidateTriageQueueCache();
 

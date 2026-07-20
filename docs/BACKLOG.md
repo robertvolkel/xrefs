@@ -517,6 +517,32 @@ Align with the `companyUid` cross-source concept (Decision #148) — decide whet
 
 ---
 
+## "Deferred" leaves no trace in the AI Investigation Log — parking a param is an untracked decision (P3)
+
+**Discovered July 19, 2026** while explaining the Investigation Log to the operator. Deciding to *park* a param is a real triage decision, but it is the only one that vanishes from the audit trail — the log can tell you "the AI said X and I mapped it", never "the AI said X and I chose to wait."
+
+**Two tables, one missing bridge.** An investigation row (`atlas_triage_investigations`) is written *only* by a click of **Investigate**, and its follow-up is constrained to four outcomes:
+
+```sql
+CHECK (action_taken IS NULL OR action_taken IN
+  ('override_created', 'flagged_wrong_family', 'marked_unmappable', 'dismissed'))
+```
+
+Deferring does not go through that path at all — it writes `status='deferred'` to `atlas_unmapped_param_notes` (schema: `wrong_family | confirmed_in_family | unmappable | deferred`). So the gap is **two-sided**:
+
+1. **Never-investigated defers can't appear at all.** Measured July 19: **80** deferred params, **0** of them ever investigated. They generate no row, so they are absent by construction — not filtered out.
+2. **Investigated-then-deferred would still read as "no action taken."** `deferred` is not in the CHECK list, so the row would keep `action_taken = NULL` and be indistinguishable from an investigation nobody ever got back to. This half is latent today (the overlap is 0), and it is the one that actively *misleads* — the partial index `idx_atlas_triage_investigations_pending … WHERE action_taken IS NULL` is exactly the "outstanding work" query it would corrupt.
+
+**Current log for scale:** 97 rows / 87 distinct params, May 11 → Jun 17 2026, every row actioned (61 `override_created`, 26 `flagged_wrong_family`, 10 `marked_unmappable`). No entries since Jun 17 — the feature is dormant, which is *why* this is P3 and not P2.
+
+**Fix idea:** add `'deferred'` to the `action_taken` CHECK (the schema is written DROP-then-ADD precisely so the allowed set can grow — see the existing comment in `scripts/supabase-atlas-triage-investigations-schema.sql`), stamp it when a param with an open investigation is deferred, and render it in `ACTION_COLOR` in [components/admin/AtlasAiLogPanel.tsx](../components/admin/AtlasAiLogPanel.tsx). Cheap. **Do not** widen the pending index to compensate — an explicitly-parked item is genuinely not pending, and once `deferred` is stampable the index becomes correct on its own.
+
+**Bigger question worth answering first:** the log is keyed to *investigations*, not to *decisions*. Un-deferring, re-deferring, and status changes on never-investigated params are all equally invisible. If the goal is a real decision history, the durable shape is an append-only log on the param (every status transition), with investigations as one event type — not more columns bolted onto the AI table. Decide which of the two you actually want before building the cheap fix.
+
+**Related smaller finding (same session):** deferred notes linger after their param leaves the queue — 80 note rows vs **68** still present in the live unmapped aggregate (12 stale). The UI showed 69, a 1-row delta I did not chase; likely Unicode/NFC normalization of Chinese param names when matching note → queue row (cf. [[triage-phase-3-hardening]]). Harmless today, but it means note-table counts and on-screen counts drift apart and neither is wrong.
+
+---
+
 ## Atlas unit-prefix backfill — remaining ~149 MFRs (top 20 done June 2, 2026)
 **Status:** PARTIAL — top 20 MFRs completed in Decision #217 session (100,948 products updated across 22 MFRs including 2 substring bonuses from AK matching 3PEAK + AMPAK)
 **Priority:** P2 — top 20 covered ~73% of affected products. Long tail of 149 MFRs (~36K products) remains. Each is small (<1K products each typically), so the per-MFR business impact is lower than the top 20.

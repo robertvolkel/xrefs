@@ -12,6 +12,7 @@ import {
 } from '@/lib/services/atlasMapper';
 import { invalidateDictOverrideCache } from '@/lib/services/atlasDictOverrides';
 import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
+import { recordParamDecision } from '@/lib/services/paramDecisionLog';
 
 /** GET /api/admin/atlas/dictionaries?familyId=B5  OR  ?category=Microcontrollers */
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -190,13 +191,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // read so existing-but-mismatched rows still join correctly.
     const canonicalParamName: string = (body.paramName as string).normalize('NFC').toLowerCase().trim();
 
-    // Deactivate any existing active override for this family+param_name
-    await supabase
+    // Deactivate any existing active override for this family+param_name.
+    // `.select('id')` so we know whether one existed: replacing a live
+    // mapping is an EDIT, creating the first one is an ACCEPT. Without this
+    // the decision log would report every edit as a brand-new accept.
+    const { data: superseded } = await supabase
       .from('atlas_dictionary_overrides')
       .update({ is_active: false, updated_at: new Date().toISOString() })
       .eq('family_id', body.familyId)
       .eq('param_name', canonicalParamName)
-      .eq('is_active', true);
+      .eq('is_active', true)
+      .select('id');
+    const hadPrior = Array.isArray(superseded) && superseded.length > 0;
 
     const insert: Record<string, unknown> = {
       family_id: body.familyId,
@@ -224,6 +230,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         { status: 500 },
       );
     }
+
+    // Append to the decision log. This is the path that covered only 65 of
+    // 2,032 accepted mappings before — everything not routed through the AI
+    // Investigate drawer was invisible.
+    await recordParamDecision({
+      paramName: canonicalParamName,
+      decision: hadPrior ? 'mapping_edited' : 'mapping_accepted',
+      decidedBy: user!.id,
+      familyId: body.familyId as string,
+      attributeId: (body.attributeId as string | undefined) ?? null,
+      attributeName: (body.attributeName as string | undefined) ?? null,
+      overrideId: data.id as string,
+      note: (body.changeReason as string | undefined) ?? null,
+      source: 'ui',
+    });
 
     invalidateDictOverrideCache(body.familyId);
     // Single-flight: DELETE L2 (~100-300ms), fire background recompute, return.

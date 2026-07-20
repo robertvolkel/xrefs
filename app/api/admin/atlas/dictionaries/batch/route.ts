@@ -33,6 +33,7 @@ import { createClient } from '@/lib/supabase/server';
 import { invalidateDictOverrideCache } from '@/lib/services/atlasDictOverrides';
 import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
 import { prepareBatchItems, type PreparedBatchItem } from '@/lib/services/triageBatchApprove';
+import { recordParamDecisions } from '@/lib/services/paramDecisionLog';
 
 interface InsertedRow {
   id: string;
@@ -222,6 +223,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           }
         }
       }),
+    );
+
+    // ── Decision log: ONE row per param, tagged with this batch ───────────
+    // Per-param rather than one row for the whole batch — collapsing here
+    // would break per-parameter history, which is the point of the log. The
+    // UI collapses them for display via batch_id instead. Only `approved`
+    // rows are logged: skipped/failed/deduped params were never decided.
+    await recordParamDecisions(
+      approved.map((a) => ({
+        paramName: a.paramName,
+        decision: 'mapping_accepted' as const,
+        decidedBy: user!.id,
+        familyId: a.familyId,
+        attributeId: (a.override.attributeId as string | null) ?? null,
+        attributeName: (a.override.attributeName as string | null) ?? null,
+        overrideId: a.override.id as string,
+        batchId,
+        note: changeReason,
+        source: 'batch' as const,
+      })),
     );
 
     // ── Exactly ONE invalidation pass at the very end ─────────────────────
