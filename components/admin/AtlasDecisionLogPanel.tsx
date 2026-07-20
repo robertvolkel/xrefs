@@ -26,7 +26,7 @@
  * as observed history — see the tooltip on the chip.
  */
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -66,21 +66,23 @@ import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import { useTranslation } from 'react-i18next';
 import { paramUid } from '@/lib/services/paramUid';
+// Client-safe module by design — paramDecisionLog imports createServiceClient
+// (SUPABASE_SERVICE_ROLE_KEY) and must never reach a client bundle.
+import {
+  isUndoableDecision,
+  undoRefusalReason,
+  type ParamDecisionType,
+} from '@/lib/services/paramDecisionTypes';
 
 const PAGE_SIZE = 50;
+/** How many history entries the drawer requests. Anything beyond this is
+ *  REPORTED, never silently dropped — see the drawer's footer. */
+const HISTORY_LIMIT = 100;
+/** Search is a per-keystroke refetch against a growing table; wait for a
+ *  pause before firing. */
+const SEARCH_DEBOUNCE_MS = 300;
 
-type DecisionType =
-  | 'mapping_accepted'
-  | 'mapping_edited'
-  | 'mapping_revoked'
-  | 'deferred'
-  | 'reopened'
-  | 'marked_unmappable'
-  | 'flagged_wrong_family'
-  | 'confirmed_in_family'
-  | 'note_added'
-  | 'note_cleared'
-  | 'flag_toggled';
+type DecisionType = ParamDecisionType;
 
 export interface DecisionItem {
   id: string;
@@ -122,35 +124,63 @@ const DECISION_META: Record<
   flag_toggled: { label: 'Bookmarked', color: 'default' },
 };
 
-/** Which decisions the undo endpoint will actually reverse. Kept in step with
- *  UNDOABLE_MAPPING / UNDOABLE_STATUS in the route — showing an enabled Undo
- *  button for something the server refuses is worse than showing none. */
-const UNDOABLE: ReadonlySet<DecisionType> = new Set<DecisionType>([
-  'mapping_accepted',
-  'deferred',
-  'marked_unmappable',
-  'flagged_wrong_family',
-  'confirmed_in_family',
-]);
-
-function undoRefusalReason(d: DecisionType): string | null {
-  if (UNDOABLE.has(d)) return null;
-  if (d === 'mapping_edited') {
-    return 'Undoing a re-map means restoring the previous mapping. Do that on the Triage page, where the sample values and suggestion are visible.';
-  }
-  if (d === 'mapping_revoked' || d === 'reopened') {
-    return 'This entry is itself an undo. Re-apply it from the Triage page.';
-  }
-  return 'This kind of entry has nothing to reverse.';
-}
-
-function formatTime(iso: string): string {
+/**
+ * The date this entry was decided.
+ *
+ * The YEAR is not optional here. This log spans months and holds
+ * reconstructed rows dated back to May, so dropping it renders a 2026 entry
+ * and a 2027 entry identically — on the one surface whose job is "find the
+ * decision I just made and act on it", where acting on the wrong row is the
+ * failure. The panel this replaced included the year; the rewrite lost it.
+ */
+export function formatTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
+    year: 'numeric',
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+/**
+ * Turn an undo response into ONE message that reports the whole arithmetic.
+ *
+ * Pure so it can be tested; previously this was inline and had two defects
+ * that only show up on a partial failure — the moment a user most needs to be
+ * told the truth. It quoted `skipped[0].reason` as if every skip shared it,
+ * and the log-write warning OVERWROTE the skip message instead of joining it,
+ * so "undid 3 of 5" silently became "the log entry could not be written" and
+ * the user concluded all five reverted.
+ */
+export function buildUndoMessage(
+  requested: number,
+  undone: number,
+  skipped: Array<{ reason: string }>,
+  logged: boolean,
+): { severity: 'success' | 'warning'; text: string } {
+  // Distinct reasons, each with its own count — heterogeneous skips are the
+  // normal case (one "already inactive", one "no such decision").
+  const byReason = new Map<string, number>();
+  for (const s of skipped) byReason.set(s.reason, (byReason.get(s.reason) ?? 0) + 1);
+  const reasons = [...byReason.entries()]
+    .map(([reason, n]) => (n > 1 ? `${n}× ${reason}` : reason))
+    .join('; ');
+
+  const parts: string[] = [];
+  if (undone === 0) parts.push('Nothing was undone.');
+  else if (skipped.length > 0) parts.push(`Undid ${undone} of ${requested}.`);
+  else parts.push(`Undid ${undone} ${undone === 1 ? 'decision' : 'decisions'}.`);
+
+  if (skipped.length > 0) parts.push(`${skipped.length} skipped — ${reasons}`);
+  // Appended, never substituted: this is additional bad news, not a
+  // replacement for the count above.
+  if (!logged) parts.push('The log entry for this undo could not be written — check the server logs.');
+
+  return {
+    severity: undone === 0 || skipped.length > 0 || !logged ? 'warning' : 'success',
+    text: parts.join(' '),
+  };
 }
 
 function isToday(iso: string): boolean {
@@ -212,19 +242,38 @@ export default function AtlasDecisionLogPanel() {
   const [search, setSearch] = useState('');
   const [quick, setQuick] = useState<'' | 'today' | 'week' | 'mine'>('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // TWO sets, not one. These previously shared a single `expanded` Set keyed
+  // by batch id and by `ev-<id>`, coupling table expansion to drawer
+  // expansion through one collision-prone namespace and one setter.
+  const [expandedBatches, setExpandedBatches] = useState<Set<string>>(new Set());
+  const [expandedEvidence, setExpandedEvidence] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<DecisionItem | null>(null);
   const [history, setHistory] = useState<DecisionItem[] | null>(null);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  // Debounced mirror of `search` — the value actually sent to the server.
+  const [searchDebounced, setSearchDebounced] = useState('');
+  // Monotonic request ids. A slower earlier response must never overwrite a
+  // newer one: typing "voltage" fires a request per keystroke, and if "vo"
+  // returns after "voltage" the table shows rows that don't match what is in
+  // the box, with nothing on screen to reveal it.
+  const listReqRef = useRef(0);
+  const detailReqRef = useRef(0);
   const [confirmUndo, setConfirmUndo] = useState<DecisionItem[] | null>(null);
   const [undoing, setUndoing] = useState(false);
   const [toast, setToast] = useState<{ severity: 'success' | 'warning' | 'error'; text: string } | null>(null);
+
+  // Debounce the search box so a 7-character word is one request, not seven.
+  useEffect(() => {
+    const id = setTimeout(() => setSearchDebounced(search), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(id);
+  }, [search]);
 
   const queryString = useMemo(() => {
     const sp = new URLSearchParams();
     sp.set('limit', String(PAGE_SIZE));
     sp.set('offset', String(page * PAGE_SIZE));
     if (decision) sp.set('decision', decision);
-    if (search.trim()) sp.set('param_name', search.trim());
+    if (searchDebounced.trim()) sp.set('param_name', searchDebounced.trim());
     if (quick === 'mine') sp.set('mine', '1');
     if (quick === 'today') {
       const d = new Date();
@@ -237,23 +286,28 @@ export default function AtlasDecisionLogPanel() {
       sp.set('since', d.toISOString());
     }
     return sp.toString();
-  }, [page, decision, search, quick]);
+  }, [page, decision, searchDebounced, quick]);
 
   const fetchRows = useCallback(async () => {
+    const reqId = ++listReqRef.current;
     setLoading(true);
     setError(null);
     try {
       const res = await fetch(`/api/admin/atlas/param-decisions?${queryString}`, { cache: 'no-store' });
       const json = await res.json();
+      // A newer request started while this one was in flight — drop this
+      // result rather than painting stale rows over fresher ones.
+      if (reqId !== listReqRef.current) return;
       if (!res.ok || !json.success) throw new Error(json.error || `Fetch failed (${res.status})`);
       setItems(json.items ?? []);
       setBatchCounts(json.batchCounts ?? {});
       setTotal(json.total ?? 0);
       setSelected(new Set());
     } catch (err) {
+      if (reqId !== listReqRef.current) return;
       setError(err instanceof Error ? err.message : 'Failed to load');
     } finally {
-      setLoading(false);
+      if (reqId === listReqRef.current) setLoading(false);
     }
   }, [queryString]);
 
@@ -261,18 +315,37 @@ export default function AtlasDecisionLogPanel() {
     fetchRows();
   }, [fetchRows]);
 
-  /** Per-parameter history — every decision ever made about one param. */
+  /** Per-parameter history — every decision ever made about THIS param. */
   const openDetail = useCallback(async (row: DecisionItem) => {
+    const reqId = ++detailReqRef.current;
     setDetail(row);
     setHistory(null);
+    setHistoryTotal(0);
     try {
-      const sp = new URLSearchParams({ param_name: row.paramKey, limit: '100', include_evidence: '1' });
+      const sp = new URLSearchParams({
+        param_name: row.paramKey,
+        // EXACT, not substring. Without this the drawer answered a different
+        // question than its own heading asked: on live data 95 of 823 params
+        // (12%) are a substring of another, so "aec-q" listed aec-q100
+        // compliance / aec-q100 compliant / aec-q101 as its own history, and
+        // "io" pooled 89 distinct parameters into one timeline.
+        param_exact: '1',
+        limit: String(HISTORY_LIMIT),
+        include_evidence: '1',
+      });
       const res = await fetch(`/api/admin/atlas/param-decisions?${sp}`, { cache: 'no-store' });
       const json = await res.json();
-      if (res.ok && json.success) setHistory(json.items ?? []);
-      else setHistory([]);
+      // Clicking a second row while the first is in flight must not pair
+      // row B's header with row A's history.
+      if (reqId !== detailReqRef.current) return;
+      if (res.ok && json.success) {
+        setHistory(json.items ?? []);
+        setHistoryTotal(json.total ?? 0);
+      } else {
+        setHistory([]);
+      }
     } catch {
-      setHistory([]);
+      if (reqId === detailReqRef.current) setHistory([]);
     }
   }, []);
 
@@ -287,29 +360,13 @@ export default function AtlasDecisionLogPanel() {
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || 'Undo failed');
 
-      const undone: number = json.undone ?? 0;
-      const skipped: Array<{ reason: string }> = json.skipped ?? [];
-      // Report the arithmetic. A partial undo that says "done" is how a user
-      // ends up believing something was reversed when it wasn't.
-      if (undone === 0) {
-        setToast({
-          severity: 'warning',
-          text: `Nothing was undone. ${skipped[0]?.reason ?? 'The selected entries had nothing to reverse.'}`,
-        });
-      } else if (skipped.length > 0) {
-        setToast({
-          severity: 'warning',
-          text: `Undid ${undone} of ${rows.length}. ${skipped.length} skipped — ${skipped[0].reason}`,
-        });
-      } else {
-        setToast({ severity: 'success', text: `Undid ${undone} ${undone === 1 ? 'decision' : 'decisions'}.` });
-      }
-      if (json.logged === false) {
-        setToast({
-          severity: 'warning',
-          text: `Undid ${undone}, but the log entry for it could not be written. Check the server logs.`,
-        });
-      }
+      // ONE message covering the whole outcome — count, every distinct skip
+      // reason, and any log-write failure. Built by a pure, tested function
+      // because the inline version dropped information exactly when the user
+      // most needed it (see buildUndoMessage).
+      setToast(
+        buildUndoMessage(rows.length, json.undone ?? 0, json.skipped ?? [], json.logged !== false),
+      );
       setConfirmUndo(null);
       await fetchRows();
     } catch (err) {
@@ -322,7 +379,7 @@ export default function AtlasDecisionLogPanel() {
   const groups = useMemo(() => groupRows(items, batchCounts), [items, batchCounts]);
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const selectedRows = useMemo(() => items.filter((r) => selected.has(r.id)), [items, selected]);
-  const selectedUndoable = useMemo(() => selectedRows.filter((r) => UNDOABLE.has(r.decision)), [selectedRows]);
+  const selectedUndoable = useMemo(() => selectedRows.filter((r) => isUndoableDecision(r.decision)), [selectedRows]);
 
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -332,8 +389,16 @@ export default function AtlasDecisionLogPanel() {
       return next;
     });
 
-  const toggleExpand = (id: string) =>
-    setExpanded((prev) => {
+  const toggleBatch = (id: string) =>
+    setExpandedBatches((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const toggleEvidence = (id: string) =>
+    setExpandedEvidence((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -545,14 +610,14 @@ export default function AtlasDecisionLogPanel() {
             ) : (
               groups.map((g) => {
                 if (g.kind === 'single') return renderRow(g.row);
-                const open = expanded.has(g.batchId);
-                const undoableInRun = g.rows.filter((r) => UNDOABLE.has(r.decision));
+                const open = expandedBatches.has(g.batchId);
+                const undoableInRun = g.rows.filter((r) => isUndoableDecision(r.decision));
                 const partial = g.rows.length < g.totalInBatch;
                 return (
                   // Fragment carries the key — a keyless fragment from a
                   // .map() makes React re-key the whole list on every render.
                   <Fragment key={g.batchId}>
-                    <TableRow hover sx={{ cursor: 'pointer' }} onClick={() => toggleExpand(g.batchId)}>
+                    <TableRow hover sx={{ cursor: 'pointer' }} onClick={() => toggleBatch(g.batchId)}>
                       <TableCell padding="checkbox">
                         {open ? <KeyboardArrowDownIcon fontSize="small" /> : <KeyboardArrowRightIcon fontSize="small" />}
                       </TableCell>
@@ -710,7 +775,9 @@ export default function AtlasDecisionLogPanel() {
               </Paper>
 
               <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                Everything decided about this parameter
+                {history && historyTotal > history.length
+                  ? `Decisions about this parameter — showing the ${history.length} most recent of ${historyTotal}`
+                  : 'Everything decided about this parameter'}
               </Typography>
               {history === null ? (
                 <CircularProgress size={18} />
@@ -750,10 +817,10 @@ export default function AtlasDecisionLogPanel() {
                       )}
                       {h.evidence && (
                         <>
-                          <Button size="small" onClick={() => toggleExpand(`ev-${h.id}`)} sx={{ mt: 0.5, px: 0 }}>
-                            {expanded.has(`ev-${h.id}`) ? 'Hide' : 'Show'} AI analysis
+                          <Button size="small" onClick={() => toggleEvidence(h.id)} sx={{ mt: 0.5, px: 0 }}>
+                            {expandedEvidence.has(h.id) ? 'Hide' : 'Show'} AI analysis
                           </Button>
-                          <Collapse in={expanded.has(`ev-${h.id}`)}>
+                          <Collapse in={expandedEvidence.has(h.id)}>
                             <Box
                               component="pre"
                               sx={{

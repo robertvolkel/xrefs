@@ -20,16 +20,18 @@
  *   confirmed_in_family                → clear the notes status (reopen)
  *   mapping_edited                     → refused. Undoing an edit means
  *                                        RESTORING the predecessor, which this
- *                                        route cannot do — see UNDOABLE_MAPPING.
+ *                                        route cannot do.
  *   mapping_revoked / reopened         → refused: these ARE undos. Re-applying
  *                                        a mapping needs the full Triage
  *                                        context, so we send the user there
  *                                        rather than guess.
  *
- * Keep this list in step with UNDOABLE_MAPPING / UNDOABLE_STATUS below. It
- * previously claimed `mapping_edited` was undoable while the code refused it —
- * the same "a rule in a comment is not a rule" trap that produced the misdated
- * revokes in the backfill.
+ * The list above is DESCRIPTIVE. The authority is
+ * lib/services/paramDecisionTypes.ts, which this route and the Decision Log
+ * panel both import — previously each kept its own hand-typed copy, and this
+ * header kept a third that claimed `mapping_edited` was undoable while the
+ * code refused it. Refusal wording comes from the shared `undoRefusalReason`
+ * so the panel's tooltip and this route's `skipped` reason cannot disagree.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -38,24 +40,11 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { invalidateDictOverrideCache } from '@/lib/services/atlasDictOverrides';
 import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
 import { recordParamDecisions, type ParamDecisionInput } from '@/lib/services/paramDecisionLog';
-
-// Only a FIRST mapping can be undone here.
-//
-// `mapping_edited` is deliberately excluded. Its override_id points at the
-// SUCCESSOR mapping (the "after" of the edit), and 172 of the 209 edits in
-// live data point at a mapping that is currently active. Deactivating it does
-// NOT restore the predecessor — the parameter would go from mapped-to-B to
-// not mapped at all, silently degrading ingest translation coverage while the
-// log honestly reported "revoked". Undoing an edit means RESTORING the prior
-// version, which needs the full Triage context (sample values, the AI
-// suggestion, product counts). So we refuse and point there.
-const UNDOABLE_MAPPING = new Set(['mapping_accepted']);
-const UNDOABLE_STATUS = new Set([
-  'deferred',
-  'marked_unmappable',
-  'flagged_wrong_family',
-  'confirmed_in_family',
-]);
+import {
+  isUndoableMapping,
+  isUndoableStatus,
+  undoRefusalReason,
+} from '@/lib/services/paramDecisionTypes';
 
 interface DecisionRow {
   id: string;
@@ -108,7 +97,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // ── Mapping undos: deactivate the overrides in one indexed update ────
-    const mappingRows = rows.filter((r) => UNDOABLE_MAPPING.has(r.decision) && r.override_id);
+    const mappingRows = rows.filter((r) => isUndoableMapping(r.decision) && r.override_id);
     if (mappingRows.length > 0) {
       const overrideIds = mappingRows.map((r) => r.override_id as string);
       // `.select()` is load-bearing, not decoration: `.eq('is_active', true)`
@@ -154,7 +143,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // ── Status undos: clear the notes row's status (back to open queue) ──
-    const statusRows = rows.filter((r) => UNDOABLE_STATUS.has(r.decision));
+    const statusRows = rows.filter((r) => isUndoableStatus(r.decision));
     for (const r of statusRows) {
       // Match how the notes route already handles clearing: keep a genuine
       // note (it's the engineer's reasoning) and null the status; delete the
@@ -218,16 +207,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     for (const r of rows) {
-      if (r.decision === 'mapping_edited') {
-        skipped.push({
-          id: r.id,
-          reason:
-            'undoing an edit means restoring the previous mapping — do that in Triage, ' +
-            'where the sample values and suggestion are visible',
-        });
-      } else if (!UNDOABLE_MAPPING.has(r.decision) && !UNDOABLE_STATUS.has(r.decision)) {
-        skipped.push({ id: r.id, reason: `"${r.decision}" is itself an undo — re-apply it from Triage` });
-      } else if (UNDOABLE_MAPPING.has(r.decision) && !r.override_id) {
+      // The refusal wording comes from the SAME helper the panel uses for its
+      // disabled-button tooltip, so the two can't tell the user different
+      // stories about why one decision won't reverse.
+      const refusal = undoRefusalReason(r.decision);
+      if (refusal) {
+        skipped.push({ id: r.id, reason: refusal });
+      } else if (isUndoableMapping(r.decision) && !r.override_id) {
         skipped.push({ id: r.id, reason: 'no linked mapping to revert' });
       }
     }

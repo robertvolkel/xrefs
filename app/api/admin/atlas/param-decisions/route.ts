@@ -70,6 +70,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // "Mine" quick-filter — resolved server-side so the client never has to
     // know its own user id.
     const mineOnly = sp.get('mine') === '1';
+    // Exact match on the canonical param name — used by the per-parameter
+    // history view. Substring is still the default for the search box.
+    const exactParam = sp.get('param_exact') === '1';
     // The AI DeepAnalysis blob is multi-KB per row. The list needs to know
     // only WHETHER one exists (that's what `hasEvidence` is for) — shipping
     // the payloads for a 500-row page to render a chip is megabytes of
@@ -91,20 +94,43 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (source) query = query.eq('source', source);
     if (batchId) query = query.eq('batch_id', batchId);
     if (decidedBy) query = query.eq('decided_by', decidedBy);
-    if (mineOnly && user) query = query.eq('decided_by', user.id);
+    // `user!.id`, not `mineOnly && user`. A guard that skips the filter when
+    // the user is missing turns "show only mine" into "show everyone's" with
+    // the chip still lit — a filter that silently never fires, which reads
+    // exactly like a filter that fired and matched nothing (Decision #263).
+    // requireAdmin guarantees a user here; if that ever stops being true this
+    // should fail loudly rather than widen the result set.
+    if (mineOnly) query = query.eq('decided_by', user!.id);
     if (since) query = query.gte('decided_at', since);
     if (hasEvidence) query = query.not('evidence', 'is', null);
     if (paramName) {
-      // Search the CANONICAL column only, with the term canonicalized the
-      // same way. param_name is by construction the NFC+lowercased form of
-      // param_name_display, so one column covers both — and searching a
-      // single column avoids PostgREST's .or() grammar, in which parentheses
-      // are SYNTAX. That bit: `.or(...ilike.%VR(V)%...)` silently returned 0
-      // rows for a param that plainly exists (14 of them), and a filter that
-      // silently matches nothing is indistinguishable from "no results".
-      // Parens are common in these names — VR(V), PD(W), RDS(ON) Max. (mΩ).
-      const needle = paramName.normalize('NFC').toLowerCase().trim().replace(/[%_]/g, (m) => `\\${m}`);
-      query = query.ilike('param_name', `%${needle}%`);
+      // Both modes hit the CANONICAL column only. param_name is by
+      // construction the NFC+lowercased form of param_name_display, so one
+      // column covers both — and searching a single column avoids PostgREST's
+      // .or() grammar, in which parentheses are SYNTAX. That bit:
+      // `.or(...ilike.%VR(V)%...)` silently returned 0 rows for a param that
+      // plainly exists (14 of them), and a filter that silently matches
+      // nothing is indistinguishable from "no results". Parens are common in
+      // these names — VR(V), PD(W), RDS(ON) Max. (mΩ).
+      const canonical = paramName.normalize('NFC').toLowerCase().trim();
+
+      if (exactParam) {
+        // EXACT is the mode the per-parameter history view needs, and it is
+        // not a nicety. Under substring matching, 95 of 823 distinct params
+        // (12%) are a substring of a different param — "aec-q" pulls in
+        // aec-q100 compliance / aec-q100 compliant / aec-q101, and "io"
+        // matches 89 distinct params. A drawer headed "everything decided
+        // about this parameter" that lists OTHER parameters' decisions is
+        // exactly the quietly-wrong output this whole feature exists to stop.
+        query = query.eq('param_name', canonical);
+      } else {
+        // Escape backslash FIRST — it is the escape character in the pattern
+        // that follows, so escaping the wildcards before it would double-
+        // escape their backslashes and a trailing backslash would leave a
+        // dangling escape. Order is load-bearing.
+        const needle = canonical.replace(/\\/g, '\\\\').replace(/[%_]/g, (m) => `\\${m}`);
+        query = query.ilike('param_name', `%${needle}%`);
+      }
     }
 
     // `id` is a REQUIRED tiebreak, not decoration. Ties on decided_at are
@@ -131,14 +157,27 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     // TRUE size of each batch represented on this page.
     //
-    // A Batch Accept writes one row per param (one live batch wrote 54) and
+    // A Batch Accept writes one row per param (one live batch wrote 55) and
     // the panel collapses them into a single expandable line. Counting the
     // rows visible on the page would understate that line whenever the batch
     // straddles a page boundary — "Batch accepted 50 params" for a batch of
-    // 54, which is exactly the kind of quietly-wrong number this feature is
-    // supposed to stop producing. One HEAD count per distinct batch; a page
-    // holds at most `limit` rows so this is bounded, and capped besides.
-    const batchIds = [...new Set(rows.map((r) => r.batch_id).filter((b): b is string => !!b))].slice(0, 25);
+    // 55, which is exactly the kind of quietly-wrong number this feature is
+    // supposed to stop producing.
+    //
+    // Counted for batches contributing 2+ ROWS TO THIS PAGE, which is both
+    // the correct trigger and a natural bound. Correct because the panel only
+    // collapses a run of 2+ (a lone row renders as itself and needs no
+    // count), so a 1-row appearance has nothing to label. Bounded because at
+    // most floor(limit/2) batches can contribute two rows each — 25 for a
+    // 50-row page, reached by arithmetic rather than by an arbitrary
+    // `.slice(0, 25)` that would silently drop the 26th and let its group
+    // fall back to the visible count: the precise understated number this
+    // block exists to prevent, reintroduced by the guard meant to bound it.
+    const rowsPerBatch = new Map<string, number>();
+    for (const r of rows) {
+      if (r.batch_id) rowsPerBatch.set(r.batch_id, (rowsPerBatch.get(r.batch_id) ?? 0) + 1);
+    }
+    const batchIds = [...rowsPerBatch.entries()].filter(([, n]) => n > 1).map(([id]) => id);
     const batchCounts: Record<string, number> = {};
     await Promise.all(
       batchIds.map(async (id) => {

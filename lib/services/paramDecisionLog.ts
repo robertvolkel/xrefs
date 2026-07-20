@@ -35,30 +35,25 @@ import { createServiceClient } from '@/lib/supabase/service';
 /** Matches the backfill script's chunk size. */
 const INSERT_CHUNK_SIZE = 500;
 
-/** Every decision type the log understands. Mirrors the CHECK constraint
- *  in the schema — keep the two in lockstep (the schema's constraint is
- *  written DROP-then-ADD precisely so this set can grow). */
-export type ParamDecisionType =
-  | 'mapping_accepted'
-  | 'mapping_edited'
-  | 'mapping_revoked'
-  | 'deferred'
-  | 'reopened'
-  | 'marked_unmappable'
-  | 'flagged_wrong_family'
-  | 'confirmed_in_family'
-  | 'note_added'
-  /** An engineer's written rationale was erased. Distinct from `reopened`
-   *  (which is about a STATUS returning to the queue) because destroying the
-   *  reasoning behind a decision is precisely the loss this log exists to
-   *  prevent — it must not be the one event that leaves no trace. */
-  | 'note_cleared'
-  | 'flag_toggled';
+// The vocabulary and the pure rules live in the CLIENT-SAFE sibling module,
+// because this one imports createServiceClient (SUPABASE_SERVICE_ROLE_KEY)
+// and the Decision Log panel needs the vocabulary. Re-exported so server
+// callers can keep importing everything from one place.
+export {
+  UNDOABLE_MAPPING_DECISIONS,
+  UNDOABLE_STATUS_DECISIONS,
+  isUndoableDecision,
+  undoRefusalReason,
+  canonicalizeParamName,
+  type ParamDecisionType,
+  type ParamDecisionSource,
+} from './paramDecisionTypes';
 
-/** How the decision was made. 'backfill' marks a row RECONSTRUCTED from
- *  pre-existing records rather than observed as it happened — the UI shows
- *  it distinctly so reconstructed history never reads as observed history. */
-export type ParamDecisionSource = 'ui' | 'batch' | 'script' | 'backfill';
+import {
+  canonicalizeParamName,
+  type ParamDecisionType,
+  type ParamDecisionSource,
+} from './paramDecisionTypes';
 
 export interface ParamDecisionInput {
   /** The vendor attribute name in WHATEVER form the caller has — this
@@ -99,19 +94,6 @@ export interface ParamDecisionInput {
   /** ISO timestamp. Defaults to now. Set explicitly by the backfill so a
    *  reconstructed decision carries its ORIGINAL date, not today's. */
   decidedAt?: string;
-}
-
-/**
- * The canonical join key for a parameter across the decision log.
- *
- * Must stay byte-identical to the transform in
- * app/api/admin/atlas/dictionaries/route.ts (`.normalize('NFC')
- * .toLowerCase().trim()`), which is what atlas_dictionary_overrides
- * already stores. If these two ever diverge, per-param history splits
- * silently — there is a unit test pinning them together.
- */
-export function canonicalizeParamName(name: string): string {
-  return name.normalize('NFC').toLowerCase().trim();
 }
 
 /** Shape actually written to Postgres (snake_case column names). */
