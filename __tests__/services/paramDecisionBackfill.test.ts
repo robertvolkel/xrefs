@@ -71,6 +71,53 @@ describe('backfill: deactivated override — edit vs revoke', () => {
     // Naive impl: edited=0, revoked=2 → both assertions above go red.
   });
 
+  /**
+   * REGRESSION: a param remapped several times.
+   *
+   * The first implementation pointed every dead row at the first ACTIVE row,
+   * so v1/v2/v3 all resolved to v4 — collapsing three edits made on three
+   * different days into three identical events sharing v4's timestamp. On
+   * live data that produced 33 colliding keys (70 rows) and the insert was
+   * rejected by the unique index. The dates were wrong too, which is worse:
+   * it would have silently misdated real history.
+   */
+  it('a param edited three times yields three DISTINCT edits, correctly dated', () => {
+    const { counts, decisions } = classifyOverrideRows([
+      row({ id: 'v1', created_at: '2026-05-01T09:00:00Z', is_active: false }),
+      row({ id: 'v2', created_at: '2026-05-02T09:00:00Z', is_active: false }),
+      row({ id: 'v3', created_at: '2026-05-03T09:00:00Z', is_active: false }),
+      row({ id: 'v4', created_at: '2026-05-04T09:00:00Z', is_active: true }),
+    ]);
+
+    expect(counts.edited).toBe(3);
+    expect(counts.revoked).toBe(0);
+
+    // Each edit is dated when it actually happened — the successor's birth.
+    const editDates = decisions
+      .filter((d) => d.decision === 'mapping_edited')
+      .map((d) => d.decidedAt)
+      .sort();
+    expect(editDates).toEqual([
+      '2026-05-02T09:00:00Z',
+      '2026-05-03T09:00:00Z',
+      '2026-05-04T09:00:00Z',
+    ]);
+
+    // And no two decisions collide on the log's unique key.
+    const keys = decisions.map((d) => `${d.paramName}|${d.decision}|${d.decidedAt}`);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it('a chain that ends dead: earlier rows are edits, the LAST is the revoke', () => {
+    const { counts } = classifyOverrideRows([
+      row({ id: 'v1', created_at: '2026-05-01T09:00:00Z', is_active: false }),
+      row({ id: 'v2', created_at: '2026-05-02T09:00:00Z', is_active: false }),
+    ]);
+    // v1 was replaced by v2 (an edit); v2 had nothing after it (a revoke).
+    expect(counts.edited).toBe(1);
+    expect(counts.revoked).toBe(1);
+  });
+
   it('does not treat an active row on a DIFFERENT family as a replacement', () => {
     // Same param name, different family = a different mapping entirely.
     // Ignoring family here would silently downgrade real revokes to edits.

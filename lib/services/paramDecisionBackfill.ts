@@ -83,22 +83,23 @@ export function classifyOverrideRows(rows: OverrideRow[]): {
   decisions: ReconstructedDecision[];
   counts: { accepted: number; edited: number; revoked: number };
 } {
-  // Every key that currently has a live mapping.
-  const activeKeys = new Set(
-    rows.filter((r) => r.is_active).map((r) => canonicalKey(r.param_name, r.family_id)),
-  );
-
-  // Successor lookup: for a dead row, the oldest ACTIVE row on the same key
-  // that was created after it. That row's birth is this row's death.
-  const activeByKey = new Map<string, OverrideRow[]>();
+  // Successor lookup: for a dead row, the NEXT row on the same key by
+  // created_at — active or not.
+  //
+  // It must be the next row chronologically, NOT the first active one. A
+  // param mapped four times (v1→v2→v3→v4) has three dead rows; pointing them
+  // all at the surviving v4 collapses three distinct edits made on three
+  // different days into three identical events sharing v4's timestamp. That
+  // is both wrong history AND a duplicate-key collision — which is exactly
+  // how this bug surfaced (33 colliding keys / 70 rows on live data).
+  const byKey = new Map<string, OverrideRow[]>();
   for (const r of rows) {
-    if (!r.is_active) continue;
     const k = canonicalKey(r.param_name, r.family_id);
-    const arr = activeByKey.get(k) ?? [];
+    const arr = byKey.get(k) ?? [];
     arr.push(r);
-    activeByKey.set(k, arr);
+    byKey.set(k, arr);
   }
-  for (const arr of activeByKey.values()) {
+  for (const arr of byKey.values()) {
     arr.sort((a, b) => a.created_at.localeCompare(b.created_at));
   }
 
@@ -125,11 +126,12 @@ export function classifyOverrideRows(rows: OverrideRow[]): {
 
     if (r.is_active) continue;
 
-    // 2. What ended it.
+    // 2. What ended it — the next mapping created on the same key.
+    // Nothing after it ⇒ nothing replaced it ⇒ a genuine revoke.
     const key = canonicalKey(r.param_name, r.family_id);
-    const successor = (activeByKey.get(key) ?? []).find((a) => a.created_at > r.created_at);
+    const successor = (byKey.get(key) ?? []).find((a) => a.created_at > r.created_at);
 
-    if (activeKeys.has(key) && successor) {
+    if (successor) {
       decisions.push({
         paramName: r.param_name,
         decision: 'mapping_edited',
