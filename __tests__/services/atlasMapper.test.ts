@@ -1,4 +1,6 @@
-import { reclassifyByParameterSignals, mapAtlasModel, type AtlasModel } from '@/lib/services/atlasMapper';
+import { reclassifyByParameterSignals, mapAtlasModel, atlasParamDictionaries, type AtlasModel, type AtlasParamMapping } from '@/lib/services/atlasMapper';
+import { readFileSync } from 'fs';
+import path from 'path';
 
 const B1 = { category: 'Diodes' as const, subcategory: 'Rectifier Diode', familyId: 'B1' };
 
@@ -38,6 +40,87 @@ describe('gaia preferredSuffix — preference, not hard drop', () => {
     const trr = parameters.filter((p) => p.parameterId === 'trr');
     expect(trr).toHaveLength(1);
     expect(trr[0].value).toContain('75'); // Typ wins; Max not added
+  });
+});
+
+describe('gaia params honor the standard dictionary / DB overrides (unification fix)', () => {
+  // At ingest, loadAndApplyDictOverrides merges each accepted mapping into the family
+  // dict keyed on the FULL lowered raw name (e.g. 'gaia-forward_on_voltage-max').
+  // Before the fix the gaia branch never consulted the family dict, so those accepts
+  // were inert. We inject into the module dict here exactly as the override-merge does.
+  const saved: Array<[string, AtlasParamMapping | undefined]> = [];
+  const inject = (key: string, mapping: AtlasParamMapping) => {
+    saved.push([key, atlasParamDictionaries.B1[key]]);
+    atlasParamDictionaries.B1[key] = mapping;
+  };
+  afterEach(() => {
+    // Restore prior state (delete if the key was absent) so a key that ever collides
+    // with a real dict entry can't corrupt later tests.
+    for (const [k, prev] of saved) {
+      if (prev === undefined) delete atlasParamDictionaries.B1[k];
+      else atlasParamDictionaries.B1[k] = prev;
+    }
+    saved.length = 0;
+  });
+
+  it('honors a full-name override on an otherwise-unmapped gaia param', () => {
+    // forward_on_voltage is NOT in the gaia dict → today it falls to the humanized
+    // fallback (parameterId = the raw stem). An accepted override must map it to vf.
+    inject('gaia-forward_on_voltage-max', { attributeId: 'vf', attributeName: 'Forward Voltage', unit: 'V', sortOrder: 5 });
+    const { parameters } = mapAtlasModel(
+      b1Model([{ name: 'gaia-forward_on_voltage-Max', value: '1.2 V' }]), 'TESTMFR');
+    expect(parameters.find((p) => p.parameterId === 'vf')?.value).toContain('1.2');
+    expect(parameters.find((p) => p.parameterId === 'forward_on_voltage')).toBeUndefined();
+  });
+
+  it('a full-name override BEATS the gaia stem dict', () => {
+    // reverse_recovery_time IS in the B1 gaia dict → trr. The accepted override wins.
+    inject('gaia-reverse_recovery_time-max', { attributeId: 'vf', attributeName: 'Overridden', unit: 'V', sortOrder: 5 });
+    const { parameters } = mapAtlasModel(
+      b1Model([{ name: 'gaia-reverse_recovery_time-Max', value: '160 ns' }]), 'TESTMFR');
+    expect(parameters.find((p) => p.parameterId === 'vf')).toBeDefined();
+    expect(parameters.find((p) => p.parameterId === 'trr')).toBeUndefined();
+  });
+
+  it('regression: a gaia param with NO override still maps via the gaia stem dict', () => {
+    const { parameters } = mapAtlasModel(
+      b1Model([{ name: 'gaia-reverse_recovery_time-Max', value: '160 ns' }]), 'TESTMFR');
+    expect(parameters.find((p) => p.parameterId === 'trr')?.value).toContain('160');
+  });
+
+  it('an accept is honored even when the gaia stem is in GAIA_SKIP_STEMS', () => {
+    // 'height' is a GAIA_SKIP_STEMS metadata stem — normally dropped before mapping.
+    // An accept on it must still take effect (standard params let a dict entry beat
+    // the skip list via hasDictMapping).
+    inject('gaia-height-max', { attributeId: 'component_height', attributeName: 'Height', unit: 'mm', sortOrder: 5 });
+    const { parameters } = mapAtlasModel(
+      b1Model([{ name: 'gaia-height-Max', value: '2.5 mm' }]), 'TESTMFR');
+    expect(parameters.find((p) => p.parameterId === 'component_height')?.value).toContain('2.5');
+  });
+
+  it('an accept to input_voltage_range gets the same range normalization as a standard param', () => {
+    inject('gaia-supply_voltage-max', { attributeId: 'input_voltage_range', attributeName: 'Input Voltage Range', unit: 'V', sortOrder: 5 });
+    const { parameters } = mapAtlasModel(
+      b1Model([{ name: 'gaia-supply_voltage-Max', value: '2.7~5.5 V' }]), 'TESTMFR');
+    expect(parameters.find((p) => p.parameterId === 'input_voltage_range')?.value).toBe('2.7 V to 5.5 V');
+  });
+});
+
+describe('gaia mapper: scripts/atlas-ingest.mjs mirrors atlasMapper.ts (lockstep guard)', () => {
+  // The real write path is atlas-ingest.mjs mapModel — atlasMapper.ts mapAtlasModel (which
+  // the tests above exercise) has NO runtime callers. Nothing else enforces the two gaia
+  // branches stay identical, so pin the load-bearing invariants of the ingest copy here:
+  // a drift would re-break ingest with every test above still green.
+  const mjs = readFileSync(path.resolve(__dirname, '../../scripts/atlas-ingest.mjs'), 'utf8');
+
+  it('honors a full-name accept over both the gaia stem dict AND GAIA_SKIP_STEMS', () => {
+    expect(mjs).toMatch(/const overrideMapping = familyDict\?\.\[lowerName\]/);
+    expect(mjs).toMatch(/if \(!overrideMapping && GAIA_SKIP_STEMS\.has\(gaia\.stem\)\) continue/);
+    expect(mjs).toMatch(/gaiaMapping = overrideMapping \?\? gaiaDict\?\.\[gaia\.stem\]/);
+  });
+
+  it('normalizes input_voltage_range in the gaia branch like the standard branch', () => {
+    expect(mjs).toMatch(/input_voltage_range.*normalizeVoltageRange/);
   });
 });
 
