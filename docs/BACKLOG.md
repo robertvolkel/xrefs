@@ -4,6 +4,79 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+# ⚠️ 1,833 of 2,034 active mappings contend for a slot only ONE can hold (P1)
+
+**Found by Rob's manual QA run, 21 July 2026 — no automated test could have caught
+this; it needs real data with two spellings competing.**
+
+## What happened
+
+Rob accepted `Rdson@ 10V(mΩ) Max` → `rds_on` for B5 (Good-Ark). The backfill
+reported "44 changed". Those 44 parts **lost** data:
+
+```
+AGMP00504M — source carries  Typ = 4.3   and   Max = 6.0
+  rds_on           = 4.3      ← the TYP value won
+  rdson_4_5v_m_max = 8.0      ← still raw (that spelling is unmapped)
+  the 10V Max figure 6.0      ← GONE. On no record, anywhere.
+```
+
+Before the mapping, `Rdson@ 10V(mΩ) Max` was unmapped, so 6.0 was stored as a raw
+attribute and was retrievable. After it, the spelling resolves to `rds_on` — which
+the *Typ* spelling already claimed (position 7 vs 8 in the vendor file) — so the
+mapper's dedup drops it. **Accepting a mapping deleted information.**
+
+## The blast radius (measured against the live table)
+
+| | |
+| --- | --- |
+| active overrides | 2,034 |
+| (family, attribute) slots claimed by >1 spelling | **248** |
+| overrides caught in a contest | **1,833 (90%)** |
+
+`B5::rds_on` alone has **53** competing spellings, and they are not the same
+measurement: `rds(on)(mω)10v` · `rds(on)mω(vgs=4.5v)max` · `rds(on)_typ @ vgs = 10v
+(mω)` — different gate voltages, typical vs maximum, collapsed into one field.
+Others: `B1::io_avg` 68, `B1::ir_leakage` 51, `B1::vf` 49, `B1::ifsm` 45.
+
+## Why it matters beyond the data loss
+
+**Which spelling wins is decided by the order parameters happen to appear in the
+vendor's file.** Nobody decided it. Two consequences:
+
+1. **`rds_on` currently holds TYPICAL values where MAXIMUM was also available.** It
+   is a `threshold` rule at **weight 9** — so a part is matched on its typical
+   on-resistance while its datasheet guarantee is worse. Parts score better than
+   they should.
+2. **Any future accept can silently delete data** whenever the target slot is taken.
+
+## Open design questions — need a human, do NOT quietly pick one
+
+- Which value should win when several spellings map to one attribute? (Max for a
+  `threshold` rule is the intuitive answer, but it is a domain call, and "first in
+  file" is certainly not it.)
+- Should losers be kept as raw attributes rather than discarded? That alone would
+  turn this from data loss into redundancy.
+- Should the Triage UI warn "this attribute is already mapped by N other spellings
+  for this family" *before* an accept?
+
+## Also spotted, separate issue, needs domain eyes
+
+`Sensors::operating_temp` has 47 spellings including `系统延时` (system delay) and
+`休眠工作电流` (standby current). Those do not look like operating temperature.
+Mapping *correctness* is a different problem from the contest above, and only an
+engineer who knows the parts can rule on it.
+
+## Immediate state — UNRESOLVED as of 21 July 2026
+
+The `rdson@ 10v(mω) max` → `rds_on` mapping for B5 is **ACTIVE**, and the real
+backfill has been applied, so **44 Good-Ark parts are currently missing their 10V
+maximum on-resistance figure**. Recommended: revoke that mapping in Triage (it
+strictly lost information) and re-run `npm run atlas:backfill -- --mfr Good-Ark`
+to restore the raw attribute. Awaiting Rob's decision.
+
+---
+
 # Parameter mapping — found by the July 2026 test build-out (Decision #277)
 
 Both items below were surfaced by *writing tests*, not by a report. Both are

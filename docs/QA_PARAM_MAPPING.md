@@ -343,3 +343,46 @@ Being explicit, so nobody reads a clean run as more than it is:
 Send me: the scenario and step number, what you expected, what you actually saw, and
 the recorded numbers from the steps before it. The numbers are what make it diagnosable
 — without them a report is a description, and I'll be guessing.
+
+---
+
+# Run log
+
+## 21 July 2026 — Rob, on localhost against the live database
+
+**6 of 9 scenarios passed. Scenario I passed against a prediction made before the
+accept, which is the strongest result available here.**
+
+| Scenario | Result |
+| --- | --- |
+| A — Decision Log reads | ✅ pass. Reload gives no visible confirmation (correct, but logged as a P3) |
+| B — one parameter's history | ✅ verified server-side: substring `io` → 131 rows / 119 params; exact → 1 |
+| C — undo a mapping | ✅ pass (performed as Scenario I step 7) |
+| D — undo the same decision twice | ✅ pass. "Nothing was undone. 1 skipped — mapping was already inactive". No phantom row |
+| F — refusals | ✅ pass. Tooltip, disabled state and server reason all derive from one function |
+| I — does an accepted mapping get used | ✅ **exact pass** — see below |
+| E, G, H | not yet run |
+
+**Scenario I, in full.** Predicted *before* the accept: 44 Good-Ark parts affected.
+
+| | before | after accept | after undo |
+| --- | --- | --- | --- |
+| overrides loaded | 2,033 | 2,034 | 2,033 |
+| unique mapped keys | 3,199 | 3,200 | 3,199 |
+| stale entries | 2 | 3 | 2 |
+| Good-Ark backfill | 0 | **44** | 0 |
+
+Negative control (the Kiwi batch, a different manufacturer) read `171 → 169`
+throughout and never moved. The decision was logged live, 92ms after the override
+was written — **the first non-backfill entry that table has ever held.**
+
+**What the run found that the tests could not:** accepting a mapping onto an
+attribute another spelling already owns *deletes* data. See the P1 item at the top
+of [BACKLOG.md](BACKLOG.md). This is why the checklist exists.
+
+**Two mistakes I made during the run, recorded so the numbers above can be trusted:**
+1. I reported "2 removals = WRONG" without modelling that a parameter can legitimately
+   be accepted again. It was two clean accept→remove cycles. False alarm, retracted.
+2. I queried `atlas_products` without `.order()` and lost rows across pages —
+   reporting 12 parts "missing" that were present. This is the documented PostgREST
+   trap, and the code comment warning about it *names Good-Ark as the example*.
