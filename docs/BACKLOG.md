@@ -61,6 +61,23 @@ because the golden encodes `NaN` explicitly (`JSON.stringify(NaN)` is `null`, so
 a plain dump would have recorded the bug as normal). Current behaviour is pinned
 by a test named `records a KNOWN DEFECT`, so the fix will show as a visible diff.
 
+## Decision Log "Reload from server" gives no confirmation it ran (P3) — cosmetic
+
+Found by Rob during the Scenario A manual pass (20 July 2026). Clicking reload
+spins a 16px spinner for ~1s and the page does not visibly change.
+
+**The behaviour is CORRECT** — verified three ways: the click fires a real
+request (server log, 200), the panel deliberately keeps rows on screen during a
+refresh (`loading && items.length === 0` gates the placeholder, so a reload does
+not flicker), and there was genuinely nothing new to fetch. Not a bug.
+
+**But "nothing changed" and "silently broken" look identical to the user**, which
+is exactly how it read from Rob's side. Fix: a `Last updated HH:MM` line beside
+the button, so a reload always produces a visible change even when the data is
+unchanged. Small, one component ([AtlasDecisionLogPanel.tsx](../components/admin/AtlasDecisionLogPanel.tsx)).
+
+Deferred by Rob mid-QA — not blocking the checklist.
+
 ---
 
 # Chat Flow — the agent ↔ user conversation
