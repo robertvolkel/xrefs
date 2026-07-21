@@ -4,6 +4,65 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+# Parameter mapping — found by the July 2026 test build-out (Decision #277)
+
+Both items below were surfaced by *writing tests*, not by a report. Both are
+**evidenced and measured**, not speculative, and both were deliberately NOT
+fixed in the same branch that added the tests: changing mapper output is a
+separate change that deserves its own before/after.
+
+## The two copies of the override-merge rule disagree (P2) — LATENT, not live
+
+The logic that decides whether an accepted mapping takes effect exists twice:
+`applyDictOverrides` in [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts)
+(what the admin Dictionary panel renders from) and the inline merge inside
+`loadAndApplyDictOverrides` in [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs)
+(what ingest actually applies). Nothing said they differed. Measured: of 10
+override shapes, **5 agree and 5 diverge**.
+
+The divergences:
+- **MODIFY with no `unit` field** — ingest keeps the base unit; the admin view
+  drops it. Losing a unit is the Decision #217 failure class.
+- **MODIFY onto an entry with no `sortOrder`** — ingest defaults to 50; the
+  admin view leaves it unset.
+- **Non-canonical `param_name` (upper-case or untrimmed), for ADD and REMOVE** —
+  ingest lower-cases and trims the key; the admin view uses it raw, so an ADD
+  creates a *second* entry and a REMOVE removes nothing. The dictionary on
+  screen would not be the dictionary being applied.
+
+**Why it is not firing today** — measured against the live table on 20 July 2026:
+2,250 override rows, 2,032 active, **`add` 2,032 · `modify` 0 · `remove` 0**, and
+**0 non-canonical names**. The only shape in production is a canonical-name
+`add`, and on that shape the two agree. It fires the first time someone uses a
+`modify` or `remove` override, or the first row appears whose name isn't already
+lower-cased and trimmed.
+
+Both halves are pinned in
+[__tests__/services/atlasIngestMapper.test.ts](../__tests__/services/atlasIngestMapper.test.ts)
+— the agreement so it can't quietly break, the divergences so they can't quietly
+grow. **Fix direction:** one implementation, imported by both. Blocked on the
+`.ts` / `.mjs` boundary (the CLI is standalone by design), so the realistic
+options are a shared `.mjs` or generating one from the other.
+
+## A range value yields `numericValue: NaN` instead of `null` (P3)
+
+`storage_temperature` = `"–55 to 125 ℃"` — a RANGE written with an EN DASH — is
+parsed to `NaN`. Measured breadth: **3 occurrences in 365,726 mapped parameters**
+across the first 40 source files (0.0008%), all temperature ranges.
+
+Bounded but not harmless. On the way to the database `NaN` serializes to `null`,
+so the STORED value equals "no number". In process it is *worse* than null:
+`typeof NaN === 'number'`, so a check for "do we have a numeric value" answers
+yes while every comparison against it is false — a threshold rule would silently
+never match rather than treat the data as missing.
+
+Found by the golden file on its first run against a new fixture, and only
+because the golden encodes `NaN` explicitly (`JSON.stringify(NaN)` is `null`, so
+a plain dump would have recorded the bug as normal). Current behaviour is pinned
+by a test named `records a KNOWN DEFECT`, so the fix will show as a visible diff.
+
+---
+
 # Chat Flow — the agent ↔ user conversation
 
 > **The map for everything conversational**: how the agent reads what you type, what it asks back,

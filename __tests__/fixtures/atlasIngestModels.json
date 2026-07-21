@@ -1,0 +1,1302 @@
+[
+  {
+    "key": "b4_tvs",
+    "why": "TVS diode — variant family, classified from description",
+    "mfr": "Semiware 赛米微尔",
+    "sourceFile": "mfr_104_Semiware_赛米微尔_params.json",
+    "model": {
+      "componentName": "SVF40B12",
+      "datasheetUrl": "https://atlas.eefcdn.com/partdatasheet/700075/700075_37752838_1757294162043.pdf",
+      "description": null,
+      "category": {
+        "c1": {
+          "name": "Circuit Protection"
+        },
+        "c2": {
+          "name": "Transient Voltage Suppressors (TVS)"
+        },
+        "c3": {
+          "name": "TVS Diodes"
+        }
+      },
+      "parameters": [
+        {
+          "name": "Status",
+          "value": "New"
+        },
+        {
+          "name": "Polar",
+          "value": "Bi"
+        },
+        {
+          "name": "Vrwm [Max] (V)",
+          "value": "12.00"
+        },
+        {
+          "name": "Vbr [Min] (V)",
+          "value": "13.30"
+        },
+        {
+          "name": "Vbr [Max] (V)",
+          "value": "14.70"
+        },
+        {
+          "name": "Vc @Ipp [Max] (V)",
+          "value": "19.90"
+        },
+        {
+          "name": "Ipp [Max] (A)",
+          "value": "20.10"
+        },
+        {
+          "name": "Ppp [Min] (W)",
+          "value": "400"
+        },
+        {
+          "name": "Tj (°C)",
+          "value": "-55~+150"
+        },
+        {
+          "name": "Package",
+          "value": "SOD-123FL"
+        },
+        {
+          "name": "description",
+          "value": "-"
+        }
+      ]
+    }
+  },
+  {
+    "key": "b5_mosfet",
+    "why": "MOSFET — the richest parameter set",
+    "mfr": "Semiware 赛米微尔",
+    "sourceFile": "mfr_104_Semiware_赛米微尔_params.json",
+    "model": {
+      "componentName": "SNMD7N65",
+      "datasheetUrl": "https://atlas.eefcdn.com/partdatasheet/700075/700075_92918460_1757294157440.pdf",
+      "description": null,
+      "category": {
+        "c1": {
+          "name": "Discrete Semiconductor Products"
+        },
+        "c2": {
+          "name": "Transistors"
+        },
+        "c3": {
+          "name": "FETs, MOSFETs"
+        }
+      },
+      "parameters": [
+        {
+          "name": "Status",
+          "value": "Active"
+        },
+        {
+          "name": "Channel type",
+          "value": "N"
+        },
+        {
+          "name": "VDSS [max] (V)",
+          "value": "650"
+        },
+        {
+          "name": "VGS [max] (V)",
+          "value": "30"
+        },
+        {
+          "name": "RDSon@VGS=10V [max] (Ω)",
+          "value": "1.300"
+        },
+        {
+          "name": "RDSon@VGS=4.5V [max] (Ω)",
+          "value": "0.000"
+        },
+        {
+          "name": "ID [max] (A)",
+          "value": "7.0"
+        },
+        {
+          "name": "Tj (°C)",
+          "value": "-55~+150"
+        },
+        {
+          "name": "Package",
+          "value": "TO-252"
+        },
+        {
+          "name": "description",
+          "value": "-"
+        }
+      ]
+    }
+  },
+  {
+    "key": "b1_rectifier",
+    "why": "rectifier diode — plain base family",
+    "mfr": "Semiware 赛米微尔",
+    "sourceFile": "mfr_104_Semiware_赛米微尔_params.json",
+    "model": {
+      "componentName": "KBP2005",
+      "datasheetUrl": "https://atlas.eefcdn.com/partdatasheet/700075/700075_80294233_1757294147128.pdf",
+      "description": null,
+      "category": {
+        "c1": {
+          "name": "Discrete Semiconductor Products"
+        },
+        "c2": {
+          "name": "Diodes"
+        },
+        "c3": {
+          "name": "Bridge Rectifiers"
+        }
+      },
+      "parameters": [
+        {
+          "name": "Status",
+          "value": "Active"
+        },
+        {
+          "name": "VF [Max] (V)",
+          "value": "1.000"
+        },
+        {
+          "name": "VRRM [max] (V)",
+          "value": "50"
+        },
+        {
+          "name": "VRMS [max] (V)",
+          "value": "9.0"
+        },
+        {
+          "name": "IF(AV) [max] (A)",
+          "value": "2.00"
+        },
+        {
+          "name": "IFSM [max] (A)",
+          "value": "60.0"
+        },
+        {
+          "name": "Tj (°C)",
+          "value": "-55~+150"
+        },
+        {
+          "name": "Package",
+          "value": "KBP"
+        },
+        {
+          "name": "description",
+          "value": "-"
+        }
+      ]
+    }
+  },
+  {
+    "key": "c6_vref",
+    "why": "voltage reference — IC path, AEC via qualifications",
+    "mfr": "MICRONE 微盟",
+    "sourceFile": "mfr_120_MICRONE_微盟_params.json",
+    "model": {
+      "componentName": "ME431AXG",
+      "datasheetUrl": "https://atlas.eefcdn.com/partdatasheet/700091/700091_36197907_1757294165512.pdf",
+      "description": "Adjustable precision shunt regulator with 2.5V reference voltage, 0.4% or 1.0% tolerance, 40V cathode voltage rating, low dynamic output resistance of 0.2Ω typical, and operating temperature range from -40°C to 150°C.",
+      "category": {
+        "c1": {
+          "name": "Integrated Circuits (ICs)"
+        },
+        "c2": {
+          "name": "Power Management (PMIC)"
+        },
+        "c3": {
+          "name": "Voltage Reference"
+        }
+      },
+      "parameters": [
+        {
+          "name": "安装类型",
+          "value": "SMT"
+        },
+        {
+          "name": "品牌",
+          "value": "MICRONE"
+        },
+        {
+          "name": "阴极电流",
+          "value": "1mA~100mA"
+        },
+        {
+          "name": "初始精度(误差)",
+          "value": "±0.4%"
+        },
+        {
+          "name": "原始制造商",
+          "value": "Nanjing Micro One Electronics Inc"
+        },
+        {
+          "name": "输出电压(最大值)",
+          "value": "36V"
+        },
+        {
+          "name": "输入电压",
+          "value": "-"
+        },
+        {
+          "name": "长x宽/尺寸",
+          "value": "2.90 x 1.30mm"
+        },
+        {
+          "name": "封装/外壳",
+          "value": "SOT23"
+        },
+        {
+          "name": "输出类型",
+          "value": "Adjustable"
+        },
+        {
+          "name": "元件生命周期",
+          "value": "Active"
+        },
+        {
+          "name": "工作温度",
+          "value": "-40℃~+125℃"
+        },
+        {
+          "name": "参考源类型",
+          "value": "分流器"
+        },
+        {
+          "name": "原产国家",
+          "value": "China"
+        },
+        {
+          "name": "温度系数(温漂)",
+          "value": "20ppm/℃"
+        },
+        {
+          "name": "最小包装",
+          "value": "1pcs"
+        },
+        {
+          "name": "输出电压",
+          "value": "2.5V~36V"
+        },
+        {
+          "name": "输出电压(最小值/固定)",
+          "value": "2.5V"
+        },
+        {
+          "name": "高度",
+          "value": "1.20mm"
+        },
+        {
+          "name": "引脚数",
+          "value": "3Pin"
+        },
+        {
+          "name": "供电电压",
+          "value": "-"
+        },
+        {
+          "name": "精度",
+          "value": "-"
+        },
+        {
+          "name": "输出功率",
+          "value": "-"
+        },
+        {
+          "name": "存储温度",
+          "value": "-"
+        },
+        {
+          "name": "额定功率",
+          "value": "-"
+        },
+        {
+          "name": "系列",
+          "value": "-"
+        },
+        {
+          "name": "输出电流",
+          "value": "-"
+        },
+        {
+          "name": "description",
+          "value": "可调精密并联调节器 输出类型：可调 输出电压：2.5V~36V 输出电流：100mA SOT23"
+        }
+      ]
+    }
+  },
+  {
+    "key": "12_mlcc",
+    "why": "MLCC — the highest-volume passive",
+    "mfr": "CCTC 三环",
+    "sourceFile": "mfr_144_CCTC_三环_params.json",
+    "model": {
+      "componentName": "TCC0805X7R104K500DT",
+      "datasheetUrl": "https://atlas.eefcdn.com/partdatasheet/700115/poYBAGGm0i6ANly8AAlc8dhBj-0401.pdf",
+      "description": null,
+      "category": {
+        "c1": {
+          "name": "Capacitors"
+        },
+        "c2": {
+          "name": "Ceramic Capacitors"
+        },
+        "c3": {
+          "name": "Ceramic Capacitors"
+        }
+      },
+      "parameters": [
+        {
+          "name": "安装类型",
+          "value": "表面贴装"
+        },
+        {
+          "name": "品牌",
+          "value": "CCTC"
+        },
+        {
+          "name": "精度",
+          "value": "±10%"
+        },
+        {
+          "name": "原始制造商",
+          "value": "Chaozhou Three-ring (Group) Co., Ltd."
+        },
+        {
+          "name": "容值",
+          "value": "100nF"
+        },
+        {
+          "name": "包装",
+          "value": "Tape/Reel"
+        },
+        {
+          "name": "长x宽/尺寸",
+          "value": "2.00 x 1.25mm"
+        },
+        {
+          "name": "封装/外壳",
+          "value": "0805"
+        },
+        {
+          "name": "电介质",
+          "value": "X7R"
+        },
+        {
+          "name": "元件生命周期",
+          "value": "Active"
+        },
+        {
+          "name": "工作温度",
+          "value": "-55℃~+125℃"
+        },
+        {
+          "name": "原产国家",
+          "value": "China"
+        },
+        {
+          "name": "额定电压",
+          "value": "50V"
+        },
+        {
+          "name": "温度系数Tf",
+          "value": "±15%"
+        },
+        {
+          "name": "最小包装",
+          "value": "4000pcs"
+        },
+        {
+          "name": "高度",
+          "value": "0.85mm"
+        },
+        {
+          "name": "引脚数",
+          "value": "2Pin"
+        },
+        {
+          "name": "是否无铅",
+          "value": "-"
+        },
+        {
+          "name": "零件状态",
+          "value": "-"
+        },
+        {
+          "name": "应用领域",
+          "value": "-"
+        },
+        {
+          "name": "封装技术",
+          "value": "-"
+        },
+        {
+          "name": "成分",
+          "value": "-"
+        },
+        {
+          "name": "卷盘尺寸",
+          "value": "-"
+        },
+        {
+          "name": "等级",
+          "value": "-"
+        },
+        {
+          "name": "系列",
+          "value": "-"
+        },
+        {
+          "name": "介质材料",
+          "value": "-"
+        },
+        {
+          "name": "存储温度",
+          "value": "-"
+        },
+        {
+          "name": "特性",
+          "value": "-"
+        },
+        {
+          "name": "认证信息",
+          "value": "-"
+        },
+        {
+          "name": "description",
+          "value": "贴片电容（MLCC） 0805 100nF ±10% 50V X7R"
+        }
+      ]
+    }
+  },
+  {
+    "key": "byte_escaped_names",
+    "why": "parameter names carrying \\xHH byte escapes",
+    "mfr": "CT MICRO 天晶源",
+    "sourceFile": "mfr_116_CT_MICRO_天晶源_params.json",
+    "model": {
+      "componentName": "IRP1608Q06-B30",
+      "datasheetUrl": "https://atlas.eefcdn.com/partdatasheet/700087/700087_24643765_1757294399281.pdf",
+      "description": "SMD type 940nm infrared emitter with GaAlAs LED, peak wavelength at 940nm, radiant intensity of 1.47 to 2.73 mW/sr at 20mA, viewing angle ±65 degrees, and RoHS compliant.",
+      "category": {
+        "c1": {
+          "name": "Optoelectronics"
+        },
+        "c2": {
+          "name": "LED Emitters - Infrared, UV, Visible"
+        },
+        "c3": {
+          "name": "LED Emitters - Infrared, UV, Visible"
+        }
+      },
+      "parameters": [
+        {
+          "name": "Package",
+          "value": "1608-06"
+        },
+        {
+          "name": "PeakWavelength(nm)",
+          "value": "940"
+        },
+        {
+          "name": "Intensity(mW/sr)Typ. 20mA",
+          "value": "2.1"
+        },
+        {
+          "name": "Intensity(mW/sr)Typ. 70mA",
+          "value": "-"
+        },
+        {
+          "name": "VF(V) 20mA",
+          "value": "1.38"
+        },
+        {
+          "name": "VF(V) 70mA",
+          "value": "-"
+        },
+        {
+          "name": "Viewing Angle(\\xc2\\xb0)",
+          "value": "130"
+        },
+        {
+          "name": "Max Rating(mA)",
+          "value": "70"
+        },
+        {
+          "name": "Picture",
+          "value": "-"
+        },
+        {
+          "name": "description",
+          "value": "-"
+        }
+      ]
+    }
+  },
+  {
+    "key": "reclassified",
+    "why": "parameter signals moved it E1 → B6 (Decision #175)",
+    "mfr": "CT MICRO 天晶源",
+    "sourceFile": "mfr_116_CT_MICRO_天晶源_params.json",
+    "model": {
+      "componentName": "CT815",
+      "datasheetUrl": "https://atlas.eefcdn.com/partdatasheet/700087/700087_42691210_1757294398265.pdf",
+      "description": "DC input 4-pin DMC-Isolator photo darlington optocoupler with 5000 VRMS isolation voltage, -55 to 110 °C operating temperature, and CTR ranging from 600% to 7500%, available in multiple lead form options.",
+      "category": {
+        "c1": {
+          "name": "Isolators"
+        },
+        "c2": {
+          "name": "Optoisolators"
+        },
+        "c3": {
+          "name": "Transistor, Photovoltaic Output Optoisolators"
+        }
+      },
+      "parameters": [
+        {
+          "name": "Circuit",
+          "value": "-"
+        },
+        {
+          "name": "Package",
+          "value": "DIP-4"
+        },
+        {
+          "name": "VISO                        (rms)                        (V)",
+          "value": "5000"
+        },
+        {
+          "name": "Channel",
+          "value": "1"
+        },
+        {
+          "name": "CTR*                        (%)",
+          "value": "600~7500"
+        },
+        {
+          "name": "BVCEO                        Min.                        (V)",
+          "value": "40"
+        },
+        {
+          "name": "TOPR                        (\\xe2\\x84\\x83)",
+          "value": "<-55~110"
+        },
+        {
+          "name": "Picture",
+          "value": "-"
+        },
+        {
+          "name": "description",
+          "value": "-"
+        }
+      ]
+    }
+  },
+  {
+    "key": "gaia_mapped",
+    "why": "gaia datasheet-extracted parameter mapping path",
+    "mfr": "MXChip 庆科",
+    "sourceFile": "mfr_132_MXChip_庆科_params.json",
+    "model": {
+      "componentName": "EMC3080-PZI5",
+      "datasheetUrl": "https://atlas.eefcdn.com/partdatasheet/700103/700103_84250682_1757294216889.pdf",
+      "description": "Wi-Fi/BLE 2.4GHz IoT module with ARM Cortex-M33 MCU, 100MHz clock, 256KB SRAM, 2MB XIP Flash, supporting IEEE 802.11 b/g/n and Bluetooth 4.2, operating voltage 3.0V to 3.6V, industrial temperature range -20°C to +85°C.",
+      "category": {
+        "c1": {
+          "name": "RF and Wireless"
+        },
+        "c2": {
+          "name": "RF Transceiver Modules and Modems"
+        },
+        "c3": {
+          "name": "RF Transceiver Modules and Modems"
+        }
+      },
+      "parameters": [
+        {
+          "name": "商品目录",
+          "value": "WiFi模块"
+        },
+        {
+          "name": "封装",
+          "value": "-"
+        },
+        {
+          "name": "gaia-relationModel",
+          "value": "EMC3080-PZI5"
+        },
+        {
+          "name": "gaia-partDescription",
+          "value": "3.0V~3.6V,-20℃ to +85℃,Cortex-M33,100MHz,256KB SRAM,384KB ROM,2MB XIP Flash,IEEE 802.11 b/g/n 2.4GHz 1T1R,HT20,65Mbps@MCS7,Bluetooth 4.2 BLE,14 GPIO,1 SPI,1 I2C,8 PWM,3 UART,18mm x 33mm"
+        },
+        {
+          "name": "gaia-category3Zh",
+          "value": "射频收发器模块和调制解调器"
+        },
+        {
+          "name": "gaia-supply_voltage-Min",
+          "value": "–0.3 V"
+        },
+        {
+          "name": "gaia-supply_voltage-Max",
+          "value": "3.6 V"
+        },
+        {
+          "name": "gaia-input_voltage-Min",
+          "value": "VSS−0.3 V"
+        },
+        {
+          "name": "gaia-input_voltage-Max",
+          "value": "VDD+0.3 V"
+        },
+        {
+          "name": "gaia-supply_voltage-Min",
+          "value": "3.0 V"
+        },
+        {
+          "name": "gaia-supply_voltage-Typical",
+          "value": "3.3 V"
+        },
+        {
+          "name": "gaia-supply_voltage-Max",
+          "value": "3.6 V"
+        },
+        {
+          "name": "gaia-inrush_current-Max",
+          "value": "400 mA"
+        },
+        {
+          "name": "gaia-peak_current-Max",
+          "value": "600 mA"
+        },
+        {
+          "name": "gaia-supply_current-Typical",
+          "value": "10 μA"
+        },
+        {
+          "name": "gaia-supply_current-Typical",
+          "value": "30 μA"
+        },
+        {
+          "name": "gaia-supply_current-Typical",
+          "value": "200 μA"
+        },
+        {
+          "name": "gaia-supply_current-Typical",
+          "value": "450 μA"
+        },
+        {
+          "name": "gaia-supply_current-Typical",
+          "value": "9 mA"
+        },
+        {
+          "name": "gaia-supply_current-Typical",
+          "value": "198 mA"
+        },
+        {
+          "name": "gaia-supply_current-Typical",
+          "value": "218 mA"
+        },
+        {
+          "name": "gaia-supply_current-Typical",
+          "value": "207 mA"
+        },
+        {
+          "name": "gaia-supply_current-Typical",
+          "value": "230 mA"
+        },
+        {
+          "name": "gaia-supply_current-Typical",
+          "value": "249 mA"
+        },
+        {
+          "name": "gaia-supply_current-Typical",
+          "value": "315 mA"
+        },
+        {
+          "name": "gaia-supply_current-Typical",
+          "value": "67 mA"
+        },
+        {
+          "name": "gaia-supply_current-Typical",
+          "value": "TBD mA"
+        },
+        {
+          "name": "gaia-supply_current-Typical",
+          "value": "61 mA"
+        },
+        {
+          "name": "gaia-supply_current-Typical",
+          "value": "33 mA"
+        },
+        {
+          "name": "gaia-supply_current-Typical",
+          "value": "24 mA"
+        },
+        {
+          "name": "gaia-flash_current-Max",
+          "value": "20 mA"
+        },
+        {
+          "name": "gaia-flash_standby_current-Max",
+          "value": "50 μA"
+        },
+        {
+          "name": "gaia-input_high_voltage-Min",
+          "value": "2.0 V"
+        },
+        {
+          "name": "gaia-input_low_voltage-Max",
+          "value": "0.8 V"
+        },
+        {
+          "name": "gaia-output_high_voltage-Min",
+          "value": "2.4 V"
+        },
+        {
+          "name": "gaia-output_low_voltage-Max",
+          "value": "0.4 V"
+        },
+        {
+          "name": "gaia-schmitt_trigger_high_level-Min",
+          "value": "1.377 V"
+        },
+        {
+          "name": "gaia-schmitt_trigger_high_level-Typical",
+          "value": "1.683 V"
+        },
+        {
+          "name": "gaia-schmitt_trigger_high_level-Max",
+          "value": "1.908 V"
+        },
+        {
+          "name": "gaia-schmitt_trigger_low_level-Min",
+          "value": "0.729 V"
+        },
+        {
+          "name": "gaia-schmitt_trigger_low_level-Typical",
+          "value": "0.957 V"
+        },
+        {
+          "name": "gaia-schmitt_trigger_low_level-Max",
+          "value": "1.116 V"
+        },
+        {
+          "name": "gaia-input_leakage_current-Min",
+          "value": "-10 μA"
+        },
+        {
+          "name": "gaia-input_leakage_current-Typical",
+          "value": "±1 μA"
+        },
+        {
+          "name": "gaia-input_leakage_current-Max",
+          "value": "10 μA"
+        },
+        {
+          "name": "gaia-current_consumption-Average",
+          "value": "18.2 mA"
+        },
+        {
+          "name": "gaia-current_consumption-Max",
+          "value": "20 mA"
+        },
+        {
+          "name": "gaia-current_consumption-Average",
+          "value": "TBD mA"
+        },
+        {
+          "name": "gaia-current_consumption-Max",
+          "value": "TBD mA"
+        },
+        {
+          "name": "gaia-current_consumption-Average",
+          "value": "TBD mA"
+        },
+        {
+          "name": "gaia-current_consumption-Max",
+          "value": "TBD mA"
+        },
+        {
+          "name": "gaia-current_consumption-Average",
+          "value": "82.4 mA"
+        },
+        {
+          "name": "gaia-current_consumption-Max",
+          "value": "97.4 mA"
+        },
+        {
+          "name": "gaia-current_consumption-Average",
+          "value": "35.6 mA"
+        },
+        {
+          "name": "gaia-current_consumption-Max",
+          "value": "97.4 mA"
+        },
+        {
+          "name": "gaia-current_consumption-Average",
+          "value": "TBD mA"
+        },
+        {
+          "name": "gaia-current_consumption-Max",
+          "value": "TBD mA"
+        },
+        {
+          "name": "gaia-current_consumption-Average",
+          "value": "TBD mA"
+        },
+        {
+          "name": "gaia-current_consumption-Max",
+          "value": "TBD mA"
+        },
+        {
+          "name": "gaia-current_consumption-Average",
+          "value": "TBD mA"
+        },
+        {
+          "name": "gaia-current_consumption-Max",
+          "value": "TBD mA"
+        },
+        {
+          "name": "gaia-current_consumption-Average",
+          "value": "67.9 mA"
+        },
+        {
+          "name": "gaia-current_consumption-Max",
+          "value": "244.6 mA"
+        },
+        {
+          "name": "gaia-current_consumption-Average",
+          "value": "86.4 mA"
+        },
+        {
+          "name": "gaia-current_consumption-Max",
+          "value": "101.5 mA"
+        },
+        {
+          "name": "gaia-current_consumption-Average",
+          "value": "TBD mA"
+        },
+        {
+          "name": "gaia-current_consumption-Max",
+          "value": "TBD mA"
+        },
+        {
+          "name": "gaia-storage_temperature-Max",
+          "value": "–55 to +125 ℃"
+        },
+        {
+          "name": "gaia-ambient_operating_temperature-Max",
+          "value": "-20 to +85 ℃"
+        },
+        {
+          "name": "gaia-junction_temperature-Max",
+          "value": "0 to +125 ℃"
+        },
+        {
+          "name": "gaia-esd_level",
+          "value": "2"
+        },
+        {
+          "name": "gaia-esd_voltage-Max",
+          "value": "2000 V"
+        },
+        {
+          "name": "gaia-esd_level",
+          "value": "II"
+        },
+        {
+          "name": "gaia-esd_voltage-Max",
+          "value": "500 V"
+        },
+        {
+          "name": "gaia-operating_frequency",
+          "value": "2.412~2.484 GHz"
+        },
+        {
+          "name": "gaia-channel_bandwidth",
+          "value": "20 MHz"
+        },
+        {
+          "name": "gaia-antenna_interface",
+          "value": "1T1R, Single stream"
+        },
+        {
+          "name": "gaia-wifi_standard",
+          "value": "IEEE 802.11b/g/n"
+        },
+        {
+          "name": "gaia-modulation_type",
+          "value": "11b: DBPSK, DQPSK, CCK for DSSS; 11g: BPSK, QPSK, 16QAM, 64QAM for OFDM; 11n: MCS0~7, OFDM"
+        },
+        {
+          "name": "gaia-data_rates",
+          "value": "802.11b: 1, 2, 5.5 and 11Mbps; 802.11g: 6, 9, 12, 18, 24, 36, 48 and 54 Mbps; 802.11n: MCS0~7, up to 72.2Mbps"
+        },
+        {
+          "name": "gaia-antenna_type",
+          "value": "One U.F.L connector for external antenna; PCB printed ANT (Reserve)"
+        },
+        {
+          "name": "gaia-tx_output_power-Min",
+          "value": "14 dBm"
+        },
+        {
+          "name": "gaia-tx_output_power-Typical",
+          "value": "16.5 dBm"
+        },
+        {
+          "name": "gaia-tx_output_power-Max",
+          "value": "18 dBm"
+        },
+        {
+          "name": "gaia-tx_output_power-Min",
+          "value": "13 dBm"
+        },
+        {
+          "name": "gaia-tx_output_power-Typical",
+          "value": "14.5 dBm"
+        },
+        {
+          "name": "gaia-tx_output_power-Max",
+          "value": "16 dBm"
+        },
+        {
+          "name": "gaia-tx_output_power-Min",
+          "value": "11 dBm"
+        },
+        {
+          "name": "gaia-tx_output_power-Typical",
+          "value": "12.5 dBm"
+        },
+        {
+          "name": "gaia-tx_output_power-Max",
+          "value": "14 dBm"
+        },
+        {
+          "name": "gaia-frequency_error-Min",
+          "value": "-15 ppm"
+        },
+        {
+          "name": "gaia-frequency_error-Max",
+          "value": "+15 ppm"
+        },
+        {
+          "name": "gaia-evm-Typical",
+          "value": "-20 dB"
+        },
+        {
+          "name": "gaia-evm-Max",
+          "value": "-10 dB"
+        },
+        {
+          "name": "gaia-evm-Typical",
+          "value": "-29 dB"
+        },
+        {
+          "name": "gaia-evm-Max",
+          "value": "-25 dB"
+        },
+        {
+          "name": "gaia-evm-Typical",
+          "value": "-31 dB"
+        },
+        {
+          "name": "gaia-evm-Max",
+          "value": "-27 dB"
+        },
+        {
+          "name": "gaia-rx_sensitivity-Min",
+          "value": "-88 dBm"
+        },
+        {
+          "name": "gaia-rx_sensitivity-Min",
+          "value": "-75 dBm"
+        },
+        {
+          "name": "gaia-rx_sensitivity-Min",
+          "value": "-72 dBm"
+        },
+        {
+          "name": "gaia-power_average-Min",
+          "value": "6 dBm"
+        },
+        {
+          "name": "gaia-power_average-Typical",
+          "value": "8 dBm"
+        },
+        {
+          "name": "gaia-power_average-Max",
+          "value": "10 dBm"
+        },
+        {
+          "name": "gaia-frequency_drift_error-Min",
+          "value": "-50 KHz"
+        },
+        {
+          "name": "gaia-frequency_drift_error-Typical",
+          "value": "-5 KHz"
+        },
+        {
+          "name": "gaia-frequency_drift_error-Max",
+          "value": "50 KHz"
+        },
+        {
+          "name": "gaia-delta_fn_max-Min",
+          "value": "-150 KHz"
+        },
+        {
+          "name": "gaia-delta_fn_max-Typical",
+          "value": "6.1 KHz"
+        },
+        {
+          "name": "gaia-delta_fn_max-Max",
+          "value": "150 KHz"
+        },
+        {
+          "name": "gaia-abs_f0_minus_fn-Typical",
+          "value": "2.37 KHz"
+        },
+        {
+          "name": "gaia-abs_f0_minus_fn-Max",
+          "value": "50 KHz"
+        },
+        {
+          "name": "gaia-abs_f1_minus_f0-Typical",
+          "value": "2.1 KHz"
+        },
+        {
+          "name": "gaia-abs_f1_minus_f0-Max",
+          "value": "20 KHz"
+        },
+        {
+          "name": "gaia-abs_fn_minus_fn5-Typical",
+          "value": "0.89 KHz"
+        },
+        {
+          "name": "gaia-abs_fn_minus_fn5-Max",
+          "value": "20 KHz"
+        },
+        {
+          "name": "gaia-delta_f1avg-Min",
+          "value": "225 KHz"
+        },
+        {
+          "name": "gaia-delta_f1avg-Typical",
+          "value": "249 KHz"
+        },
+        {
+          "name": "gaia-delta_f1avg-Max",
+          "value": "275 KHz"
+        },
+        {
+          "name": "gaia-delta_f2avg-Min",
+          "value": "185 KHz"
+        },
+        {
+          "name": "gaia-delta_f2avg-Typical",
+          "value": "238 KHz"
+        },
+        {
+          "name": "gaia-delta_f2avg-Max",
+          "value": "275 KHz"
+        },
+        {
+          "name": "gaia-delta_f2avg_over_delta_f1avg-Min",
+          "value": "0.8 KHz"
+        },
+        {
+          "name": "gaia-delta_f2avg_over_delta_f1avg-Typical",
+          "value": "0.96 KHz"
+        },
+        {
+          "name": "gaia-delta_f2max-Min",
+          "value": "185 KHz"
+        },
+        {
+          "name": "gaia-delta_f2max-Typical",
+          "value": "245 KHz"
+        },
+        {
+          "name": "gaia-offset_minus_2-Typical",
+          "value": "-44.3 dBm"
+        },
+        {
+          "name": "gaia-offset_minus_2-Max",
+          "value": "-20 dBm"
+        },
+        {
+          "name": "gaia-offset_minus_3-Typical",
+          "value": "-46.6 dBm"
+        },
+        {
+          "name": "gaia-offset_minus_3-Max",
+          "value": "-30 dBm"
+        },
+        {
+          "name": "gaia-offset_minus_4-Typical",
+          "value": "-46.5 dBm"
+        },
+        {
+          "name": "gaia-offset_minus_4-Max",
+          "value": "-30 dBm"
+        },
+        {
+          "name": "gaia-offset_minus_5-Typical",
+          "value": "-50.6 dBm"
+        },
+        {
+          "name": "gaia-offset_minus_5-Max",
+          "value": "-30 dBm"
+        },
+        {
+          "name": "gaia-offset_2-Typical",
+          "value": "-46.1 dBm"
+        },
+        {
+          "name": "gaia-offset_2-Max",
+          "value": "-20 dBm"
+        },
+        {
+          "name": "gaia-offset_3-Typical",
+          "value": "-45.7 dBm"
+        },
+        {
+          "name": "gaia-offset_3-Max",
+          "value": "-30 dBm"
+        },
+        {
+          "name": "gaia-offset_4-Typical",
+          "value": "-44.4 dBm"
+        },
+        {
+          "name": "gaia-offset_4-Max",
+          "value": "-30 dBm"
+        },
+        {
+          "name": "gaia-offset_5-Typical",
+          "value": "-50.2 dBm"
+        },
+        {
+          "name": "gaia-offset_5-Max",
+          "value": "-30 dBm"
+        },
+        {
+          "name": "gaia-minimum_sensitivity-Typical",
+          "value": "-98 dBm"
+        },
+        {
+          "name": "gaia-minimum_sensitivity-Max",
+          "value": "-97 dBm"
+        },
+        {
+          "name": "gaia-pcb_antenna_frequency-Min",
+          "value": "2400 MHz"
+        },
+        {
+          "name": "gaia-pcb_antenna_frequency-Max",
+          "value": "2500 MHz"
+        },
+        {
+          "name": "gaia-pcb_antenna_impedance-Typical",
+          "value": "50 Ω"
+        },
+        {
+          "name": "gaia-pcb_antenna_vswr-Typical",
+          "value": "2"
+        },
+        {
+          "name": "gaia-pcb_antenna_gain-Typical",
+          "value": "≤2dBi"
+        },
+        {
+          "name": "gaia-pcb_antenna_efficiency-Typical",
+          "value": ">70% or >dBi-1.54dB"
+        },
+        {
+          "name": "gaia-reflow_zone_temperature-Typical",
+          "value": "135"
+        },
+        {
+          "name": "gaia-reflow_zone_temperature-Typical",
+          "value": "150"
+        },
+        {
+          "name": "gaia-reflow_zone_temperature-Typical",
+          "value": "170"
+        },
+        {
+          "name": "gaia-reflow_zone_temperature-Typical",
+          "value": "175"
+        },
+        {
+          "name": "gaia-reflow_zone_temperature-Typical",
+          "value": "180"
+        },
+        {
+          "name": "gaia-reflow_zone_temperature-Typical",
+          "value": "215"
+        },
+        {
+          "name": "gaia-reflow_zone_temperature-Typical",
+          "value": "250"
+        },
+        {
+          "name": "gaia-reflow_zone_temperature-Typical",
+          "value": "260"
+        },
+        {
+          "name": "gaia-reflow_zone_temperature-Typical",
+          "value": "247"
+        },
+        {
+          "name": "gaia-reflow_zone_temperature-Typical",
+          "value": "200"
+        },
+        {
+          "name": "gaia-reflow_zone_temperature-Typical",
+          "value": "135"
+        },
+        {
+          "name": "gaia-reflow_zone_temperature-Typical",
+          "value": "150"
+        },
+        {
+          "name": "gaia-reflow_zone_temperature-Typical",
+          "value": "170"
+        },
+        {
+          "name": "gaia-reflow_zone_temperature-Typical",
+          "value": "175"
+        },
+        {
+          "name": "gaia-reflow_zone_temperature-Typical",
+          "value": "180"
+        },
+        {
+          "name": "gaia-reflow_zone_temperature-Typical",
+          "value": "215"
+        },
+        {
+          "name": "gaia-reflow_zone_temperature-Typical",
+          "value": "250"
+        },
+        {
+          "name": "gaia-reflow_zone_temperature-Typical",
+          "value": "260"
+        },
+        {
+          "name": "gaia-reflow_zone_temperature-Typical",
+          "value": "247"
+        },
+        {
+          "name": "gaia-reflow_zone_temperature-Typical",
+          "value": "200"
+        }
+      ]
+    }
+  }
+]

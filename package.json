@@ -23,7 +23,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "baseline": "node scripts/check-baselines.mjs",
     "baseline:update": "node scripts/check-baselines.mjs --update",
-    "verify": "npm test && npm run baseline"
+    "verify": "npm test && npm run baseline",
+    "atlas:golden": "node scripts/gen-atlas-mapper-golden.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.74.0",

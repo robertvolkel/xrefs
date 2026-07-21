@@ -21,6 +21,7 @@
 
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'fs';
 import { resolve, basename } from 'path';
+import { fileURLToPath } from 'url';
 import { createHash } from 'crypto';
 import { createClient } from '@supabase/supabase-js';
 
@@ -3265,7 +3266,37 @@ function aggregateUnmappedParams(perProductUnmapped) {
 }
 
 // ─── CLI argument parsing ─────────────────────────────────
-const args = process.argv.slice(2);
+
+/**
+ * Is this file being RUN, or IMPORTED?
+ *
+ * WHY THIS EXISTS. `mapModel()` below is the function that actually applies
+ * your accepted dictionary mappings to product data during ingest — and until
+ * now it could not be tested, because merely importing this file ran the CLI:
+ * it parsed process.argv, called process.exit(1) when the arguments didn't
+ * look like a command, built a Supabase client, and kicked off a dispatcher.
+ * So the only guard on it was a pair of regexes asserting certain text appears
+ * in the source. Meanwhile lib/services/atlasMapper.ts has a thorough test
+ * suite for mapAtlasModel(), a function with NO runtime callers. A tested dead
+ * function beside an untested live one is worse than testing neither: it reads
+ * as coverage.
+ *
+ * The guard is deliberately minimal — it changes nothing about running this
+ * file from the terminal, and everything about importing it. Verified by
+ * capturing `--report --dry-run` and the no-argument usage output before and
+ * after, and diffing them byte for byte.
+ */
+const IS_CLI = (() => {
+  try {
+    return !!process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+})();
+
+// When imported, argv belongs to whatever is doing the importing (jest, a
+// script). Parsing it would pick up test file paths as ingest inputs.
+const args = IS_CLI ? process.argv.slice(2) : [];
 let mode = null;
 let modeArg = null;
 const files = [];
@@ -3309,7 +3340,7 @@ for (let i = 0; i < args.length; i++) {
 // Default mode: when files passed without explicit mode flag, generate reports.
 if (mode === null && files.length > 0) mode = 'report';
 
-if (mode === null) {
+if (mode === null && IS_CLI) {
   printUsage();
   process.exit(1);
 }
@@ -3370,11 +3401,17 @@ Idempotent.
 
 // Need Supabase for everything except --dry-run report.
 const needsSupabase = !(mode === 'report' && dryRun);
-if (needsSupabase && (!SUPABASE_URL || !SUPABASE_SERVICE_KEY)) {
+if (IS_CLI && needsSupabase && (!SUPABASE_URL || !SUPABASE_SERVICE_KEY)) {
   console.error('Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env.local');
   process.exit(1);
 }
-const supabase = needsSupabase ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY) : null;
+// On the CLI path the check above has already guaranteed both are present, so
+// this is the same expression it always was. On the import path there are no
+// credentials and no command to run, so the client is simply null — every
+// consumer already handles that (loadAndApplyDictOverrides returns early on it).
+const supabase = needsSupabase && SUPABASE_URL && SUPABASE_SERVICE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+  : null;
 
 // ─── Dictionary override merge (admin-curated entries from atlas_dictionary_overrides) ──────
 //
@@ -5063,7 +5100,9 @@ function numericValuesEqual(a, b) {
 }
 
 // ─── Dispatcher ───────────────────────────────────────────
-(async () => {
+// Guarded so importing this module for its mapping functions does not run a
+// command. `if (IS_CLI)` wraps the whole IIFE; the body is untouched.
+if (IS_CLI) (async () => {
   try {
     // Load shared English manufacturer codes so cleanManufacturerName() keeps
     // full names for collisions (e.g. "HX 红星" not "HX"). Decision #225.
@@ -5097,3 +5136,11 @@ function numericValuesEqual(a, b) {
     process.exit(1);
   }
 })();
+
+// ─── Exports (for tests only) ─────────────────────────────
+// This file stays a standalone CLI by design — it is deliberately NOT
+// refactored into lib/. These exports exist so the golden-file test in
+// __tests__/services/atlasIngestMapper.test.ts can call the REAL mapping
+// function rather than a parallel implementation that drifts from it.
+// Adding an export has no effect on the CLI path.
+export { mapModel, classifyAtlasCategory, cleanManufacturerName };
