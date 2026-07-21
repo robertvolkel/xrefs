@@ -2614,8 +2614,13 @@ export function effectiveUnit(parsedUnit: string | undefined, dictUnit: string |
 
 /**
  * Checks if a raw value is a "missing" placeholder.
+ *
+ * Exported because any consumer that reasons about real values has to agree
+ * with ingest on what "no value" means. Mapping Health learned this the hard
+ * way: treating "-" as a text value made every placeholder-heavy parameter
+ * look like a categorical one clashing with its numeric siblings.
  */
-function isMissingValue(value: string): boolean {
+export function isMissingValue(value: string): boolean {
   const trimmed = value.trim();
   return trimmed === '-' || trimmed === '/' || trimmed === '' || trimmed === 'N/A' || trimmed === 'n/a';
 }
