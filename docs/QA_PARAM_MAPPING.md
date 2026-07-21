@@ -6,9 +6,22 @@ constraints, that two people clicking at once behave, that the number on your sc
 matches the number in the table. This checklist covers that gap. It is not a stopgap
 until better tests exist; it is the permanent coverage for the part tests can't reach.
 
-**How long.** About 40 minutes for the whole thing. Scenario I is the important one —
-if you only have time for one, do that. It answers the actual question: *when I accept
-a mapping, does it get used?*
+**How long.** About 40 minutes for the whole thing.
+
+**What order to do them in — this matters, don't just go A to I.**
+
+> **1. Scenario A first** (~3 min). It confirms the Decision Log page loads and its
+>    undo works.
+> **2. Then jump to Scenario I** — the important one. It answers the actual question:
+>    *when I accept a mapping, does it get used?*
+> **3. Then B through H**, in whatever order suits you.
+>
+> **Why A before I:** Scenario I accepts a real mapping and depends on undo to put it
+> back. If undo turned out to be broken and you'd gone straight there, you would be
+> stranded with a change applied and no clean way to reverse it from the page. A is the
+> three-minute check that removes that risk.
+>
+> If you only have time for one scenario, do A then I, and stop.
 
 ---
 
