@@ -1,10 +1,46 @@
 import { readFileSync } from 'fs';
 import path from 'path';
+
+/**
+ * Stub state for the writer-contract tests at the bottom of this file. It lives
+ * on globalThis because jest hoists the mock factory above every declaration in
+ * the module — a `let` here would still be in the temporal dead zone when the
+ * factory runs. The mock path is RELATIVE: `@/` resolves for imports but not
+ * inside jest.mock.
+ */
+declare global {
+  // eslint-disable-next-line no-var
+  var LOG_STUB: {
+    calls: Array<Array<Record<string, unknown>>>;
+    /** Errors returned to successive insert calls, first-in-first-out. */
+    errors: Array<{ message: string } | null>;
+    clientThrows: boolean;
+  };
+}
+globalThis.LOG_STUB = { calls: [], errors: [], clientThrows: false };
+
+jest.mock('../../lib/supabase/service', () => ({
+  createServiceClient: () => {
+    if (globalThis.LOG_STUB.clientThrows) throw new Error('SUPABASE_SERVICE_ROLE_KEY missing');
+    return {
+      from: () => ({
+        insert: (rows: Array<Record<string, unknown>>) => {
+          globalThis.LOG_STUB.calls.push(rows);
+          return Promise.resolve({ error: globalThis.LOG_STUB.errors.shift() ?? null });
+        },
+      }),
+    };
+  },
+}));
+
 import {
   canonicalizeParamName,
   decisionForNoteStatus,
   decisionForNoteWrite,
+  recordParamDecisions,
 } from '@/lib/services/paramDecisionLog';
+
+const LOG_STUB = globalThis.LOG_STUB;
 
 const ROOT = path.join(__dirname, '..', '..');
 const read = (rel: string) => readFileSync(path.join(ROOT, rel), 'utf-8');
@@ -304,5 +340,58 @@ describe('decision log: note status → decision type', () => {
     for (const status of statuses) {
       expect(decisionForNoteStatus(status, null)).not.toBeNull();
     }
+  });
+});
+
+/**
+ * Two contracts this module's header states in prose and nothing enforced.
+ * Both were found by mutation: breaking either left all 58 tests green.
+ */
+describe('decision log: the writer\'s own reliability contract', () => {
+  beforeEach(() => {
+    LOG_STUB.calls.length = 0;
+    LOG_STUB.errors.length = 0;
+    LOG_STUB.clientThrows = false;
+  });
+
+  const inputs = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      paramName: `p${i}`,
+      decision: 'mapping_accepted' as const,
+      decidedBy: 'admin-1',
+    }));
+
+  it('chunks at 500 so one rejected request cannot lose a whole batch\'s trail', async () => {
+    // A Batch Accept has no cap on how many params it can approve, and a single
+    // oversized insert fails as ONE unit. Because logging is non-fatal, a
+    // 600-param batch would lose its entire audit trail silently.
+    await recordParamDecisions(inputs(600));
+
+    expect(LOG_STUB.calls.map((c) => c.length)).toEqual([500, 100]);
+  });
+
+  it('keeps going after a failed chunk, and reports false', async () => {
+    // Fail the FIRST chunk only. The blast radius must stay bounded to it.
+    LOG_STUB.errors.push({ message: 'boom' });
+
+    const ok = await recordParamDecisions(inputs(600));
+
+    expect(ok).toBe(false);
+    expect(LOG_STUB.calls.map((c) => c.length)).toEqual([500, 100]);
+  });
+
+  it('NEVER throws — a logging failure must not break the decision the user made', async () => {
+    // The trade this module states explicitly: audit completeness is sacrificed
+    // for reliability, because an admin should never lose an accept because the
+    // audit table hiccuped. If this throws, every calling route's try/catch
+    // turns a successful mapping write into a 500.
+    LOG_STUB.clientThrows = true;
+
+    await expect(recordParamDecisions(inputs(1))).resolves.toBe(false);
+  });
+
+  it('an empty input list is a no-op that reports success', async () => {
+    await expect(recordParamDecisions([])).resolves.toBe(true);
+    expect(LOG_STUB.calls).toHaveLength(0);
   });
 });
