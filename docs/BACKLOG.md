@@ -84,7 +84,25 @@ decision log holds three clean accept→revoke cycles.
 
 ## DECISION (Rob, 21 July 2026): implement Layer 1 only
 
-**Layer 1 — DO THIS: never discard a loser.** When two spellings claim one
+> ### ✅ LAYER 1 SHIPPED — 21 July 2026, commit `33ceb16` (Decision #278)
+>
+> Implemented in both copies, mutation score **18/18**, full suite 3,511 green.
+> **534,819 values across 437,093 products are no longer deleted.**
+>
+> Implementing it exposed a **second, larger leak in the same code** that this
+> entry did not anticipate: the storage key was built by discarding every
+> non-English character, so a parameter named purely in Chinese slugged to `''`
+> and its value was binned outright — 251,643 values (額定线圈功率 / 工作电压 /
+> 额定电压 / 触点电流), plus 87,290 more from key collisions. Those params also
+> reached Triage carrying an **empty `attributeId`**. Both are fixed.
+>
+> Numbers below (248 slots / 1,833 overrides) describe the *mapped-loser* half
+> only; the measured mapped-loser discard count was 225,902, of which 195,886
+> carried a differing value.
+>
+> **Layers 2 and 3 below remain OPEN and their costs still stand.**
+
+**Layer 1 — DONE: never discard a loser.** When two spellings claim one
 (family, attribute) slot, keep the losing value as a raw attribute exactly as it
 was stored while unmapped. Turns data loss into harmless redundancy. **No domain
 judgement is involved** — keeping the value is strictly better than binning it —
@@ -122,6 +140,61 @@ attributes — a design project, not a patch.
 **Also worth doing whenever Triage is next touched:** warn at accept time — "this
 attribute already has N spellings mapped for this family" — so the contest is
 visible *before* the decision rather than discovered afterwards.
+
+---
+
+# Some accepted mappings are semantically WRONG (P1) — needs engineering judgement
+
+**Surfaced 21 July 2026 while measuring Decision #278.** Not speculative — each
+row below is a count from the instrumented mapper over all 429 source files with
+the live overrides applied. Dedup had been *hiding* these: the wrong mapping won
+the slot, the correct value was deleted, and nothing looked broken.
+
+| Canonical slot | Params being routed into it | Discards | % differing |
+| --- | --- | --- | --- |
+| `color` | 功率 (power), 峰值波长 (peak wavelength), 透镜颜色 | 11,826 | **100%** |
+| `supply_voltage` | `gaia-current_consumption-Max`, `gaia-idd-Max` | 2,573 | **100%** |
+| `contact_rating` | `gaia-contact_resistance`, `gaia-contact_resistance-Max` | 1,633 | **100%** |
+| `vrwm` | 电源电压 (supply voltage), `VT [Typ] (V)` | 4,117 | 1% |
+| `io_avg` | `@ IF (A)` — a *test condition*, not an output current | 11,415 | 40% |
+| `tolerance` | 温度系数Tf (temperature coefficient) | — | visible in the golden fixture |
+
+A **power** and a **peak wavelength** are not a colour. A **current** is not a
+**supply voltage**. A contact **resistance** is not a contact **rating**. A
+100%-differing rate is the signal: every single occurrence disagreed with
+whatever won the slot, which is what you would expect when two genuinely
+different quantities are pointed at one attribute.
+
+**Decision #278 does not fix these** — it stops them destroying the correct
+value, and makes them visible (the displaced value now survives under its raw
+name). Deciding which mapping is right needs domain judgement.
+
+**How to work it:** the discard counts above rank the queue by blast radius.
+For each, check whether the mapping came from a base dictionary entry or an
+accepted override (`atlas_dictionary_overrides`), then either revoke it in
+Triage (logged, reversible — Decision #277) or correct the base dict.
+⚠️ A base-dict correction must be mirrored to `scripts/atlas-ingest.mjs`; see
+[[admin-endpoint-auth-and-mjs-mirror]].
+
+---
+
+# Repeated column names lose their test condition (P3)
+
+Some vendor files repeat one column name many times, each row a different test
+condition: one file carries **20** columns named `gaia-reflow_zone_temperature-Typical`
+(135, 150, 170, 175, 180, 215 °C — a reflow profile) and **16** named
+`gaia-supply_current-Typical` (10 µA … 198 mA — per operating mode).
+
+Before Decision #278, 19 of 20 were **deleted** and the first was stored as if it
+were *the* reflow temperature — a false claim. They are now all kept as numbered
+siblings (`..._2`, `..._3`, …), which is honest but unlabelled: `supply_current_typical_7`
+does not say *which mode*.
+
+**Real fix:** extraction must carry the distinguishing condition alongside the
+value, so these become condition-qualified attributes rather than numbered
+duplicates. Same underlying gap as Layer 3 above (`Rds(on) @ 4.5V` vs `@ 10V`).
+Low priority — these are display-only extras, in no logic table, and affect no
+scoring.
 
 ---
 

@@ -9059,3 +9059,66 @@ A third review found **12 more** defects, all in the panel — the one layer I h
 **What tests structurally cannot cover** is written down and handed over, not glossed: real-database behaviour (unique indexes, RLS, the 1000-row cap, Postgres collation), concurrency, and rendering. [docs/QA_PARAM_MAPPING.md](QA_PARAM_MAPPING.md) is the permanent coverage for that — nine scenarios in plain language, every step carrying an exact expected number and a specific *FAILS IF*. Every command in it was **verified by running it**, which corrected two things written from reading the code alone: `--mfr` matches a substring of the *source file name*, not a slug; and the rescan is currently clean (`0 batches / 0 stale`), so its key signal is 0 → non-zero rather than a small delta.
 
 **The honest limit.** A green suite here is not a promise the write survives real Postgres, and the mock's header says so explicitly. Two of my own mistakes in this round were caught by mutation rather than by review — a child-process guard test that passed its flag where `argv.slice(2)` never saw it, and a mutation harness that reported "survived" for a mutation that had killed the jest run outright.
+
+---
+
+## Decision #278 — A parameter value is never discarded: accepting a mapping must not delete data (July 21, 2026)
+
+**The bug, found by hand and not by any test.** Accepting a mapping in Triage could **delete product data**. Good-Ark's source file ships `Rdson@ 10V(mΩ) Typ` at column 7 and `Rdson@ 10V(mΩ) Max` at column 8. Both point at `rds_on`. The mapper takes the first and drops the rest — so accepting the *Max* spelling silently removed the Max value (6.0) from all 44 parts, and left `rds_on` holding a **typical** number on a **weight-9 threshold rule**. Nothing errored. The panel looked fine. The value was simply gone.
+
+This surfaced during the manual QA run of [docs/QA_PARAM_MAPPING.md](QA_PARAM_MAPPING.md) (Decision #277), not from the 3,477-test suite — a reminder of what the checklist is *for*. It was diagnosed, the 44 parts were restored, and the restore was verified against four predictions made **before** running it.
+
+### The scale, measured rather than estimated
+
+The real mapper was instrumented and run over **all 429 files in `data/atlas/` (437,093 products) with the live 2,033 dictionary overrides loaded** — not over fixtures, and not with an empty dictionary (`--report --dry-run` loads zero overrides and would have understated it badly).
+
+| Discard site | Values | Notes |
+| --- | --- | --- |
+| Mapped loser (two spellings, one slot) | 225,902 | **195,886 (86.7%) carried a value the winner did not have** |
+| Unmapped, empty key | 251,643 | pure-Chinese name → key `''` → value binned |
+| Unmapped, key collision | 7,062 | |
+| Gaia stem collision | 80,228 | `…-Min`/`-Max`/`-Typ` all reduce to one stem |
+| **Total no longer deleted** | **534,819** | ~1.2 values per product |
+
+The second leak was **larger than the one we set out to fix** and was found only by measuring the fix: the storage key is built by discarding every non-English character, so `额定线圈功率` (rated coil power, 14,198 occurrences), `工作电压` (operating voltage), `额定电压` and `触点电流` slugged to the empty string and were dropped outright. Those params also reached Triage carrying an **empty `attributeId`**.
+
+### The fix — Layer 1 of three
+
+One `storeRawValue()` choke point per copy keeps a displaced value under its raw parameter name, exactly where an unmapped param already goes. **No domain judgement is involved** — keeping beats binning — raw ids appear in no logic table so scoring is untouched, and rescued values are deliberately **not** pushed into Triage (they are mapped, just displaced; ~196k entries would bury the genuine gaps).
+
+Three load-bearing details:
+
+1. **The key keeps Unicode letters and digits.** An ASCII-only rule is exactly what dropped the 251,643, and the stored key *is* the display name (`fromParametersJsonb` humanizes it).
+2. **Identical values are still dropped** (30,016 — nothing to preserve). The comparison is deliberately **conservative**: a false "differs" keeps a redundant copy, a false "same" deletes data.
+3. **Colliding keys are suffixed, never overwritten.** `MAX_LOSER_SUFFIX = 200` is a runaway guard, **not a data cap** — a bound of 20 dropped 1,530 real values. Do not tighten it casually.
+
+**Existing keys do not change.** The first occurrence keeps its historical id, so no ingested row re-keys; only previously-deleted values gain new numbered keys. Verified in the golden diff.
+
+### Both copies, pinned against each other
+
+`mapModel()` in `scripts/atlas-ingest.mjs` is the **live ingest path**; `mapAtlasModel()` in `lib/services/atlasMapper.ts` backs the admin surfaces. A "keep in lockstep" comment is **not a mechanism** — the override-merge pair already diverges on 5 of 10 shapes (BACKLOG). The parity block in `__tests__/services/atlasLayer1KeepLoser.test.ts` is the mechanism.
+
+### Verification
+
+- **Mutation score 18/18** across both copies. The first run scored 15/18; all three survivors were **fixture gaps, not test gaps** — no case exercised the gaia *dedup* branch (distinct from the preferredSuffix branch) or the unmapped-gaia stem collision. Both added; the fix was to go find real colliding dictionary spellings, not to weaken a test.
+- Full suite 3,511 pass / 94 suites; lint 86 and type 92 both unchanged.
+- CLI usage output byte-identical including exit code, with the revert **proven to land** before believing the comparison.
+- Golden regenerated and the diff **read**: 132 → 221 parameters, 89 additions, zero real removals — every `-` line is an empty `attributeId` or a key superseded by a numbered sibling.
+
+### What this does NOT fix — and the finding that came free
+
+Layer 1 stops a wrong mapping *destroying* the correct value. It does not make the mapping right. Instrumenting the corpus exposed that **some accepted mappings are semantically wrong**, and dedup had been hiding them — the wrong mapping won the slot and the correct value was deleted, so nothing looked broken:
+
+| Slot | Losing params routed into it |
+| --- | --- |
+| `color` | 功率 (power), 峰值波长 (peak wavelength) — 11,826, 100% differing |
+| `supply_voltage` | `gaia-current_consumption-Max`, `gaia-idd-Max` — a *current* in a *voltage* slot |
+| `contact_rating` | `gaia-contact_resistance`, `-Max` — resistance in a rating slot |
+| `vrwm` | 电源电压 (supply voltage) |
+| `tolerance` | 温度系数Tf (temperature coefficient) — visible in the golden fixture |
+
+These need engineering judgement to resolve and are in BACKLOG, not fixed here.
+
+**Layers 2 and 3 remain deferred**, with their cost stated: `rds_on` still holds *typical* values where *maximum* was available (Layer 2 — conservative pick by `thresholdDirection`), and the underlying problem is that `Rdson@10V` and `Rdson@4.5V` are genuinely *different attributes* that the schema has no way to distinguish (Layer 3 — condition-qualified attributes; the rds_on rule's own `engineeringReason` says "a comparison is ONLY VALID if the drive voltage matches").
+
+**Accepted consequence.** Where a vendor repeats one column name — one file carries 20 columns named `gaia-reflow_zone_temperature-Typical` holding 135…215 °C — all 20 now survive as numbered siblings. Previously 19 were deleted and the first was presented as *the* reflow temperature, which was a false claim. The extras list is longer; nothing else in the product is affected. The real fix is for extraction to carry the test condition (BACKLOG).

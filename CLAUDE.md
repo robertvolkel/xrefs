@@ -226,7 +226,7 @@ lib/
   services/overrideHistoryHelper.ts # Audit trail: previous_values snapshots + admin name resolution
   services/atlasClient.ts     # Atlas Supabase queries — search, attributes, candidate fetch
   services/atlasApiClient.ts  # Atlas external API client — manufacturer profile sync (server-side only)
-  services/atlasMapper.ts     # Atlas JSON → internal ParametricAttribute[] conversion (28 L3 family + 14 L2 category dictionaries)
+  services/atlasMapper.ts     # Atlas JSON → internal ParametricAttribute[] conversion (28 L3 family + 14 L2 category dictionaries). Holds `storeRawValue`/`rawIdForParam` — the Decision #278 no-value-is-ever-discarded rule, MIRRORED in atlas-ingest.mjs
   services/triageQueueCompute.ts # Heavy Triage aggregation (computeTriageAggregation) + types/predicates; self-registers with triageQueueCache so ANY importer can rebuild a cold cache (Decision #224)
   services/paramDecisionLog.ts # THE single writer of Triage param decisions (Decision #277) — recordParamDecision(s) + decisionForNoteWrite. Append-only; add a route that decides something and you MUST call this (guard test enumerates the six)
   services/paramDecisionBackfill.ts # Pure, unit-tested reconstruction of the decision log from existing records (edit-vs-revoke split, revoke dating)
@@ -558,7 +558,7 @@ Three levels, more specific overriding more general: **User Profile** (`profiles
 npm run dev     # Start dev server (Turbopack)
 npm run build   # Production build
 npm run lint    # ESLint
-npm test        # Jest unit tests (3477 tests, ~2s)
+npm test        # Jest unit tests (3511 tests, ~2s)
 npm run test:watch  # Jest in watch mode
 npm run verify  # tests + the quality ratchet — what CI runs
 npm run baseline        # ratchet only: fails if lint/type error counts RISE
@@ -571,6 +571,8 @@ npm run atlas:golden    # regenerate the ingest-mapper golden file, then READ th
 **The bar for these suites is mutation, not green.** Break the source one line at a time and the suite must catch it. Every mapping-write route, the override read layer and the real ingest mapper were built this way; it repeatedly found gaps review had not (documented contracts nothing enforced, a filter the stub silently ignored, thin fixtures). A suite that only passes proves nothing — see the `green-test-must-fail-on-broken-code` memory.
 
 **`scripts/atlas-ingest.mjs` is importable but still a standalone CLI.** An entrypoint guard (`IS_CLI`) means importing it does not parse argv, build a Supabase client, or run the dispatcher; it exports `mapModel` / `classifyAtlasCategory` / `cleanManufacturerName` **for tests only**. Any change here must keep `--report --dry-run` and the no-argument usage output byte-identical (stdout, stderr, exit code). The golden file pins the mapper's real output over real fixture models: regenerate with `npm run atlas:golden` **and read the diff** — it names, in attribute names, exactly what your change did to product data.
+
+**No parameter value is ever discarded** (Decision #278). When two source spellings resolve to one `(family, attributeId)` slot the first wins — but the loser is **kept under its raw parameter name** via `storeRawValue()`, never dropped. This is not a nicety: accepting a mapping in Triage used to *delete* the value it displaced (a weight-9 `rds_on` rule was left holding a *typical* number where the *maximum* had been available), and 534,819 values across 437,093 products were being binned this way. Three details are load-bearing and each is pinned by a mutation-tested case: the raw key **keeps Unicode letters/digits** (an ASCII-only slug reduces a pure-Chinese name to `''` and drops the value — that alone was 251,643 values, and it also gave Triage an empty `attributeId`); **identical** values are still dropped (nothing to preserve, and the comparison is deliberately conservative — a false "differs" costs a redundant copy, a false "same" deletes data); and colliding keys are **suffixed, never overwritten** (`MAX_LOSER_SUFFIX = 200` is a runaway guard, *not* a data cap — a bound of 20 dropped 1,530 real values). The first occurrence keeps its historical key, so no ingested row re-keys. ⚠️ The rule exists in **both** copies and they are pinned against each other by the parity block in [__tests__/services/atlasLayer1KeepLoser.test.ts](__tests__/services/atlasLayer1KeepLoser.test.ts) — a "keep in lockstep" comment is not a mechanism. Layer 1 stops a wrong mapping *destroying* data; it does not make the mapping *right* — several semantically wrong mappings it exposed (power → `color`, current → `supply_voltage`) are in BACKLOG.
 
 Requires `.env.local` with: `ANTHROPIC_API_KEY`, `DIGIKEY_CLIENT_ID`, `DIGIKEY_CLIENT_SECRET`, `PARTSIO_API_KEY`, `MOUSER_API_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `REGISTRATION_CODE`.
 
