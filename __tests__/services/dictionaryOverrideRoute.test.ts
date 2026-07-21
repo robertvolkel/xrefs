@@ -25,7 +25,6 @@ import { invokeRoute } from '../helpers/routeHarness';
 // `any` cast at every use. jest hoists those factories above any `let`, which
 // is why the instance travels via globalThis rather than a closure variable.
 declare global {
-  // eslint-disable-next-line no-var
   var __sbMock: SupabaseMock;
 }
 

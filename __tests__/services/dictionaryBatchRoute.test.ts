@@ -23,11 +23,10 @@
  *     recompute is expensive at Atlas scale)
  */
 
-import { createSupabaseMock, type SupabaseMock } from '../helpers/supabaseMock';
+import { createSupabaseMock, type SupabaseMock, type MockSpec } from '../helpers/supabaseMock';
 import { invokeRoute } from '../helpers/routeHarness';
 
 declare global {
-  // eslint-disable-next-line no-var
   var __sbMock: SupabaseMock;
 }
 
@@ -76,7 +75,7 @@ const item = (over: Item = {}): Item => ({
 
 let mock: SupabaseMock;
 
-function seed(overrides: Array<Record<string, unknown>> = [], fail?: Parameters<typeof createSupabaseMock>[0]['fail']) {
+function seed(overrides: Array<Record<string, unknown>> = [], fail?: MockSpec['fail']) {
   mock = createSupabaseMock({
     tables: {
       atlas_dictionary_overrides: overrides.map((r) => ({ ...r })),

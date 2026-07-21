@@ -16,11 +16,10 @@
  * `decisionForNoteWrite`; these tests pin that they still agree.
  */
 
-import { createSupabaseMock, type SupabaseMock } from '../helpers/supabaseMock';
+import { createSupabaseMock, type SupabaseMock, type MockSpec } from '../helpers/supabaseMock';
 import { invokeRoute } from '../helpers/routeHarness';
 
 declare global {
-  // eslint-disable-next-line no-var
   var __sbMock: SupabaseMock;
 }
 
@@ -51,7 +50,7 @@ const PARAM = 'VR(V)';
 
 let mock: SupabaseMock;
 
-function seed(notes: Array<Record<string, unknown>> = [], fail?: Parameters<typeof createSupabaseMock>[0]['fail']) {
+function seed(notes: Array<Record<string, unknown>> = [], fail?: MockSpec['fail']) {
   mock = createSupabaseMock({
     tables: {
       atlas_unmapped_param_notes: notes.map((r) => ({ ...r })),

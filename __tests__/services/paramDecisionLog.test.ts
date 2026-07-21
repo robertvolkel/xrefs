@@ -9,7 +9,6 @@ import path from 'path';
  * inside jest.mock.
  */
 declare global {
-  // eslint-disable-next-line no-var
   var LOG_STUB: {
     calls: Array<Array<Record<string, unknown>>>;
     /** Errors returned to successive insert calls, first-in-first-out. */

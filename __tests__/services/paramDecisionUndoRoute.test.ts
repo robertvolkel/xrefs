@@ -22,11 +22,10 @@
  * which one didn't and why.
  */
 
-import { createSupabaseMock, type SupabaseMock } from '../helpers/supabaseMock';
+import { createSupabaseMock, type SupabaseMock, type MockSpec } from '../helpers/supabaseMock';
 import { invokeRoute } from '../helpers/routeHarness';
 
 declare global {
-  // eslint-disable-next-line no-var
   var __sbMock: SupabaseMock;
 }
 
@@ -82,7 +81,7 @@ interface SeedSpec {
   decisions?: Array<Record<string, unknown>>;
   overrides?: Array<Record<string, unknown>>;
   notes?: Array<Record<string, unknown>>;
-  fail?: Parameters<typeof createSupabaseMock>[0]['fail'];
+  fail?: MockSpec['fail'];
 }
 
 function seed(spec: SeedSpec = {}) {
