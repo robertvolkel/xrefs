@@ -1,0 +1,5 @@
+{
+  "_comment": "Ratchet baselines. These may only go DOWN. check-baselines.mjs fails CI if a count rises; run --update after genuinely reducing one.",
+  "lintErrors": 86,
+  "typeErrors": 92
+}
