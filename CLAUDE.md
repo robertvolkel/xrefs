@@ -558,9 +558,19 @@ Three levels, more specific overriding more general: **User Profile** (`profiles
 npm run dev     # Start dev server (Turbopack)
 npm run build   # Production build
 npm run lint    # ESLint
-npm test        # Jest unit tests (1051 tests, ~0.8s)
+npm test        # Jest unit tests (3477 tests, ~2s)
 npm run test:watch  # Jest in watch mode
+npm run verify  # tests + the quality ratchet — what CI runs
+npm run baseline        # ratchet only: fails if lint/type error counts RISE
+npm run baseline:update # lock in a genuine reduction
+npm run atlas:golden    # regenerate the ingest-mapper golden file, then READ the diff
 ```
+
+**Testing routes (Decision #277).** Until July 2026 this repo had 1,631 tests and **not one executed an API route** — while every write to a parameter mapping happens in a route. There is now a harness in [`__tests__/helpers/`](__tests__/helpers/) (zero new dependencies, `testEnvironment: 'node'`, no jsdom): `supabaseMock.ts` (stateful, supports **writes**, records filters and op order, injects per-table/per-op errors), `authGuard.ts`, `routeHarness.ts`. Two traps: `jest.mock()` paths must be **RELATIVE** (`../../lib/...`; the `@/` alias resolves for `import` but not inside `jest.mock`), and `lib/supabase/server` + `lib/supabase/service` must be pointed at **one shared instance via `globalThis`** or a cross-table assertion is two unrelated hopes. A write returns `data: null` unless `.select()` is chained — the mock models that deliberately. The mock does NOT model unique indexes, RLS, FK/CHECK, Postgres collation, the 1000-row cap, or concurrency; those belong to [docs/QA_PARAM_MAPPING.md](docs/QA_PARAM_MAPPING.md).
+
+**The bar for these suites is mutation, not green.** Break the source one line at a time and the suite must catch it. Every mapping-write route, the override read layer and the real ingest mapper were built this way; it repeatedly found gaps review had not (documented contracts nothing enforced, a filter the stub silently ignored, thin fixtures). A suite that only passes proves nothing — see the `green-test-must-fail-on-broken-code` memory.
+
+**`scripts/atlas-ingest.mjs` is importable but still a standalone CLI.** An entrypoint guard (`IS_CLI`) means importing it does not parse argv, build a Supabase client, or run the dispatcher; it exports `mapModel` / `classifyAtlasCategory` / `cleanManufacturerName` **for tests only**. Any change here must keep `--report --dry-run` and the no-argument usage output byte-identical (stdout, stderr, exit code). The golden file pins the mapper's real output over real fixture models: regenerate with `npm run atlas:golden` **and read the diff** — it names, in attribute names, exactly what your change did to product data.
 
 Requires `.env.local` with: `ANTHROPIC_API_KEY`, `DIGIKEY_CLIENT_ID`, `DIGIKEY_CLIENT_SECRET`, `PARTSIO_API_KEY`, `MOUSER_API_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `REGISTRATION_CODE`.
 

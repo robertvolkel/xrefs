@@ -9028,3 +9028,34 @@ The TS copy was *faithful*. **The document itself had the hole**: C2 switching r
 **Verification.** Every fix has a test proven to fail on the pre-fix source — route guards checked by stashing the routes (8 red, control green), the note-clear cases against verbatim copies of both old inline rules (both returned `null` where the fix returns `note_cleared`). Grouping assumptions were **measured, not assumed**: under the route's ordering, batch rows are contiguous (7 batches in the newest 200, none fragmented), one batch holds **55** rows against a 50-row page (so the straddle case is real and the group reports its TRUE size), and **31** timestamps in 200 rows are shared — which is why the `id` tiebreak on the sort is load-bearing, not decoration. Suite 3,310 green; production build clean.
 
 **Status.** Branch `feat/param-decision-log`. Schema applied live. Investigation Log retired (`?section=atlas-ai-log` redirects); `AtlasAiLogPanel.tsx` still on disk pending the user's first look at the new panel.
+
+---
+
+### Round 3, and the diagnosis that changed what got built (July 20, 2026)
+
+A third review found **12 more** defects, all in the panel — the one layer I had shipped without ever loading. That is 32 across three rounds, every one found by *review*, none by a test. The user's response reframed the work: *"I have no idea how to trust any of the work you've done… parameter mappings are crucial for the working of this product."*
+
+**The diagnosis is structural, not "be more careful."** This repo had 1,631 tests and **not one executed an API route** — while every write to a parameter mapping happens in a route. The tests proved the pure calculations right and said nothing about whether accepting a mapping writes the right row, or whether that row is ever read back.
+
+**Two facts established before writing anything**, so the scope was the real problem and not the visible one:
+- **The live mapping path was untouched by the branch.** `atlasMapper.ts`, `atlas-ingest.mjs`, `atlasDictOverrides.ts`, `matchingEngine.ts`, `partDataService.ts` byte-identical to `main`.
+- **A larger, older hole:** `atlasMapper.ts` had a thorough suite for `mapAtlasModel()` — a function with **no runtime callers** — while `mapModel()` in `atlas-ingest.mjs`, which actually applies accepted mappings during ingest, was guarded by two regexes checking that certain text appears in the file. A tested dead function beside an untested live one is worse than testing neither: it reads as coverage.
+
+**What was built.** A route-test harness in `__tests__/helpers/` (stateful Supabase mock supporting *writes* — the four pre-existing mocks are read-only — plus an auth-guard stub and a handler invoker), **zero new dependencies**, then suites over the five mapping-write routes, the override read layer, and the real ingest mapper. Suite 1,631 → 3,477.
+
+**Every suite proven by mutation, not by going green.** The source is broken one line at a time and the suite must catch it: **undo 12/12 · batch 14/14 · accept 16/16 · notes 13/13 · read layer 12/12 · mapper 7/7 · entrypoint guard 3/4**. Mutation kept finding what review had not:
+- Two contracts `paramDecisionLog` states in prose that nothing enforced — it chunks inserts at 500 so one rejected request cannot lose a whole batch's trail, and it never throws so a logging hiccup cannot turn a successful mapping write into a 500. Breaking either left all 58 tests green.
+- Nothing asserted the `is_active` filter on the override read, because the stub ignored it — a *revoked* mapping coming back to life, the mirror of an accepted one never applying.
+- Two survivors on the mapper were **fixture gaps, not test gaps**: nothing exercised the #175 reclassification loop or the gaia path. Real models were found for each (CT815 reclassifies E1→B6).
+
+**One survivor was left standing on purpose, then killed by a better assertion.** Deleting the accept route's insert-error check still returns 500 — the route falls through to a null dereference and the outer catch produces 500 anyway. A status-only assertion cannot tell a handled failure from a crash. Tightening it to the message the operator actually sees (`Failed to create dictionary override`) caught it.
+
+**The CLI became importable under a byte-identical gate.** ~10 lines of entrypoint guard; `--report --dry-run` and the no-argument usage output verified identical before and after across stdout, stderr and exit code.
+
+**TWO REAL FINDINGS, recorded in [BACKLOG](BACKLOG.md) rather than fixed here** — changing mapper output deserves its own before/after:
+1. **The override-merge rule exists twice and the copies disagree on 5 of 10 shapes** (a dropped unit on MODIFY; a non-canonical name becoming a *second* entry rather than overwriting). Measured against the live table: **not firing today** — 2,032 active overrides, all `add`, all canonical — so it is a landmine, not a fault. Both the agreement and the divergence are pinned.
+2. **`"–55 to 125 ℃"` yields `numericValue: NaN`, not `null`** (3 in 365,726 mapped params). Found *only* because the golden file encodes `NaN` — `JSON.stringify(NaN)` is `null`, so a plain dump would have recorded the bug as normal. Worse than null in process: `typeof NaN === 'number'`, so "do we have a number?" says yes while every comparison is false.
+
+**What tests structurally cannot cover** is written down and handed over, not glossed: real-database behaviour (unique indexes, RLS, the 1000-row cap, Postgres collation), concurrency, and rendering. [docs/QA_PARAM_MAPPING.md](QA_PARAM_MAPPING.md) is the permanent coverage for that — nine scenarios in plain language, every step carrying an exact expected number and a specific *FAILS IF*. Every command in it was **verified by running it**, which corrected two things written from reading the code alone: `--mfr` matches a substring of the *source file name*, not a slug; and the rescan is currently clean (`0 batches / 0 stale`), so its key signal is 0 → non-zero rather than a small delta.
+
+**The honest limit.** A green suite here is not a promise the write survives real Postgres, and the mock's header says so explicitly. Two of my own mistakes in this round were caught by mutation rather than by review — a child-process guard test that passed its flag where `argv.slice(2)` never saw it, and a mutation harness that reported "survived" for a mutation that had killed the jest run outright.
