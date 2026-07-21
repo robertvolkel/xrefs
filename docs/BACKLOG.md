@@ -67,13 +67,61 @@ vendor's file.** Nobody decided it. Two consequences:
 Mapping *correctness* is a different problem from the contest above, and only an
 engineer who knows the parts can rule on it.
 
-## Immediate state — UNRESOLVED as of 21 July 2026
+## Immediate state — RESOLVED 21 July 2026
 
-The `rdson@ 10v(mω) max` → `rds_on` mapping for B5 is **ACTIVE**, and the real
-backfill has been applied, so **44 Good-Ark parts are currently missing their 10V
-maximum on-resistance figure**. Recommended: revoke that mapping in Triage (it
-strictly lost information) and re-run `npm run atlas:backfill -- --mfr Good-Ark`
-to restore the raw attribute. Awaiting Rob's decision.
+Rob revoked the mapping and the backfill was re-run. **All 44 parts restored**,
+verified against four predictions made in advance:
+
+| predicted | actual |
+| --- | --- |
+| 44 parts change | 44 changed |
+| new attribute `rdson_10v_m_max` | `rdson_10v_m_max` |
+| `AGMP00504M` value 6.0 | 6.0 |
+| `rds_on` still 4.3 (the Typ value) | 4.3 |
+
+The loss was fully reversible. The `rdson@ 10v(mω) max` override is inactive; the
+decision log holds three clean accept→revoke cycles.
+
+## DECISION (Rob, 21 July 2026): implement Layer 1 only
+
+**Layer 1 — DO THIS: never discard a loser.** When two spellings claim one
+(family, attribute) slot, keep the losing value as a raw attribute exactly as it
+was stored while unmapped. Turns data loss into harmless redundancy. **No domain
+judgement is involved** — keeping the value is strictly better than binning it —
+and it means accepting a mapping can never again delete data. This is the fix for
+the bug above.
+
+⚠️ **Implementation must touch BOTH copies**: `mapModel()` in
+[scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) (the live path) and
+`mapAtlasModel()` in [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts).
+See [[mirror-drift-not-self-enforcing]]. It will change the golden file
+(`npm run atlas:golden`) — **read that diff**, it is the proof of what changed.
+
+**Layer 2 — NOT NOW, evidence attached.** Replace "first spelling in the vendor
+file wins" with the conservative pick, which is **derivable from data already
+present**: all **415** threshold rules across all 43 families carry a
+`thresholdDirection` (100% populated — `gte` 162, `lte` 199, `range_superset` 54).
+`lte` (lower is better, e.g. Rds(on)) ⇒ take the MAXIMUM available; `gte` (higher
+is better, e.g. Vds max) ⇒ take the MINIMUM. That is the datasheet semantic:
+compare guaranteed limits, not typicals. Deferred because it changes matching
+behaviour across 415 rules and 1,833 mappings, and this repo's history says such a
+change needs a measured before/after, not a confident switch-flip. **Consequence
+of deferring, stated plainly: `rds_on` keeps holding TYPICAL values where MAXIMUM
+was available, on a weight-9 rule — parts continue to score better than their
+datasheets guarantee.**
+
+**Layer 3 — the real underlying problem, unscheduled.** Even the conservative pick
+does not fix `rds_on`, because that rule's own `engineeringReason` states a
+comparison is *only valid when the test condition matches*: "Rds(on) is specified
+at a particular Vgs — typically 4.5V for logic-level, 10V for standard. A
+comparison is ONLY VALID if the drive voltage matches." `Rds(on) @ 4.5V` and
+`Rds(on) @ 10V` are **different specs, not two spellings of one**. Mapping both to
+`rds_on` is lossy however the winner is chosen. The real fix is condition-qualified
+attributes — a design project, not a patch.
+
+**Also worth doing whenever Triage is next touched:** warn at accept time — "this
+attribute already has N spellings mapped for this family" — so the contest is
+visible *before* the decision rather than discovered afterwards.
 
 ---
 
