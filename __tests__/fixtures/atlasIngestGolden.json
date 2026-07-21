@@ -343,6 +343,29 @@
       "package_case": {
         "value": "SOT23",
         "numericValue": 23
+      },
+      "初始精度_误差": {
+        "value": "±0.4%",
+        "numericValue": 0.4
+      },
+      "参考源类型": {
+        "value": "分流器"
+      },
+      "温度系数_温漂": {
+        "value": "20ppm/℃",
+        "numericValue": 20
+      },
+      "输出电压_最大值": {
+        "value": "36V",
+        "numericValue": 36
+      },
+      "输出电压_最小值_固定": {
+        "value": "2.5V",
+        "numericValue": 2.5
+      },
+      "阴极电流": {
+        "value": "1mA~100mA",
+        "numericValue": 1
       }
     },
     "warnings": [],
@@ -350,37 +373,37 @@
       {
         "paramName": "初始精度(误差)",
         "sampleValue": "±0.4%",
-        "attributeId": "",
+        "attributeId": "初始精度_误差",
         "kind": "standard"
       },
       {
         "paramName": "参考源类型",
         "sampleValue": "分流器",
-        "attributeId": "",
+        "attributeId": "参考源类型",
         "kind": "standard"
       },
       {
         "paramName": "温度系数(温漂)",
         "sampleValue": "20ppm/℃",
-        "attributeId": "",
+        "attributeId": "温度系数_温漂",
         "kind": "standard"
       },
       {
         "paramName": "输出电压(最大值)",
         "sampleValue": "36V",
-        "attributeId": "",
+        "attributeId": "输出电压_最大值",
         "kind": "standard"
       },
       {
         "paramName": "输出电压(最小值/固定)",
         "sampleValue": "2.5V",
-        "attributeId": "",
+        "attributeId": "输出电压_最小值_固定",
         "kind": "standard"
       },
       {
         "paramName": "阴极电流",
         "sampleValue": "1mA~100mA",
-        "attributeId": "",
+        "attributeId": "阴极电流",
         "kind": "standard"
       }
     ]
@@ -430,6 +453,10 @@
         "value": "50V",
         "numericValue": 50,
         "unit": "V"
+      },
+      "温度系数tf": {
+        "value": "±15%",
+        "numericValue": 15
       }
     },
     "warnings": [],
@@ -664,6 +691,74 @@
         "numericValue": 0.0182,
         "unit": "mA"
       },
+      "current_consumption_average": {
+        "value": "TBD mA"
+      },
+      "current_consumption_average_10": {
+        "value": "TBD mA"
+      },
+      "current_consumption_average_2": {
+        "value": "TBD mA"
+      },
+      "current_consumption_average_3": {
+        "value": "82.4 mA",
+        "numericValue": 82.4
+      },
+      "current_consumption_average_4": {
+        "value": "35.6 mA",
+        "numericValue": 35.6
+      },
+      "current_consumption_average_5": {
+        "value": "TBD mA"
+      },
+      "current_consumption_average_6": {
+        "value": "TBD mA"
+      },
+      "current_consumption_average_7": {
+        "value": "TBD mA"
+      },
+      "current_consumption_average_8": {
+        "value": "67.9 mA",
+        "numericValue": 67.9
+      },
+      "current_consumption_average_9": {
+        "value": "86.4 mA",
+        "numericValue": 86.4
+      },
+      "current_consumption_max": {
+        "value": "TBD mA"
+      },
+      "current_consumption_max_10": {
+        "value": "TBD mA"
+      },
+      "current_consumption_max_2": {
+        "value": "TBD mA"
+      },
+      "current_consumption_max_3": {
+        "value": "97.4 mA",
+        "numericValue": 97.4
+      },
+      "current_consumption_max_4": {
+        "value": "97.4 mA",
+        "numericValue": 97.4
+      },
+      "current_consumption_max_5": {
+        "value": "TBD mA"
+      },
+      "current_consumption_max_6": {
+        "value": "TBD mA"
+      },
+      "current_consumption_max_7": {
+        "value": "TBD mA"
+      },
+      "current_consumption_max_8": {
+        "value": "244.6 mA",
+        "numericValue": 244.6
+      },
+      "current_consumption_max_9": {
+        "value": "101.5 mA",
+        "numericValue": 101.5
+      },
       "data_rates": {
         "value": "802.11b: 1, 2, 5.5 and 11Mbps; 802.11g: 6, 9, 12, 18, 24, 36, 48 and 54 Mbps; 802.11n: MCS0~7, up to 72.2Mbps"
       },
@@ -677,6 +772,10 @@
         "numericValue": 249000,
         "unit": "KHz"
       },
+      "delta_f1avg_max": {
+        "value": "275 KHz",
+        "numericValue": 275
+      },
       "delta_f2avg": {
         "value": "185",
         "numericValue": 185000,
@@ -686,6 +785,10 @@
         "value": "238",
         "numericValue": 238000,
         "unit": "KHz"
+      },
+      "delta_f2avg_max": {
+        "value": "275 KHz",
+        "numericValue": 275
       },
       "delta_f2avg_over_delta_f1avg": {
         "value": "0.8",
@@ -717,14 +820,25 @@
         "numericValue": 6100,
         "unit": "KHz"
       },
+      "delta_fn_max_max": {
+        "value": "150 KHz",
+        "numericValue": 150
+      },
       "esd_level": {
         "value": "2",
         "numericValue": 2
+      },
+      "esd_level_2": {
+        "value": "II"
       },
       "esd_voltage": {
         "value": "2000",
         "numericValue": 2000,
         "unit": "V"
+      },
+      "esd_voltage_max": {
+        "value": "500 V",
+        "numericValue": 500
       },
       "evm": {
         "value": "-10",
@@ -735,6 +849,22 @@
         "value": "-20",
         "numericValue": -20,
         "unit": "dB"
+      },
+      "evm_max": {
+        "value": "-25 dB",
+        "numericValue": -25
+      },
+      "evm_max_2": {
+        "value": "-27 dB",
+        "numericValue": -27
+      },
+      "evm_typical": {
+        "value": "-29 dB",
+        "numericValue": -29
+      },
+      "evm_typical_2": {
+        "value": "-31 dB",
+        "numericValue": -31
       },
       "flash_current": {
         "value": "20",
@@ -756,10 +886,18 @@
         "numericValue": -5000,
         "unit": "KHz"
       },
+      "frequency_drift_error_max": {
+        "value": "50 KHz",
+        "numericValue": 50
+      },
       "frequency_error": {
         "value": "-15",
         "numericValue": -1.5e-11,
         "unit": "ppm"
+      },
+      "frequency_error_max": {
+        "value": "+15 ppm",
+        "numericValue": 15
       },
       "input_high_voltage": {
         "value": "2.0",
@@ -776,6 +914,10 @@
         "numericValue": 0.000001,
         "unit": "μA"
       },
+      "input_leakage_current_max": {
+        "value": "10 μA",
+        "numericValue": 10
+      },
       "input_low_voltage": {
         "value": "0.8",
         "numericValue": 0.8,
@@ -783,6 +925,10 @@
       },
       "input_voltage": {
         "value": "VSS−0.3 V"
+      },
+      "input_voltage_max": {
+        "value": "VDD+0.3 V",
+        "numericValue": 0.3
       },
       "inrush_current": {
         "value": "400",
@@ -910,6 +1056,10 @@
         "numericValue": 2400000000,
         "unit": "MHz"
       },
+      "pcb_antenna_frequency_max": {
+        "value": "2500 MHz",
+        "numericValue": 2500
+      },
       "pcb_antenna_gain-Typical": {
         "value": "≤2dBi"
       },
@@ -937,14 +1087,102 @@
         "numericValue": 8,
         "unit": "dBm"
       },
+      "power_average_max": {
+        "value": "10 dBm",
+        "numericValue": 10
+      },
       "reflow_zone_temperature-Typical": {
         "value": "135",
         "numericValue": 135
+      },
+      "reflow_zone_temperature_typical": {
+        "value": "150",
+        "numericValue": 150
+      },
+      "reflow_zone_temperature_typical_10": {
+        "value": "135",
+        "numericValue": 135
+      },
+      "reflow_zone_temperature_typical_11": {
+        "value": "150",
+        "numericValue": 150
+      },
+      "reflow_zone_temperature_typical_12": {
+        "value": "170",
+        "numericValue": 170
+      },
+      "reflow_zone_temperature_typical_13": {
+        "value": "175",
+        "numericValue": 175
+      },
+      "reflow_zone_temperature_typical_14": {
+        "value": "180",
+        "numericValue": 180
+      },
+      "reflow_zone_temperature_typical_15": {
+        "value": "215",
+        "numericValue": 215
+      },
+      "reflow_zone_temperature_typical_16": {
+        "value": "250",
+        "numericValue": 250
+      },
+      "reflow_zone_temperature_typical_17": {
+        "value": "260",
+        "numericValue": 260
+      },
+      "reflow_zone_temperature_typical_18": {
+        "value": "247",
+        "numericValue": 247
+      },
+      "reflow_zone_temperature_typical_19": {
+        "value": "200",
+        "numericValue": 200
+      },
+      "reflow_zone_temperature_typical_2": {
+        "value": "170",
+        "numericValue": 170
+      },
+      "reflow_zone_temperature_typical_3": {
+        "value": "175",
+        "numericValue": 175
+      },
+      "reflow_zone_temperature_typical_4": {
+        "value": "180",
+        "numericValue": 180
+      },
+      "reflow_zone_temperature_typical_5": {
+        "value": "215",
+        "numericValue": 215
+      },
+      "reflow_zone_temperature_typical_6": {
+        "value": "250",
+        "numericValue": 250
+      },
+      "reflow_zone_temperature_typical_7": {
+        "value": "260",
+        "numericValue": 260
+      },
+      "reflow_zone_temperature_typical_8": {
+        "value": "247",
+        "numericValue": 247
+      },
+      "reflow_zone_temperature_typical_9": {
+        "value": "200",
+        "numericValue": 200
       },
       "rx_sensitivity": {
         "value": "-88",
         "numericValue": -88,
         "unit": "dBm"
+      },
+      "rx_sensitivity_min": {
+        "value": "-75 dBm",
+        "numericValue": -75
+      },
+      "rx_sensitivity_min_2": {
+        "value": "-72 dBm",
+        "numericValue": -72
       },
       "schmitt_trigger_high_level": {
         "value": "1.377",
@@ -956,6 +1194,10 @@
         "numericValue": 1.683,
         "unit": "V"
       },
+      "schmitt_trigger_high_level_max": {
+        "value": "1.908 V",
+        "numericValue": 1.908
+      },
       "schmitt_trigger_low_level": {
         "value": "0.729",
         "numericValue": 0.729,
@@ -965,6 +1207,10 @@
         "value": "0.957",
         "numericValue": 0.957,
         "unit": "V"
+      },
+      "schmitt_trigger_low_level_max": {
+        "value": "1.116 V",
+        "numericValue": 1.116
       },
       "storage_temperature": {
         "value": "–55 to 125 ℃",
@@ -976,6 +1222,65 @@
         "numericValue": 0.000009999999999999999,
         "unit": "μA"
       },
+      "supply_current_typical": {
+        "value": "30 μA",
+        "numericValue": 30
+      },
+      "supply_current_typical_10": {
+        "value": "315 mA",
+        "numericValue": 315
+      },
+      "supply_current_typical_11": {
+        "value": "67 mA",
+        "numericValue": 67
+      },
+      "supply_current_typical_12": {
+        "value": "TBD mA"
+      },
+      "supply_current_typical_13": {
+        "value": "61 mA",
+        "numericValue": 61
+      },
+      "supply_current_typical_14": {
+        "value": "33 mA",
+        "numericValue": 33
+      },
+      "supply_current_typical_15": {
+        "value": "24 mA",
+        "numericValue": 24
+      },
+      "supply_current_typical_2": {
+        "value": "200 μA",
+        "numericValue": 200
+      },
+      "supply_current_typical_3": {
+        "value": "450 μA",
+        "numericValue": 450
+      },
+      "supply_current_typical_4": {
+        "value": "9 mA",
+        "numericValue": 9
+      },
+      "supply_current_typical_5": {
+        "value": "198 mA",
+        "numericValue": 198
+      },
+      "supply_current_typical_6": {
+        "value": "218 mA",
+        "numericValue": 218
+      },
+      "supply_current_typical_7": {
+        "value": "207 mA",
+        "numericValue": 207
+      },
+      "supply_current_typical_8": {
+        "value": "230 mA",
+        "numericValue": 230
+      },
+      "supply_current_typical_9": {
+        "value": "249 mA",
+        "numericValue": 249
+      },
       "supply_voltage": {
         "value": "–0.3 V"
       },
@@ -983,6 +1288,18 @@
         "value": "3.3",
         "numericValue": 3.3,
         "unit": "V"
+      },
+      "supply_voltage_max": {
+        "value": "3.6 V",
+        "numericValue": 3.6
+      },
+      "supply_voltage_max_2": {
+        "value": "3.6 V",
+        "numericValue": 3.6
+      },
+      "supply_voltage_min": {
+        "value": "3.0 V",
+        "numericValue": 3
       },
       "tx_output_power": {
         "value": "14",
@@ -993,6 +1310,34 @@
         "value": "16.5",
         "numericValue": 16.5,
         "unit": "dBm"
+      },
+      "tx_output_power_max": {
+        "value": "18 dBm",
+        "numericValue": 18
+      },
+      "tx_output_power_max_2": {
+        "value": "16 dBm",
+        "numericValue": 16
+      },
+      "tx_output_power_max_3": {
+        "value": "14 dBm",
+        "numericValue": 14
+      },
+      "tx_output_power_min": {
+        "value": "13 dBm",
+        "numericValue": 13
+      },
+      "tx_output_power_min_2": {
+        "value": "11 dBm",
+        "numericValue": 11
+      },
+      "tx_output_power_typical": {
+        "value": "14.5 dBm",
+        "numericValue": 14.5
+      },
+      "tx_output_power_typical_2": {
+        "value": "12.5 dBm",
+        "numericValue": 12.5
       },
       "wifi_standard": {
         "value": "IEEE 802.11b/g/n"
@@ -1069,61 +1414,61 @@
       {
         "paramName": "gaia-current_consumption-Average",
         "sampleValue": "TBD mA",
-        "attributeId": "current_consumption-Average",
+        "attributeId": "current_consumption_average",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-current_consumption-Average",
         "sampleValue": "TBD mA",
-        "attributeId": "current_consumption-Average",
+        "attributeId": "current_consumption_average_2",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-current_consumption-Average",
         "sampleValue": "82.4 mA",
-        "attributeId": "current_consumption-Average",
+        "attributeId": "current_consumption_average_3",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-current_consumption-Average",
         "sampleValue": "35.6 mA",
-        "attributeId": "current_consumption-Average",
+        "attributeId": "current_consumption_average_4",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-current_consumption-Average",
         "sampleValue": "TBD mA",
-        "attributeId": "current_consumption-Average",
+        "attributeId": "current_consumption_average_5",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-current_consumption-Average",
         "sampleValue": "TBD mA",
-        "attributeId": "current_consumption-Average",
+        "attributeId": "current_consumption_average_6",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-current_consumption-Average",
         "sampleValue": "TBD mA",
-        "attributeId": "current_consumption-Average",
+        "attributeId": "current_consumption_average_7",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-current_consumption-Average",
         "sampleValue": "67.9 mA",
-        "attributeId": "current_consumption-Average",
+        "attributeId": "current_consumption_average_8",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-current_consumption-Average",
         "sampleValue": "86.4 mA",
-        "attributeId": "current_consumption-Average",
+        "attributeId": "current_consumption_average_9",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-current_consumption-Average",
         "sampleValue": "TBD mA",
-        "attributeId": "current_consumption-Average",
+        "attributeId": "current_consumption_average_10",
         "kind": "gaia"
       },
       {
@@ -1135,61 +1480,61 @@
       {
         "paramName": "gaia-current_consumption-Max",
         "sampleValue": "TBD mA",
-        "attributeId": "current_consumption",
+        "attributeId": "current_consumption_max",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-current_consumption-Max",
         "sampleValue": "TBD mA",
-        "attributeId": "current_consumption",
+        "attributeId": "current_consumption_max_2",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-current_consumption-Max",
         "sampleValue": "97.4 mA",
-        "attributeId": "current_consumption",
+        "attributeId": "current_consumption_max_3",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-current_consumption-Max",
         "sampleValue": "97.4 mA",
-        "attributeId": "current_consumption",
+        "attributeId": "current_consumption_max_4",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-current_consumption-Max",
         "sampleValue": "TBD mA",
-        "attributeId": "current_consumption",
+        "attributeId": "current_consumption_max_5",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-current_consumption-Max",
         "sampleValue": "TBD mA",
-        "attributeId": "current_consumption",
+        "attributeId": "current_consumption_max_6",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-current_consumption-Max",
         "sampleValue": "TBD mA",
-        "attributeId": "current_consumption",
+        "attributeId": "current_consumption_max_7",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-current_consumption-Max",
         "sampleValue": "244.6 mA",
-        "attributeId": "current_consumption",
+        "attributeId": "current_consumption_max_8",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-current_consumption-Max",
         "sampleValue": "101.5 mA",
-        "attributeId": "current_consumption",
+        "attributeId": "current_consumption_max_9",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-current_consumption-Max",
         "sampleValue": "TBD mA",
-        "attributeId": "current_consumption",
+        "attributeId": "current_consumption_max_10",
         "kind": "gaia"
       },
       {
@@ -1201,7 +1546,7 @@
       {
         "paramName": "gaia-delta_f1avg-Max",
         "sampleValue": "275 KHz",
-        "attributeId": "delta_f1avg",
+        "attributeId": "delta_f1avg_max",
         "kind": "gaia"
       },
       {
@@ -1219,7 +1564,7 @@
       {
         "paramName": "gaia-delta_f2avg-Max",
         "sampleValue": "275 KHz",
-        "attributeId": "delta_f2avg",
+        "attributeId": "delta_f2avg_max",
         "kind": "gaia"
       },
       {
@@ -1261,7 +1606,7 @@
       {
         "paramName": "gaia-delta_fn_max-Max",
         "sampleValue": "150 KHz",
-        "attributeId": "delta_fn_max",
+        "attributeId": "delta_fn_max_max",
         "kind": "gaia"
       },
       {
@@ -1285,7 +1630,7 @@
       {
         "paramName": "gaia-esd_level",
         "sampleValue": "II",
-        "attributeId": "esd_level",
+        "attributeId": "esd_level_2",
         "kind": "gaia"
       },
       {
@@ -1297,7 +1642,7 @@
       {
         "paramName": "gaia-esd_voltage-Max",
         "sampleValue": "500 V",
-        "attributeId": "esd_voltage",
+        "attributeId": "esd_voltage_max",
         "kind": "gaia"
       },
       {
@@ -1309,13 +1654,13 @@
       {
         "paramName": "gaia-evm-Max",
         "sampleValue": "-25 dB",
-        "attributeId": "evm",
+        "attributeId": "evm_max",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-evm-Max",
         "sampleValue": "-27 dB",
-        "attributeId": "evm",
+        "attributeId": "evm_max_2",
         "kind": "gaia"
       },
       {
@@ -1327,13 +1672,13 @@
       {
         "paramName": "gaia-evm-Typical",
         "sampleValue": "-29 dB",
-        "attributeId": "evm-Typical",
+        "attributeId": "evm_typical",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-evm-Typical",
         "sampleValue": "-31 dB",
-        "attributeId": "evm-Typical",
+        "attributeId": "evm_typical_2",
         "kind": "gaia"
       },
       {
@@ -1351,7 +1696,7 @@
       {
         "paramName": "gaia-frequency_drift_error-Max",
         "sampleValue": "50 KHz",
-        "attributeId": "frequency_drift_error",
+        "attributeId": "frequency_drift_error_max",
         "kind": "gaia"
       },
       {
@@ -1369,7 +1714,7 @@
       {
         "paramName": "gaia-frequency_error-Max",
         "sampleValue": "+15 ppm",
-        "attributeId": "frequency_error",
+        "attributeId": "frequency_error_max",
         "kind": "gaia"
       },
       {
@@ -1387,7 +1732,7 @@
       {
         "paramName": "gaia-input_leakage_current-Max",
         "sampleValue": "10 μA",
-        "attributeId": "input_leakage_current",
+        "attributeId": "input_leakage_current_max",
         "kind": "gaia"
       },
       {
@@ -1411,7 +1756,7 @@
       {
         "paramName": "gaia-input_voltage-Max",
         "sampleValue": "VDD+0.3 V",
-        "attributeId": "input_voltage",
+        "attributeId": "input_voltage_max",
         "kind": "gaia"
       },
       {
@@ -1573,7 +1918,7 @@
       {
         "paramName": "gaia-pcb_antenna_frequency-Max",
         "sampleValue": "2500 MHz",
-        "attributeId": "pcb_antenna_frequency",
+        "attributeId": "pcb_antenna_frequency_max",
         "kind": "gaia"
       },
       {
@@ -1609,7 +1954,7 @@
       {
         "paramName": "gaia-power_average-Max",
         "sampleValue": "10 dBm",
-        "attributeId": "power_average",
+        "attributeId": "power_average_max",
         "kind": "gaia"
       },
       {
@@ -1633,115 +1978,115 @@
       {
         "paramName": "gaia-reflow_zone_temperature-Typical",
         "sampleValue": "150",
-        "attributeId": "reflow_zone_temperature-Typical",
+        "attributeId": "reflow_zone_temperature_typical",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-reflow_zone_temperature-Typical",
         "sampleValue": "170",
-        "attributeId": "reflow_zone_temperature-Typical",
+        "attributeId": "reflow_zone_temperature_typical_2",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-reflow_zone_temperature-Typical",
         "sampleValue": "175",
-        "attributeId": "reflow_zone_temperature-Typical",
+        "attributeId": "reflow_zone_temperature_typical_3",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-reflow_zone_temperature-Typical",
         "sampleValue": "180",
-        "attributeId": "reflow_zone_temperature-Typical",
+        "attributeId": "reflow_zone_temperature_typical_4",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-reflow_zone_temperature-Typical",
         "sampleValue": "215",
-        "attributeId": "reflow_zone_temperature-Typical",
+        "attributeId": "reflow_zone_temperature_typical_5",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-reflow_zone_temperature-Typical",
         "sampleValue": "250",
-        "attributeId": "reflow_zone_temperature-Typical",
+        "attributeId": "reflow_zone_temperature_typical_6",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-reflow_zone_temperature-Typical",
         "sampleValue": "260",
-        "attributeId": "reflow_zone_temperature-Typical",
+        "attributeId": "reflow_zone_temperature_typical_7",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-reflow_zone_temperature-Typical",
         "sampleValue": "247",
-        "attributeId": "reflow_zone_temperature-Typical",
+        "attributeId": "reflow_zone_temperature_typical_8",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-reflow_zone_temperature-Typical",
         "sampleValue": "200",
-        "attributeId": "reflow_zone_temperature-Typical",
+        "attributeId": "reflow_zone_temperature_typical_9",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-reflow_zone_temperature-Typical",
         "sampleValue": "135",
-        "attributeId": "reflow_zone_temperature-Typical",
+        "attributeId": "reflow_zone_temperature_typical_10",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-reflow_zone_temperature-Typical",
         "sampleValue": "150",
-        "attributeId": "reflow_zone_temperature-Typical",
+        "attributeId": "reflow_zone_temperature_typical_11",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-reflow_zone_temperature-Typical",
         "sampleValue": "170",
-        "attributeId": "reflow_zone_temperature-Typical",
+        "attributeId": "reflow_zone_temperature_typical_12",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-reflow_zone_temperature-Typical",
         "sampleValue": "175",
-        "attributeId": "reflow_zone_temperature-Typical",
+        "attributeId": "reflow_zone_temperature_typical_13",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-reflow_zone_temperature-Typical",
         "sampleValue": "180",
-        "attributeId": "reflow_zone_temperature-Typical",
+        "attributeId": "reflow_zone_temperature_typical_14",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-reflow_zone_temperature-Typical",
         "sampleValue": "215",
-        "attributeId": "reflow_zone_temperature-Typical",
+        "attributeId": "reflow_zone_temperature_typical_15",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-reflow_zone_temperature-Typical",
         "sampleValue": "250",
-        "attributeId": "reflow_zone_temperature-Typical",
+        "attributeId": "reflow_zone_temperature_typical_16",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-reflow_zone_temperature-Typical",
         "sampleValue": "260",
-        "attributeId": "reflow_zone_temperature-Typical",
+        "attributeId": "reflow_zone_temperature_typical_17",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-reflow_zone_temperature-Typical",
         "sampleValue": "247",
-        "attributeId": "reflow_zone_temperature-Typical",
+        "attributeId": "reflow_zone_temperature_typical_18",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-reflow_zone_temperature-Typical",
         "sampleValue": "200",
-        "attributeId": "reflow_zone_temperature-Typical",
+        "attributeId": "reflow_zone_temperature_typical_19",
         "kind": "gaia"
       },
       {
@@ -1753,19 +2098,19 @@
       {
         "paramName": "gaia-rx_sensitivity-Min",
         "sampleValue": "-75 dBm",
-        "attributeId": "rx_sensitivity",
+        "attributeId": "rx_sensitivity_min",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-rx_sensitivity-Min",
         "sampleValue": "-72 dBm",
-        "attributeId": "rx_sensitivity",
+        "attributeId": "rx_sensitivity_min_2",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-schmitt_trigger_high_level-Max",
         "sampleValue": "1.908 V",
-        "attributeId": "schmitt_trigger_high_level",
+        "attributeId": "schmitt_trigger_high_level_max",
         "kind": "gaia"
       },
       {
@@ -1783,7 +2128,7 @@
       {
         "paramName": "gaia-schmitt_trigger_low_level-Max",
         "sampleValue": "1.116 V",
-        "attributeId": "schmitt_trigger_low_level",
+        "attributeId": "schmitt_trigger_low_level_max",
         "kind": "gaia"
       },
       {
@@ -1813,103 +2158,103 @@
       {
         "paramName": "gaia-supply_current-Typical",
         "sampleValue": "30 μA",
-        "attributeId": "supply_current-Typical",
+        "attributeId": "supply_current_typical",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-supply_current-Typical",
         "sampleValue": "200 μA",
-        "attributeId": "supply_current-Typical",
+        "attributeId": "supply_current_typical_2",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-supply_current-Typical",
         "sampleValue": "450 μA",
-        "attributeId": "supply_current-Typical",
+        "attributeId": "supply_current_typical_3",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-supply_current-Typical",
         "sampleValue": "9 mA",
-        "attributeId": "supply_current-Typical",
+        "attributeId": "supply_current_typical_4",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-supply_current-Typical",
         "sampleValue": "198 mA",
-        "attributeId": "supply_current-Typical",
+        "attributeId": "supply_current_typical_5",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-supply_current-Typical",
         "sampleValue": "218 mA",
-        "attributeId": "supply_current-Typical",
+        "attributeId": "supply_current_typical_6",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-supply_current-Typical",
         "sampleValue": "207 mA",
-        "attributeId": "supply_current-Typical",
+        "attributeId": "supply_current_typical_7",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-supply_current-Typical",
         "sampleValue": "230 mA",
-        "attributeId": "supply_current-Typical",
+        "attributeId": "supply_current_typical_8",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-supply_current-Typical",
         "sampleValue": "249 mA",
-        "attributeId": "supply_current-Typical",
+        "attributeId": "supply_current_typical_9",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-supply_current-Typical",
         "sampleValue": "315 mA",
-        "attributeId": "supply_current-Typical",
+        "attributeId": "supply_current_typical_10",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-supply_current-Typical",
         "sampleValue": "67 mA",
-        "attributeId": "supply_current-Typical",
+        "attributeId": "supply_current_typical_11",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-supply_current-Typical",
         "sampleValue": "TBD mA",
-        "attributeId": "supply_current-Typical",
+        "attributeId": "supply_current_typical_12",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-supply_current-Typical",
         "sampleValue": "61 mA",
-        "attributeId": "supply_current-Typical",
+        "attributeId": "supply_current_typical_13",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-supply_current-Typical",
         "sampleValue": "33 mA",
-        "attributeId": "supply_current-Typical",
+        "attributeId": "supply_current_typical_14",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-supply_current-Typical",
         "sampleValue": "24 mA",
-        "attributeId": "supply_current-Typical",
+        "attributeId": "supply_current_typical_15",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-supply_voltage-Max",
         "sampleValue": "3.6 V",
-        "attributeId": "supply_voltage",
+        "attributeId": "supply_voltage_max",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-supply_voltage-Max",
         "sampleValue": "3.6 V",
-        "attributeId": "supply_voltage",
+        "attributeId": "supply_voltage_max_2",
         "kind": "gaia"
       },
       {
@@ -1921,7 +2266,7 @@
       {
         "paramName": "gaia-supply_voltage-Min",
         "sampleValue": "3.0 V",
-        "attributeId": "supply_voltage",
+        "attributeId": "supply_voltage_min",
         "kind": "gaia"
       },
       {
@@ -1933,19 +2278,19 @@
       {
         "paramName": "gaia-tx_output_power-Max",
         "sampleValue": "18 dBm",
-        "attributeId": "tx_output_power",
+        "attributeId": "tx_output_power_max",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-tx_output_power-Max",
         "sampleValue": "16 dBm",
-        "attributeId": "tx_output_power",
+        "attributeId": "tx_output_power_max_2",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-tx_output_power-Max",
         "sampleValue": "14 dBm",
-        "attributeId": "tx_output_power",
+        "attributeId": "tx_output_power_max_3",
         "kind": "gaia"
       },
       {
@@ -1957,13 +2302,13 @@
       {
         "paramName": "gaia-tx_output_power-Min",
         "sampleValue": "13 dBm",
-        "attributeId": "tx_output_power",
+        "attributeId": "tx_output_power_min",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-tx_output_power-Min",
         "sampleValue": "11 dBm",
-        "attributeId": "tx_output_power",
+        "attributeId": "tx_output_power_min_2",
         "kind": "gaia"
       },
       {
@@ -1975,13 +2320,13 @@
       {
         "paramName": "gaia-tx_output_power-Typical",
         "sampleValue": "14.5 dBm",
-        "attributeId": "tx_output_power-Typical",
+        "attributeId": "tx_output_power_typical",
         "kind": "gaia"
       },
       {
         "paramName": "gaia-tx_output_power-Typical",
         "sampleValue": "12.5 dBm",
-        "attributeId": "tx_output_power-Typical",
+        "attributeId": "tx_output_power_typical_2",
         "kind": "gaia"
       },
       {

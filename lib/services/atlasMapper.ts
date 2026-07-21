@@ -3294,6 +3294,60 @@ export interface MappedAtlasProduct {
 }
 
 /**
+ * Layer 1 — never discard a losing spelling (Decision #278).
+ *
+ * When two source params resolve to the SAME (family, attributeId) slot, only
+ * the first wins; the rest used to be dropped on the floor. That is real data
+ * loss, and it is caused by a mapping ACCEPT: the Good-Ark case had
+ * `Rdson@ 10V(mΩ) Typ` at column 7 and `Rdson@ 10V(mΩ) Max` at column 8 both
+ * pointing at `rds_on`, so accepting the Max spelling silently deleted the Max
+ * value from all 44 parts.
+ *
+ * Measured over all 429 source files / 437,093 products: 225,902 values were
+ * being discarded and 195,886 (86.7%) carried a value the winner did not have.
+ *
+ * The loser is kept under its raw param name, exactly where an unmapped param
+ * would have gone. Raw ids appear in no logic table, so scoring is untouched.
+ *
+ * Value-equality guard: identical values are dropped (nothing to preserve).
+ * The comparison is deliberately CONSERVATIVE — a false "differs" merely keeps
+ * a redundant copy, while a false "same" would delete data.
+ *
+ * ⚠️ Mirror: `keepLosingValue` in scripts/atlas-ingest.mjs is the LIVE ingest
+ * path. Keep the two in lockstep — they are pinned against each other by
+ * __tests__/services/atlasLayer1Parity.test.ts.
+ */
+export function rawIdForParam(decodedName: string): string {
+  // Strip the gaia- provenance prefix before it can reach an attribute id —
+  // vendor names must never surface to end users.
+  return stripGaiaPrefix(decodedName)
+    .normalize('NFC') // one encoding per name, so 额定线圈功率 can't become two keys
+    .toLowerCase()
+    .trim()
+    // Keep Unicode LETTERS and NUMBERS, not just [a-z0-9]. An ASCII-only rule
+    // slugs a pure-Chinese name to the empty string and the value gets dropped
+    // anyway (42,902 values across the corpus). The stored key IS the display
+    // name (fromParametersJsonb humanizes it), so keep the characters.
+    .replace(/[^\p{L}\p{N}_]+/gu, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+}
+
+/**
+ * Bound on same-slug losers per product. Purely a runaway guard — measured
+ * across all 429 source files, 200 preserves 100% of differing values (a bound
+ * of 20 dropped 1,530 of them, so this is not a knob to tighten casually).
+ * Mirror: MAX_LOSER_SUFFIX in scripts/atlas-ingest.mjs.
+ */
+export const MAX_LOSER_SUFFIX = 200;
+
+/** True when the losing value carries information the winner does not. */
+export function losingValueDiffers(rawValue: string, winnerValue: string | undefined): boolean {
+  const norm = (v: string | undefined) => String(v ?? '').trim().toLowerCase();
+  return norm(rawValue) !== norm(winnerValue);
+}
+
+/**
  * Maps a single Atlas model to internal types.
  * Returns a MappedAtlasProduct with Part, ParametricAttribute[], familyId, and warnings.
  */
@@ -3345,6 +3399,44 @@ export function mapAtlasModel(
     : gaiaL2Dictionaries[classification.category];
   const parameters: ParametricAttribute[] = [];
   const seenAttributeIds = new Set<string>();
+
+  /**
+   * Layer 1 (Decision #278) — keep a losing spelling's value under its raw
+   * param name instead of dropping it. Mirror of `keepLosingValue` in
+   * scripts/atlas-ingest.mjs.
+   */
+  /**
+   * Store a value under a raw (non-canonical) key without ever overwriting or
+   * dropping. Returns the key used, or null if the name yields no usable key.
+   * Shared by both rescue paths so they cannot drift.
+   * Mirror: storeRawValue in scripts/atlas-ingest.mjs.
+   */
+  const storeRawValue = (
+    decodedName: string,
+    rawValue: string,
+    preferredId?: string,
+  ): string | null => {
+    const base = preferredId || rawIdForParam(decodedName);
+    if (!base) return null;
+    let key = base;
+    for (let n = 2; seenAttributeIds.has(key) && n <= MAX_LOSER_SUFFIX; n++) key = `${base}_${n}`;
+    if (seenAttributeIds.has(key)) return null;
+    seenAttributeIds.add(key);
+    parameters.push({
+      parameterId: key,
+      parameterName: stripGaiaPrefix(decodedName.trim()),
+      value: String(rawValue).trim(),
+      numericValue: extractNumeric(rawValue),
+      sortOrder: 200 + parameters.length,
+    });
+    return key;
+  };
+
+  const keepLosingValue = (decodedName: string, rawValue: string, winnerId: string): void => {
+    const winner = parameters.find(x => x.parameterId === winnerId);
+    if (!losingValueDiffers(rawValue, winner?.value)) return;
+    storeRawValue(decodedName, rawValue);
+  };
   let packageValue: string | undefined;
 
   // Pre-scan gaia params: stem -> set of suffixes present in THIS product.
@@ -3411,6 +3503,13 @@ export function mapAtlasModel(
             unit: parsed.unit,
             sortOrder: 200 + parameters.length,
           });
+        } else {
+          // Suffix variants of one stem (…-Min / …-Max / …-Typ) all reduce to the
+          // SAME stem, so every variant after the first used to be dropped —
+          // 80,228 values corpus-wide. The stem keeps its historical key (no
+          // re-keying of ingested rows); variants land under their own suffixed
+          // names. (Decision #278)
+          storeRawValue(decodedName, p.value);
         }
         continue;
       }
@@ -3421,6 +3520,9 @@ export function mapAtlasModel(
       if (gaiaMapping.preferredSuffix && gaia.suffix && gaia.suffix !== gaiaMapping.preferredSuffix) {
         const present = gaiaStemSuffixes.get(gaia.stem);
         if (present && present.has(gaiaMapping.preferredSuffix)) {
+          // The preferred variant wins the slot, but the non-preferred one is a
+          // genuinely different measurement (Typ vs Max) — keep it. (Decision #278)
+          keepLosingValue(decodedName, p.value, gaiaMapping.attributeId);
           continue;
         }
       }
@@ -3429,7 +3531,10 @@ export function mapAtlasModel(
       if (gaiaMapping.attributeId.startsWith('_')) continue;
 
       // Deduplicate — first occurrence of each attributeId wins
-      if (seenAttributeIds.has(gaiaMapping.attributeId)) continue;
+      if (seenAttributeIds.has(gaiaMapping.attributeId)) {
+        keepLosingValue(decodedName, p.value, gaiaMapping.attributeId);
+        continue;
+      }
       seenAttributeIds.add(gaiaMapping.attributeId);
 
       // Parse value (gaia values embed units: "5.8 mΩ", "100 V")
@@ -3473,18 +3578,13 @@ export function mapAtlasModel(
       ?? metadataParamDictionary[lowerName];
 
     if (!mapping) {
-      // Store with raw param name (nothing thrown away)
+      // Store with raw param name (nothing thrown away). The historical
+      // ASCII-only slug stays the PREFERRED key so ingested rows don't re-key;
+      // when it is empty (a pure-Chinese name reduces to '') or already taken,
+      // fall back to the Unicode-preserving key instead of binning the value.
+      // (Decision #278 — 251,643 + 7,062 values corpus-wide.)
       const rawId = lowerName.replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
-      if (rawId && !seenAttributeIds.has(rawId)) {
-        seenAttributeIds.add(rawId);
-        parameters.push({
-          parameterId: rawId,
-          parameterName: stripGaiaPrefix(decodedName.trim()),
-          value: p.value.trim(),
-          numericValue: extractNumeric(p.value),
-          sortOrder: 200 + parameters.length,
-        });
-      }
+      storeRawValue(decodedName, p.value, rawId || undefined);
       continue;
     }
 
@@ -3492,7 +3592,10 @@ export function mapAtlasModel(
     if (mapping.attributeId.startsWith('_')) continue;
 
     // Deduplicate — gaia may have already provided this attributeId
-    if (seenAttributeIds.has(mapping.attributeId)) continue;
+    if (seenAttributeIds.has(mapping.attributeId)) {
+      keepLosingValue(decodedName, p.value, mapping.attributeId);
+      continue;
+    }
     seenAttributeIds.add(mapping.attributeId);
 
     // Normalize value based on attributeId

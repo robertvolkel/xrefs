@@ -2688,6 +2688,94 @@ function cleanManufacturerName(raw) {
 
 // ─── Main mapping function ────────────────────────────────
 
+/**
+ * Layer 1 — never discard a losing spelling (Decision #278).
+ *
+ * When two source params resolve to the SAME (family, attributeId) slot, only
+ * the first wins; the rest used to be dropped on the floor. That is real data
+ * loss, and it is caused by a mapping ACCEPT: the Good-Ark case had
+ * `Rdson@ 10V(mΩ) Typ` at column 7 and `Rdson@ 10V(mΩ) Max` at column 8 both
+ * pointing at `rds_on`, so accepting the Max spelling silently deleted the Max
+ * value from all 44 parts and left `rds_on` holding a TYPICAL number on a
+ * weight-9 threshold rule.
+ *
+ * Measured over all 429 source files / 437,093 products: 225,902 values were
+ * being discarded this way and 195,886 of them (86.7%) carried a value the
+ * winner did not have. So this is not a rounding error — it is ~0.45 lost
+ * measurements per product.
+ *
+ * The fix keeps the loser under its raw param name, exactly where an unmapped
+ * param would have gone. No domain judgement is involved (keeping beats
+ * binning), nothing changes for the winner, and raw ids are not in any logic
+ * table so scoring is untouched — the value simply stops vanishing.
+ *
+ * Deliberately NOT recorded in unmappedParams: these params ARE mapped, they
+ * just lost a slot. Flooding Triage with them would bury the genuine gaps.
+ *
+ * Value-equality guard: when the loser's value is identical to the winner's,
+ * dropping it loses nothing, so we skip it and avoid pure noise (that is ~13%
+ * of cases). The comparison is deliberately CONSERVATIVE — a false "differs"
+ * merely keeps a redundant copy, while a false "same" would delete data.
+ *
+ * Mirror: `keepLosingValue` in lib/services/atlasMapper.ts (keep in lockstep).
+ */
+function rawIdForParam(decodedName) {
+  // Strip the gaia- provenance prefix before it can reach an attribute id —
+  // vendor names must never surface to end users.
+  return decodedName
+    .replace(/^gaia[-_]/i, '')
+    .normalize('NFC') // one encoding per name, so 额定线圈功率 can't become two keys
+    .toLowerCase()
+    .trim()
+    // Keep Unicode LETTERS and NUMBERS, not just [a-z0-9]. An ASCII-only rule
+    // slugs a pure-Chinese name (额定线圈功率, 类型, 峰值波长) to the empty
+    // string, and the value gets dropped anyway — measured at 42,902 values
+    // across the corpus, 14,198 of them from 额定线圈功率 alone. The stored key
+    // IS the display name (fromParametersJsonb humanizes it), so keeping the
+    // characters keeps the parameter identifiable.
+    .replace(/[^\p{L}\p{N}_]+/gu, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+}
+
+// Bound on same-slug losers per product. Purely a runaway guard — measured
+// across all 429 source files, 200 preserves 100% of differing values (a bound
+// of 20 dropped 1,530 of them, so this is not a knob to tighten casually).
+const MAX_LOSER_SUFFIX = 200;
+
+/**
+ * Store a value under a raw (non-canonical) key, without ever overwriting or
+ * dropping. Returns the key used, or null if the name yields no usable key.
+ *
+ * Shared by BOTH rescue paths so they cannot drift:
+ *  - a mapped param that lost a slot (keepLosingValue, below)
+ *  - a param with no dictionary entry at all (the unmapped branches in mapModel)
+ *
+ * Mirror: storeRawValue in lib/services/atlasMapper.ts.
+ */
+function storeRawValue(parameters, decodedName, rawValue, preferredId) {
+  const base = preferredId || rawIdForParam(decodedName);
+  if (!base) return null;
+  // Two different names can slug to the same key (or collide with a mapped
+  // winner). Suffix rather than drop — otherwise the second value is silently
+  // binned, which is the bug this whole mechanism exists to fix.
+  let key = base;
+  for (let n = 2; parameters[key] !== undefined && n <= MAX_LOSER_SUFFIX; n++) key = `${base}_${n}`;
+  if (parameters[key] !== undefined) return null; // pathological; bail rather than loop forever
+  const numericValue = extractNumeric(rawValue);
+  parameters[key] = {
+    value: String(rawValue).trim(),
+    ...(numericValue !== undefined && { numericValue }),
+  };
+  return key;
+}
+
+function keepLosingValue(parameters, decodedName, rawValue, winner) {
+  const norm = (v) => String(v ?? '').trim().toLowerCase();
+  if (norm(rawValue) === norm(winner?.value)) return; // identical — nothing to preserve
+  storeRawValue(parameters, decodedName, rawValue);
+}
+
 function mapModel(model, manufacturerName, sourceFile) {
   const warnings = [];
   // Tracks param names that fell through dictionary lookups and were stored under an
@@ -2775,6 +2863,7 @@ function mapModel(model, manufacturerName, sourceFile) {
       const gaiaMapping = overrideMapping ?? gaiaDict?.[gaia.stem] ?? GAIA_SHARED[gaia.stem];
       if (!gaiaMapping) {
         // Store with auto-humanized name (nothing thrown away)
+        let gaiaKey = gaia.stem;
         if (!parameters[gaia.stem]) {
           const parsed = parseGaiaValue(p.value);
           const numConverted = applyUnitPrefix(parsed.numericValue, parsed.unit);
@@ -2783,18 +2872,33 @@ function mapModel(model, manufacturerName, sourceFile) {
             ...(numConverted !== undefined && { numericValue: numConverted }),
             ...(parsed.unit ? { unit: parsed.unit } : {}),
           };
+        } else {
+          // Suffix variants of one stem (…-Min / …-Max / …-Typ) all reduce to
+          // the SAME stem, so every variant after the first used to be dropped
+          // — 80,228 values across the corpus. The stem keeps its historical
+          // key (no re-keying of ingested rows); the variants land under their
+          // own suffixed names. (Decision #278)
+          gaiaKey = storeRawValue(parameters, decodedName, p.value) ?? gaia.stem;
         }
-        unmappedParams.push({ paramName: decodedName, sampleValue: String(p.value).slice(0, 80), attributeId: gaia.stem, kind: 'gaia' });
+        unmappedParams.push({ paramName: decodedName, sampleValue: String(p.value).slice(0, 80), attributeId: gaiaKey, kind: 'gaia' });
         continue;
       }
       if (gaiaMapping.preferredSuffix && gaia.suffix && gaia.suffix !== gaiaMapping.preferredSuffix) {
         // Skip only if the preferred-suffix variant is actually present for
         // this stem; otherwise fall through and map the available variant.
         const present = gaiaStemSuffixes.get(gaia.stem);
-        if (present && present.has(gaiaMapping.preferredSuffix)) continue;
+        if (present && present.has(gaiaMapping.preferredSuffix)) {
+          // The preferred variant wins the slot, but the non-preferred one is a
+          // genuinely different measurement (Typ vs Max) — keep it. (Decision #278)
+          keepLosingValue(parameters, decodedName, p.value, parameters[gaiaMapping.attributeId]);
+          continue;
+        }
       }
       if (gaiaMapping.attributeId.startsWith('_')) continue;
-      if (parameters[gaiaMapping.attributeId]) continue; // dedup
+      if (parameters[gaiaMapping.attributeId]) {
+        keepLosingValue(parameters, decodedName, p.value, parameters[gaiaMapping.attributeId]);
+        continue; // dedup
+      }
 
       const parsed = parseGaiaValue(p.value);
       let displayValue = parsed.displayValue;
@@ -2821,19 +2925,24 @@ function mapModel(model, manufacturerName, sourceFile) {
     const mapping = familyDict?.[lowerName] ?? SHARED_PARAMS[lowerName] ?? METADATA_PARAMS[lowerName];
     if (!mapping) {
       // Store with raw param name (nothing thrown away)
+      // The historical key: ASCII-only slug. Kept as the PREFERRED key so
+      // already-ingested products don't re-key on the next backfill.
       const rawId = lowerName.replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
-      if (rawId && !parameters[rawId]) {
-        parameters[rawId] = {
-          value: p.value.trim(),
-          ...(extractNumeric(p.value) !== undefined && { numericValue: extractNumeric(p.value) }),
-        };
-      }
-      unmappedParams.push({ paramName: decodedName, sampleValue: String(p.value).slice(0, 80), attributeId: rawId, kind: 'standard' });
+      // ...but when it is empty (a pure-Chinese name like 工作电压 reduces to
+      // '') or already taken, the value used to be dropped outright. Measured
+      // across the corpus: 251,643 values lost to the empty slug and 7,062 to
+      // collisions — operating voltage, rated voltage, contact current. Fall
+      // back to the Unicode-preserving key so nothing is binned. (Decision #278)
+      const storedId = storeRawValue(parameters, decodedName, p.value, rawId || undefined);
+      unmappedParams.push({ paramName: decodedName, sampleValue: String(p.value).slice(0, 80), attributeId: storedId ?? rawId, kind: 'standard' });
       continue;
     }
 
     if (mapping.attributeId.startsWith('_')) continue;
-    if (parameters[mapping.attributeId]) continue; // dedup
+    if (parameters[mapping.attributeId]) {
+      keepLosingValue(parameters, decodedName, p.value, parameters[mapping.attributeId]);
+      continue; // dedup
+    }
 
     let displayValue = p.value.trim();
     // Hybrid: parse number AND unit from value string; dict unit is fallback.
