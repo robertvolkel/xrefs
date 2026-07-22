@@ -4,6 +4,108 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+# Max-effort review of Decision #279, 21 July 2026 — 15 findings, DO NOT MERGE OR BACKFILL
+
+10 finder angles + independent verification over `ac3591e..HEAD`, most findings confirmed by
+EXECUTION against the real 429-file corpus (437,387 products) and the live database.
+
+## The through-line
+
+The reserved-id guard was right in principle and wrong in execution. It changed a **storage
+contract** — "keys in `atlas_products.parameters` are canonical attributeIds" — and only two
+of the consumers that rely on that contract were updated. Four read it: the Specs panel
+(`fromParametersJsonb`), the coverage RPC, the widening RPC (in SQL, where `raw_` cannot
+exist), and the reclassify RPC.
+
+⚠️ **The pre-flight dry run gave a false all-clear.** It measured keys ADDED and keys REMOVED
+and reported "zero new deletions". Values that change **in place** appear in neither column,
+so it was structurally blind to finding 3 below. Any future pre-flight must diff VALUES, not
+just keys.
+
+## Blockers — must be fixed before merge
+
+1. **The guard misses the main door.** The unmapped-gaia-stem branch
+   (`atlas-ingest.mjs:2921`, mirror `atlasMapper.ts:3601`) writes `parameters[gaia.stem]`
+   directly, never calling `storeRawValue`. 3,789 values across 93 reserved ids; 404 of 434
+   reserved ids are reachable. It also **inverts the intent**: with `-Typ` and `-Max` present,
+   Typ wins through the unguarded door and Max is escaped — permanently guaranteeing the
+   optimistic number scores.
+2. **`applyUnitPrefix` corrupts non-unit tokens.** `ppm`→×1e-12, `pcs`→×1e-12, `units`→×1e-6.
+   575 raw-slot values, 545 of them `ppm` ("+15 ppm" → 1.5e-11). The lowercase path guards
+   only `mm`/`no`/`MSL`; rescued values are exactly where junk tokens concentrate.
+3. **Escaping frees a slot and silently changes the scored value.** YANGJIE
+   FRD60A600AS-290A: the vendor's own `VRRM=600` escapes, letting dict-mapped `VR (V)=630`
+   (a different measurement) occupy `vrrm`. 44 products rescored 600→630. 66 values / 3 ids.
+4. **Demoting CATEGORICAL values makes matching more permissive, not safer.** `channel_type`
+   `N` → escaped → rule scores `review` = 50% credit that never fails ⇒ **an N-channel source
+   surfaces P-channel replacements**. The "missing is the safe failure mode" justification
+   holds for thresholds and is false for identity rules.
+5. **The undo rollback can create the divergence it prevents.** `recordParamDecisions` chunks
+   at 500 and returns false if ANY chunk fails while earlier chunks stay committed; the
+   rollback then reactivates everything against an append-only log.
+6. **Status-undo writes are never rolled back.** The notes row is UPDATEd/DELETEd, never
+   restored, while the response says "nothing was changed".
+
+## Also confirmed
+
+7. `raw_` leaks to users — 113,587 values / 127 attributeIds render as "Raw Inductance",
+   demoted below a collapsed toggle. 8. Coverage % falls corpus-wide for MFRs nobody touched.
+9. The widening RPC goes blind to escaped values (SQL has no `raw_` concept).
+10. `batch/undo` still discards `recordParamDecisions`' result. 11. The restore has no
+`.select()` and reports a count it never read. 12. **Seven test assertions are vacuous** —
+all 114 unit-prefix tests target the UNGATED function production never calls (flipping the
+kill switch passes 114/114); plus a `warnings` assertion on a field with zero push sites, an
+`expect(0).toBe(0)`, an escalation message test that passes with "0 mapping(s)", a suite
+declaring `undone` where the route returns `reverted`, a registry test comparing the source
+expression to a copy of itself, and 9 parity cases that all sit on ONE B5 fixture and so
+never reach the L2/shared dicts where the real divergences live. 13. The anchored regex drops
+`约0.9W` (2,276×) numericValues. 14. The case rule is generative — 18 combos enabled, 5
+measured; `UV`→1e-6 and `PW`→1e-12 are live hazards for the next supplier drop.
+15. `readSlot` fixes the derivation READS but not their GUARDS, and probes only the
+unsuffixed `raw_<id>` (latent: 0 products today).
+
+## Verified CLEAN — do not re-litigate
+
+- **Idempotency PASSES.** Successive backfills produce zero key churn, no `_2`/`_3` growth;
+  `mergeAtlasParameters` drops atlas-tagged keys before re-adding. Extraction-sourced values
+  are preserved (verified on AK/SR820).
+- **No values silently dropped** — `storeRawValue` returns null 5× corpus-wide.
+- **The two mapper copies genuinely agree** on everything this diff rewrote, at 437k scale.
+- **No circular-import hazard**: `RESERVED_ATTRIBUTE_IDS` = 434 in either import order.
+- **CLI `--report --dry-run` and usage output byte-identical**; golden file deterministic.
+- Efficiency of every added check measured negligible (~12ns × 6.55M calls).
+
+## THE PLAN
+
+**Design change first — annotate, do not rename.** Instead of moving a value to `raw_<id>`,
+keep the canonical key and mark the value (`{value, numericValue, unvetted: true}`). This
+preserves the storage contract, so display / coverage / both SQL RPCs / the derivations all
+keep working untouched, and there is **no key churn and no migration**. Only ONE consumer —
+the matching engine — has to learn the flag. Scope it to **numeric values only**, which is
+where the unit-scale hazard actually lives; that also resolves blocker 4, since categoricals
+keep scoring as they do today.
+
+- **Phase 1 — redo the guard.** One chokepoint at the parameter-map write so the gaia path is
+  covered by construction (blocker 1). Numeric-only. Annotate, don't rename. Teach
+  `matchingEngine` to treat an unvetted numeric as `review`. Blocker 3 disappears with the
+  rename.
+- **Phase 2 — fix unit conversion.** Apply whole-token recognition to the LOWERCASE path too
+  (kills `ppm`/`pcs`/`units`). Replace the generative {P,U}×{atoms} cross with the 5 measured
+  tokens pinned explicitly. Restore an unanchored fallback for `约0.9W`.
+- **Phase 3 — undo route.** Move deactivate+append into ONE Postgres function so atomicity
+  replaces compensation (removes blockers 5 and 6 and the `batch/undo` gap together). The
+  repo already uses `SECURITY DEFINER` RPCs for exactly this shape.
+- **Phase 4 — tests.** Point them at the GATED function; fix the 7 vacuous assertions; add
+  parity cases on non-B5 categories that reach the L2/shared dicts.
+- **Phase 5 — pre-flight, then backfill.** Re-run the dry run with a **value-level** diff
+  (not key-level) and reconcile the 4-attribute TS/.mjs dictionary drift the guard un-masked
+  (92 products) before writing.
+
+**Keep as-is:** Blocker 2 (raw-vs-raw comparison) is sound and mutation-tested. Decision #279's
+unit-case work is sound once Phase 2 lands.
+
+---
+
 # Code review of `feat/param-decision-log`, 21 July 2026 — 16 findings
 
 Max-effort review, 6 independent finder agents + verification, over the whole branch
