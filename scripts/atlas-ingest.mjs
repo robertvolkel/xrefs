@@ -32,6 +32,10 @@ const GAIA_FAMILIES = gaiaData.families;
 const GAIA_SHARED = gaiaData.shared;
 const GAIA_L2 = gaiaData.l2Categories || {};
 
+// ─── Load case-tolerant unit prefixes from shared JSON ──
+const unitCaseData = JSON.parse(readFileSync(resolve(process.cwd(), 'lib/services/atlas-unit-case.json'), 'utf-8'));
+const PREFIXABLE_ATOMS = new Set(unitCaseData.prefixableAtoms);
+
 function humanizeStem(stem) {
   return stem.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
@@ -2582,10 +2586,27 @@ const APPLY_UNIT_PREFIX_TO_NUMERIC = true;
 // Multiplies numericValue by the SI prefix implied by unit so stored
 // number is base SI. Mirror of applyUnitPrefix in atlasMapper.ts.
 // Guards against 'mm' (length), 'MSL' (moisture sensitivity), 'no' (count).
+// Applies an SI prefix written in the WRONG CASE, but only when the remainder is
+// exactly a known unit atom — a whole token, never a first letter. Suppliers
+// write "4010 PF" for picofarads; the lowercase-only checks below skipped it.
+// Case-INSENSITIVE matching would be destructive: it would newly "convert"
+// 14,840 'Pin' values, 7,106 'N' and 342 'Nm' (newton-metre). Table is shared
+// with lib/services/atlasMapper.ts via atlas-unit-case.json so the two copies
+// cannot drift; that file documents why 'N' and 'M' are excluded.
+function caseTolerantMultiplier(unit) {
+  const multiplier = unitCaseData.caseTolerantPrefixes[unit[0]];
+  if (multiplier === undefined) return null;
+  // A bare 'P' leaves '' behind, which is not an atom — so this check alone
+  // rejects single-letter tokens (verified by mutation testing).
+  return PREFIXABLE_ATOMS.has(unit.slice(1)) ? multiplier : null;
+}
+
 function applyUnitPrefix(numericValue, unit) {
   if (!APPLY_UNIT_PREFIX_TO_NUMERIC) return numericValue;
   if (numericValue === undefined || isNaN(numericValue)) return numericValue;
   if (!unit) return numericValue;
+  const cased = caseTolerantMultiplier(unit);
+  if (cased !== null) return numericValue * cased;
   if (unit.startsWith('p')) return numericValue * 1e-12;
   if (unit.startsWith('n') && !unit.startsWith('no')) return numericValue * 1e-9;
   if (unit.startsWith('µ') || unit.startsWith('μ') || unit.startsWith('u')) return numericValue * 1e-6;  // µ U+00B5 vs μ U+03BC — both used in Atlas data
@@ -5252,4 +5273,7 @@ if (IS_CLI) (async () => {
 // __tests__/services/atlasIngestMapper.test.ts can call the REAL mapping
 // function rather than a parallel implementation that drifts from it.
 // Adding an export has no effect on the CLI path.
-export { mapModel, classifyAtlasCategory, cleanManufacturerName };
+// `applyUnitPrefix` is exported for the parity test ONLY. The TS copy in
+// atlasMapper.ts and this one must agree on every real corpus token; a
+// "keep in lockstep" comment is not a mechanism, so the test is the mechanism.
+export { mapModel, classifyAtlasCategory, cleanManufacturerName, applyUnitPrefix };

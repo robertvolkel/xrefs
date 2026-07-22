@@ -67,6 +67,9 @@ function decodeLiteralByteEscapes(s: string): string {
   });
 }
 import { FAMILY_PARAM_SIGNATURES } from './atlasFamilyParamSignatures';
+// Shared with scripts/atlas-ingest.mjs (the live ingest path) so the two copies
+// of the prefix rule cannot drift. Same pattern as atlas-gaia-dicts.json.
+import unitCaseData from './atlas-unit-case.json';
 
 // ─── Atlas JSON Types ─────────────────────────────────────
 
@@ -2501,6 +2504,40 @@ export const APPLY_UNIT_PREFIX_TO_NUMERIC = true;
  * (V, A, Ω, °C, %, ppm/°C, nV/√Hz, etc.).
  */
 /**
+ * Applies an SI prefix written in the WRONG CASE — but only when the remainder
+ * is exactly a known unit atom, so a whole token is recognised rather than a
+ * first letter.
+ *
+ * Suppliers write "4010 PF" for picofarads. The lowercase-only checks below
+ * skipped it, so it stored 4010 instead of 4.01e-9 while "6.5 mΩ" on the SAME
+ * product converted correctly (reproduced on the real file
+ * data/atlas/mfr_389_AK_奥科_params.json, model AK4080).
+ *
+ * ⚠️ Case-INSENSITIVE matching would be destructive, not a fix. Measured over
+ * all 429 source files it would newly "convert" 14,840 values reading 'Pin'
+ * (pin count), 39,645 reading 'P', 7,106 reading 'N' and 342 reading 'Nm'
+ * (newton-metre). Only ~2,100 of ~29,600 case-mismatched tokens are genuine
+ * prefixes — the lowercase-only rule was PROTECTING the other 27,000.
+ *
+ * The table lives in atlas-unit-case.json, shared with scripts/atlas-ingest.mjs
+ * (the live path) so the two copies cannot drift. See that file for why 'N' and
+ * 'M' are deliberately excluded.
+ *
+ * Verified over all 429 files: converts 2,086 values (PF/UA/PA/Ps/Us), leaves
+ * 661,728 untouched.
+ */
+export function caseTolerantMultiplier(unit: string): number | null {
+  const multiplier = (unitCaseData.caseTolerantPrefixes as Record<string, number>)[unit[0]];
+  if (multiplier === undefined) return null;
+  // A bare 'P' leaves '' behind, which is not an atom — so this check alone
+  // rejects single-letter tokens. An explicit length guard here was verified
+  // dead by mutation testing (removing it failed nothing) and was dropped.
+  return PREFIXABLE_ATOMS.has(unit.slice(1)) ? multiplier : null;
+}
+
+const PREFIXABLE_ATOMS: ReadonlySet<string> = new Set(unitCaseData.prefixableAtoms);
+
+/**
  * Pure SI-prefix conversion — no flag check. Exported for unit testing
  * so the prefix logic stays covered regardless of kill-switch state.
  * Production code should call `applyUnitPrefix` (the gated wrapper) instead.
@@ -2508,6 +2545,8 @@ export const APPLY_UNIT_PREFIX_TO_NUMERIC = true;
 export function _applyUnitPrefixCore(numericValue: number | undefined, unit: string | undefined): number | undefined {
   if (numericValue === undefined || isNaN(numericValue)) return numericValue;
   if (!unit) return numericValue;
+  const cased = caseTolerantMultiplier(unit);
+  if (cased !== null) return numericValue * cased;
   if (unit.startsWith('p')) return numericValue * 1e-12;
   if (unit.startsWith('n') && !unit.startsWith('no')) return numericValue * 1e-9;
   if (unit.startsWith('µ') || unit.startsWith('μ') || unit.startsWith('u')) return numericValue * 1e-6;  // µ = U+00B5 (micro sign), μ = U+03BC (Greek small mu)
