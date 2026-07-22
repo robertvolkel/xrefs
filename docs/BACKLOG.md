@@ -1,33 +1,37 @@
-# ⏭️ NEXT ACTION — the Atlas parameter-scale fix is CODE-COMPLETE but NOT APPLIED
+# ✅ APPLIED — the Atlas parameter-scale fix is live in the database (July 22, 2026)
 
-**Read this first if you are picking up work on `feat/param-decision-log`.**
+The backfill ran. `Scanned 437093 / Changed 52997 / Unchanged 363825 / Missing 20271 /
+**Errors 0**` — the changed count matched the dry-run prediction exactly (Siliup was
+deliberately left reverted after the rehearsal so the number stayed checkable).
+Siliup/SP40N25TQ `rds_on` is now **0.08**, display string `"80mΩ@10V"` unchanged.
 
-The code is done, verified and committed (`63bc29c`). **The database has NOT been touched.**
-All 153,993 corrections exist only as code — `atlas_products` still holds the old wrong-scale
-numbers (Siliup/SP40N25TQ `rds_on` is still stored as 80, not 0.08). Nothing a user sees has
-changed yet.
+**Verified five ways afterwards** — three of them independent of the process:
 
-**Order of operations:**
+| Check | Result |
+| --- | --- |
+| Value audit over all 416,822 products, pre-run | keys added/removed **0**, display strings changed **0**, numbers lost **0**, extraction/manual dropped **0** |
+| DB vs pre-run backup | **52,992** rows differ — matches the audit's pre-run prediction exactly |
+| Independent re-read of corrected values (separately-written SI parser) | **15,104 checked, 0 disagreements** |
+| Second dry run (completeness) | 43 still changing — all explained, see below |
+| Real engine, real B5 table | 80 mΩ candidate vs 100 mΩ source: **FAIL → PASS**, 89% → 94% |
 
-1. `npm run atlas:backfill:dry` — dry run. The mapping pass over 429 files takes ~1 minute.
-2. **Read what it plans to change before writing anything.** The four gates that must all be
-   zero: keys added / keys removed / display strings changed / numbers lost. Compare VALUES,
-   not just key names — a key-level diff is blind to a value replaced in place, which is how
-   the 600 V → 630 V substitution went unseen the first time.
-3. **Take a snapshot first.** Unlike the batch-ingest flow (`atlas_products_snapshots`, 30-day
-   window) the backfill has NO snapshot and NO revert path. It is *reproducible* — it re-maps
-   from the immutable source files, so a bad run is fixed by fixing the code and re-running —
-   but the only values those files cannot regenerate are the LLM-extracted ones (~628 per
-   40,000 products). `mergeAtlasParameters` preserves those, verified on AK/SR820.
-4. `npm run atlas:backfill` — the real run. ⚠️ Wrap in `caffeinate -i` so the machine does not
-   sleep mid-run (see the atlas-backfill-operational-gotchas memory).
-5. Re-run the scoring spot-check: the 80 mΩ candidate should now pass, rated better, against a
-   100 mΩ source.
-6. Then decide on merging the 34 commits to `main`.
+**52,997 written vs 52,992 actually changed.** The 5-product gap that was an open mystery is
+now measured: those products contain a field where the mapper emits **`NaN`**, which JSON
+serialises to **`null`**. Stored null ≠ in-memory NaN on the next comparison, so they are
+rewritten forever while their stored content never changes. Harmless — null before, null after,
+and the engine treats it as missing either way.
 
-**Context:** Decision #280 and the post-merge review that follows it in `docs/DECISIONS.md`.
-The review is the important half — it found a bug the fix itself introduced (gauss read as
-giga-second, 229 values) and explains why four green gates did not catch it.
+**⚠️ The second dry run will never report 0.** 43 products (ETA 21, COSINE 14, Geehy 5,
+MXChip 3) are perpetually "would change" for that same null-vs-NaN reason, on fields like
+`supply_voltage`, `operating_temp`, `storage_temperature_range`. Pre-existing mapper quirk,
+unrelated to the scale fix, no data impact. Fixing it means making the mapper emit `undefined`
+rather than `NaN` when a value won't parse. **Do not read a non-zero dry run here as a failed
+backfill** — check whether the reason is anything other than null-vs-NaN before worrying.
+
+**Rollback exists and is tested.** A pre-run snapshot of all 416,822 rows plus a restore script
+were exercised end to end on Siliup: 729 changed → 729 detected → 729 restored → 0 differing.
+The snapshot is a local gzipped NDJSON file, not in the repo — re-take one before any future
+backfill (`atlas_products_snapshots` requires a batch FK and does not cover this flow).
 
 ---
 

@@ -9336,6 +9336,44 @@ removed **0**, display strings changed **0**, numbers lost **0**, junk-token con
 **153,993 numbers corrected**, **50,521** in scoring slots, across **69,639 products**. The
 count fell by exactly 229 from #280's figure — the gauss values, a clean cross-check.
 
+### Applied to the database — July 22, 2026
+
+`Scanned 437093 / Changed 52997 / Unchanged 363825 / Missing 20271 / Errors 0`. Siliup/SP40N25TQ
+`rds_on` now stores **0.08**; the display string `"80mΩ@10V"` is byte-identical.
+
+**Rehearsed before the full run.** The restore path had never written anything — it had only ever
+reported "0 differences," which proves it runs, not that it works. So the whole round trip was
+run on one manufacturer first: apply (729 changed, 0 errors) → backup detects (**729**) → restore
+(**729**, 0 failures) → verify (**0** differing). Siliup was then deliberately left reverted so the
+full run's predicted 52,997 stayed a checkable number rather than an assertion. It matched exactly.
+
+**The four corpus gates were re-run against the DATABASE, not just source-vs-source.** #280's gates
+compared HEAD's mapper output to baseline's; that says nothing about what a write would do to rows
+accumulated over many past ingests under different dictionary states. A value-level audit over all
+416,822 stored products returned keys added **0**, keys removed **0**, display strings changed **0**,
+numbers lost **0**, extraction/manual entries dropped **0**, with 104,445 numbers corrected — every
+ratio a clean power of ten matching the unit in its own value string.
+
+⚠️ **A harness that imports this mapper inherits none of the CLI's startup state, and every omission
+looks like a data finding rather than a crash.** The dispatcher runs THREE initializers before any
+mapping. Skipping `loadAndApplyDictOverrides` made 2,033 accepted mappings vanish, so every
+override-mapped key read as a rename (`id_max` → `id`) — a scoring regression that did not exist.
+Skipping `loadCollidingEnNames` shortened "HX 红星" to "HX", so 3,289 products across the Decision
+#225 collision manufacturers matched no DB row at all. Both were reported as findings before being
+recognised as instrument error. They are now exported as one commented set for that reason.
+
+**52,997 written vs 52,992 actually changed — the gap is now measured, not accepted.** Those 5
+products carry a field where the mapper emits `NaN`; JSON serialises it to `null`; stored null never
+equals in-memory NaN, so they are rewritten on every run while their stored content never changes.
+The same cause leaves **43 products permanently "would change"** on a follow-up dry run (ETA 21,
+COSINE 14, Geehy 5, MXChip 3 — `supply_voltage`, `operating_temp`, `storage_temperature_range`).
+Pre-existing, no data impact, logged in BACKLOG. **A non-zero dry run here is not evidence of a
+failed backfill** until the reason is shown to be something other than null-vs-NaN.
+
+**Verified by an independently-written parser.** 15,104 corrected values were re-read by a
+from-scratch SI table rather than by `rescueNumericValue`, because reusing the source would only
+prove the code agrees with itself. **0 disagreements.**
+
 **Left open, logged not fixed:** the stale CLAUDE.md KEY-parity claim; the deleted
 `applyUnitPrefix` TS↔.mjs parity block and `cased_unit_prefixes` golden fixture; the BACKLOG
 section still listing withdrawn mechanisms as FIXED; the 34,425 unvetted values in scoring

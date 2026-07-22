@@ -5318,4 +5318,20 @@ if (IS_CLI) (async () => {
 // with no runtime callers — so deleting the exclusion loop from THIS file (the live ingest
 // path) left the suite green while production started converting gauss. A "keep in lockstep"
 // comment is not a mechanism; the test is, and it can only be a mechanism if it can reach here.
-export { mapModel, classifyAtlasCategory, cleanManufacturerName, rescueNumericValue, RESCUE_UNIT_EXPONENTS };
+// `mapManufacturerProducts` / `dedupRichestByMpn` / `tagAtlasParameters` / `mergeAtlasParameters`
+// are exported so a pre-backfill VALUE-LEVEL audit can compute exactly the JSONB the backfill
+// would write, using the backfill's own merge — not a re-implementation of it. The CLI dry run
+// reports COUNTS only (`--verbose` adds key-level added/removed), which is blind to a value
+// replaced in place — the 600 V → 630 V substitution that went unseen the first time.
+export {
+  mapModel, classifyAtlasCategory, cleanManufacturerName, rescueNumericValue, RESCUE_UNIT_EXPONENTS,
+  mapManufacturerProducts, dedupRichestByMpn, tagAtlasParameters, mergeAtlasParameters,
+  // ⚠️ ALL THREE startup initializers, exported together on purpose. The dispatcher
+  // runs them in this order before any mapping; a harness that imports the mapper
+  // and skips one silently gets DIFFERENT output, and the difference looks like a
+  // finding rather than a bug in the harness. Skipping loadAndApplyDictOverrides
+  // made 2,033 accepted mappings vanish (every one looked like a key rename);
+  // skipping loadCollidingEnNames shortened "HX 红星" to "HX" so 3,289 products
+  // matched no DB row at all. Import the set, not a member of it.
+  loadCollidingEnNames, loadAndApplyDictOverrides, loadAndApplyFamilyParamSignatures,
+};
