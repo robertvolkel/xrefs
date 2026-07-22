@@ -41,28 +41,43 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
-# Greek mu (U+03BC) is dropped by the unit parser — 36,554 values, EVERY path (P1)
+# Greek mu (U+03BC) is dropped by the unit parser — 8,259 values MIS-STORED (P1)
 
-**Found while verifying Decision #280, 21 July 2026. Pre-existing; larger in reach than the bug
-#280 fixed.** `extractNumericWithPrefix`'s unit character class is
-`[a-zA-Z\u00b5\u03a9\u00b0%/\u221a]` — it accepts the MICRO SIGN (U+00B5) but **not** GREEK
-SMALL LETTER MU (U+03BC). Measured over all 429 files:
+**Confirmed live against the database, 22 July 2026.** `extractNumericWithPrefix`'s unit
+character class accepts the MICRO SIGN (U+00B5) but **not** GREEK SMALL LETTER MU (U+03BC).
+Verified by execution: `extractNumericWithPrefix("800μA")` returns `{ numericValue: 800 }` with
+**no `parsedUnit` at all**, while `"800µA"` and `"800uA"` both parse. So it stores 800 amps, not
+800 microamps — a factor of a million, the same class of error #280 fixed for mΩ.
+`applyUnitPrefix` has a `startsWith('μ')` branch that is **unreachable**: the handler was
+written, the regex upstream strips its input.
 
-| | values |
+⚠️ **Three different numbers have been attached to this item; only one is the work.** Measure the
+thing you are going to fix, not the thing that is easy to count:
+
+| Measurement | Count |
 | --- | --- |
-| contain GREEK MU (U+03BC) — unit NOT parsed | **36,554** |
-| contain MICRO SIGN (U+00B5) — unit parsed fine | 13,380 |
+| Source values *containing* Greek mu (what the old entry counted) | 36,554 |
+| Source values where mu is the unit right after the number | 29,786 |
+| **Stored values with a Greek-mu unit that are ACTUALLY mis-scaled** | **8,259** |
+| Stored values with a Greek-mu unit already scaled correctly | 1,058 |
 
-Top tokens: `μA` 24,956 · `μs` 6,064 · `μH` 4,293 · `μV` 380 · `μW` 285 · `μF` 125.
-`"800μA"` yields `{ numericValue: 800 }` with **no unit**, so it is stored as 800 — amps, not
-microamps. Exactly the class of error Decision #280 fixed for `mΩ`, and ~3× more common than the
-character the parser does accept. `applyUnitPrefix` already has a `startsWith('μ')` branch that
-is **unreachable** for this reason — the handler was written, the regex upstream strips its input.
+The "overstated 2.6×, real figure 14,057" note in Decision #280's review was ALSO wrong — it is
+neither 36,554 nor 14,057. Source-side occurrence counts overcount badly: many never reach a
+numeric slot, and the same value repeats across products.
 
-⚠️ Not folded into #280 deliberately: `extractNumericWithPrefix` is shared, so widening the class
-changes the dictionary-MAPPED paths too (a much larger blast radius than #280's rescued-path-only
-scope). Do it as its own change, with #280's four corpus gates re-run: **keys added / removed /
-display strings changed / numbers lost must stay 0**, and the value diff read token by token.
+**It lands in real scoring slots:** `inductance` 1,242 (a 10 μH part stored as 10 H),
+`maximum_reverse_leakage` 456, `maximum_dc_reverse_current` 406, `ir_leakage` 343,
+`dc_reverse_current` 214, `vgs_th` 90.
+
+⚠️ **Not purely mechanical — there is a bare `μ` case.** 154 source values use `μ` alone as the
+unit (e.g. plating thickness `"6μ"`). Blanket-scaling an unqualified `μ` is the same shape of
+assumption that had `Gs` read as giga-seconds. Decide that case explicitly and pin it in a test.
+
+⚠️ Deliberately NOT folded into #280: `extractNumericWithPrefix` is SHARED, so widening the class
+changes the dictionary-MAPPED paths too — a much larger blast radius than #280's
+rescued-path-only scope. Do it as its own change, re-running #280's corpus gates (**keys added /
+removed / display strings changed / numbers lost must stay 0**) plus a DB-vs-backup diff, and read
+the value diff token by token.
 
 ---
 
@@ -74,8 +89,14 @@ rollback). What remains from the 15:
 
 - **(P2) Finding 2 — `applyUnitPrefix` corrupts non-unit tokens on the MAPPED paths.** `ppm`→×1e-12,
   `pcs`→×1e-12, `units`→×1e-6. #280's allowlist protects the rescued path only; the mapped paths
-  still run the first-letter rule. Corpus-wide upper bound: 11,254 `pcs`, 11,122 `ppm`/`ppm/`,
-  plus `mil` / `Max` / `To` / `KE` / `KP`. Same change as the Greek-mu item above — do them together.
+  still run the first-letter rule. **Measured against the database 22 July 2026: only 18 stored
+  values are actually wrongly scaled** — 931 carry such a token, 912 of them stored unscaled and
+  fine. The old "11,254 `pcs` / 11,122 `ppm`" figures were SOURCE-side occurrence counts, not
+  mis-stored counts, and overstate the work by ~1000×. The 18: 16 SEMEATECH `ppm` values on
+  `operating_temp` (which is itself a wrong mapping — see the semantic-mapping item), and 2 INPAQ
+  dimensions where `"2.02 Max"` read `M` as mega and stored **2,020,000** for a 2 mm part. Tiny,
+  but the `Max` case is absurd enough to break a `fit` rule. Ride it along with the Greek-mu
+  change (same function); it does not merit its own cycle.
 - **(P2) Finding 12 — seven test assertions cannot fail.** #280 fixed one of its own (an
   exclusion-list test that iterated the list it was testing, so deleting an entry still passed).
   The rest stand: the 114 unit-prefix tests target `atlasMapper.ts`, **the copy with no runtime
