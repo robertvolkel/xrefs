@@ -3476,6 +3476,20 @@ export function mapAtlasModel(
     : gaiaL2Dictionaries[classification.category];
   const parameters: ParametricAttribute[] = [];
   const seenAttributeIds = new Set<string>();
+  /**
+   * The RAW source string each winner arrived with, before any normalization.
+   *
+   * ⚠️ Blocker 2. `keepLosingValue` used to compare the loser's RAW value
+   * against the winner's STORED value — but the stored value has been through
+   * parseGaiaValue / normalizeTemperatureRange / normalizeVoltageRange. So
+   * "<8.0 mΩ" is stored as "8.0" (atlasGaiaDictionaries.ts, the `<`-branch),
+   * and a genuinely different loser reading "8.0" was judged identical and
+   * DELETED — the exact failure the comment two lines below warns about.
+   *
+   * Comparing raw-against-raw is the only direction that is safe: comparing two
+   * NORMALIZED forms would widen "identical" and delete more.
+   */
+  const rawByAttributeId = new Map<string, string>();
 
   /**
    * Layer 1 (Decision #278) — keep a losing spelling's value under its raw
@@ -3517,8 +3531,11 @@ export function mapAtlasModel(
   };
 
   const keepLosingValue = (decodedName: string, rawValue: string, winnerId: string): void => {
-    const winner = parameters.find(x => x.parameterId === winnerId);
-    if (!losingValueDiffers(rawValue, winner?.value)) return;
+    // Drop ONLY when we know both RAW strings and they are identical. If the
+    // winner's raw was never recorded we keep the loser: a false "differs"
+    // costs a redundant copy, a false "same" destroys data.
+    const winnerRaw = rawByAttributeId.get(winnerId);
+    if (winnerRaw !== undefined && !losingValueDiffers(rawValue, winnerRaw)) return;
     storeRawValue(decodedName, rawValue);
   };
   let packageValue: string | undefined;
@@ -3577,6 +3594,7 @@ export function mapAtlasModel(
         // Store with auto-humanized name (nothing thrown away)
         if (!seenAttributeIds.has(gaia.stem)) {
           seenAttributeIds.add(gaia.stem);
+          rawByAttributeId.set(gaia.stem, p.value);
           const parsed = parseGaiaValue(p.value);
           // parseGaiaValue parses unit from value string ("5.8 mΩ" → unit='mΩ'); no dict fallback exists here.
           parameters.push({
@@ -3620,6 +3638,7 @@ export function mapAtlasModel(
         continue;
       }
       seenAttributeIds.add(gaiaMapping.attributeId);
+      rawByAttributeId.set(gaiaMapping.attributeId, p.value);
 
       // Parse value (gaia values embed units: "5.8 mΩ", "100 V")
       const parsed = parseGaiaValue(p.value);
@@ -3681,6 +3700,7 @@ export function mapAtlasModel(
       continue;
     }
     seenAttributeIds.add(mapping.attributeId);
+    rawByAttributeId.set(mapping.attributeId, p.value);
 
     // Normalize value based on attributeId
     let displayValue = p.value.trim();

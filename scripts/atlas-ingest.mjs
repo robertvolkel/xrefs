@@ -2808,9 +2808,19 @@ function storeRawValue(parameters, decodedName, rawValue, preferredId) {
   return key;
 }
 
-function keepLosingValue(parameters, decodedName, rawValue, winner) {
+/**
+ * ⚠️ Blocker 2. This used to compare the loser's RAW value against the winner's
+ * STORED value — but the stored value has been through parseGaiaValue /
+ * normalizeTemp / normalizeVoltageRange. "<8.0 mΩ" is stored as "8.0", so a
+ * genuinely different loser reading "8.0" was judged identical and DELETED.
+ *
+ * `winnerRaw` is the winner's pre-normalization source string. Drop ONLY when
+ * both raws are known and identical: a false "differs" costs a redundant copy,
+ * a false "same" destroys data. Mirror of keepLosingValue in atlasMapper.ts.
+ */
+function keepLosingValue(parameters, decodedName, rawValue, winnerRaw) {
   const norm = (v) => String(v ?? '').trim().toLowerCase();
-  if (norm(rawValue) === norm(winner?.value)) return; // identical — nothing to preserve
+  if (winnerRaw !== undefined && norm(rawValue) === norm(winnerRaw)) return; // identical — nothing to preserve
   storeRawValue(parameters, decodedName, rawValue);
 }
 
@@ -2858,6 +2868,8 @@ function mapModel(model, manufacturerName, sourceFile) {
     ? GAIA_FAMILIES[classification.familyId]
     : GAIA_L2[classification.category];
   const parameters = {};
+  // RAW source string per winning attributeId, pre-normalization (see keepLosingValue).
+  const rawByAttributeId = new Map();
   let packageValue = null;
 
   // Pre-scan gaia params: stem -> set of suffixes present in THIS product.
@@ -2903,6 +2915,7 @@ function mapModel(model, manufacturerName, sourceFile) {
         // Store with auto-humanized name (nothing thrown away)
         let gaiaKey = gaia.stem;
         if (!parameters[gaia.stem]) {
+          rawByAttributeId.set(gaia.stem, p.value);
           const parsed = parseGaiaValue(p.value);
           const numConverted = applyUnitPrefix(parsed.numericValue, parsed.unit);
           parameters[gaia.stem] = {
@@ -2928,16 +2941,17 @@ function mapModel(model, manufacturerName, sourceFile) {
         if (present && present.has(gaiaMapping.preferredSuffix)) {
           // The preferred variant wins the slot, but the non-preferred one is a
           // genuinely different measurement (Typ vs Max) — keep it. (Decision #278)
-          keepLosingValue(parameters, decodedName, p.value, parameters[gaiaMapping.attributeId]);
+          keepLosingValue(parameters, decodedName, p.value, rawByAttributeId.get(gaiaMapping.attributeId));
           continue;
         }
       }
       if (gaiaMapping.attributeId.startsWith('_')) continue;
       if (parameters[gaiaMapping.attributeId]) {
-        keepLosingValue(parameters, decodedName, p.value, parameters[gaiaMapping.attributeId]);
+        keepLosingValue(parameters, decodedName, p.value, rawByAttributeId.get(gaiaMapping.attributeId));
         continue; // dedup
       }
 
+      rawByAttributeId.set(gaiaMapping.attributeId, p.value);
       const parsed = parseGaiaValue(p.value);
       let displayValue = parsed.displayValue;
       if (gaiaMapping.attributeId === 'operating_temp') displayValue = normalizeTemp(p.value);
@@ -2978,9 +2992,11 @@ function mapModel(model, manufacturerName, sourceFile) {
 
     if (mapping.attributeId.startsWith('_')) continue;
     if (parameters[mapping.attributeId]) {
-      keepLosingValue(parameters, decodedName, p.value, parameters[mapping.attributeId]);
+      keepLosingValue(parameters, decodedName, p.value, rawByAttributeId.get(mapping.attributeId));
       continue; // dedup
     }
+
+    rawByAttributeId.set(mapping.attributeId, p.value);
 
     let displayValue = p.value.trim();
     // Hybrid: parse number AND unit from value string; dict unit is fallback.

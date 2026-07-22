@@ -2401,10 +2401,6 @@
         "value": "56 A",
         "numericValue": 56
       },
-      "drain_source_breakdown_voltage_min": {
-        "value": "40 V",
-        "numericValue": 40
-      },
       "drain_source_breakdown_voltage_typ": {
         "value": "45 V",
         "numericValue": 45
