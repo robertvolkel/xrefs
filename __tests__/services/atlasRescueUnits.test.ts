@@ -196,9 +196,26 @@ describe.each(maps)('%s — the allowlist table', (_label, map) => {
     expect(map.has('PF')).toBe(false);
   });
 
-  it('does not list a prefix the extractor can never produce (Greek mu)', () => {
-    expect(SHARED.prefixes['μ']).toBeUndefined();
-    expect(SHARED.prefixes['µ']).toBe(-6);
+  /**
+   * ⚠️ THIS ASSERTION WAS INVERTED, DELIBERATELY. It used to read
+   * `expect(SHARED.prefixes['μ']).toBeUndefined()` — correct at the time, because
+   * `extractNumericWithPrefix`'s character class accepted the MICRO SIGN (U+00B5)
+   * but not GREEK SMALL LETTER MU (U+03BC), so the extractor could never hand the
+   * allowlist a μ-token and listing one would have been dead weight.
+   *
+   * That was the bug, not the design: "800μA" parsed to `{ numericValue: 800 }`
+   * with NO unit and was stored as 800 amps — a million times too large, in slots
+   * the engine scores on (1,242 `inductance` values had a 10 μH part stored as
+   * 10 H). The character class now accepts U+03BC, so the extractor CAN produce
+   * μ-tokens and the allowlist MUST carry the prefix or the rescued path would
+   * parse the unit and then silently decline to scale it.
+   *
+   * Both spellings must stay, mapping to the same exponent — real vendor data
+   * uses both, sometimes in the same file.
+   */
+  it('lists BOTH micro spellings, now that the extractor can produce either', () => {
+    expect(SHARED.prefixes['μ']).toBe(-6);   // U+03BC GREEK SMALL LETTER MU
+    expect(SHARED.prefixes['µ']).toBe(-6);   // U+00B5 MICRO SIGN
   });
 });
 
@@ -313,6 +330,21 @@ describe('every allowlisted token that occurs in the corpus is accounted for', (
    *  - `mS`/`uS`/`nS`/`µS` are ambiguous siemens-vs-seconds, but the prefix
    *    multiplier is identical under either reading, so the stored number is
    *    correct regardless.
+   *
+   * The nine `μ`-prefixed (U+03BC) tokens were added when the extractor was
+   * taught to read Greek mu. Each was checked against a real sample and each is
+   * unambiguously micro+unit:
+   *   μA 21807 "800μA" · μs 4892 "2μs" · μH 4207 "22μH" · μW 285 "10μW"
+   *   μV 159 "2μV" · μF 76 "1000μF" · μS 56 "20μS" · μC 25 "1.1 μC" · μΩ 4 "500μΩ"
+   * `μS` carries the same siemens-vs-seconds ambiguity as its siblings above
+   * (the sample is a rise/fall time, so seconds) and is safe for the same reason.
+   *
+   * ⚠️ These differ in kind from `Gs`/gauss, which is why they are admissible.
+   * Gauss was wrong because `G` was being read as a PREFIX when it was part of
+   * the unit's name, so the multiplier itself was wrong by 1e9. Here `μ` is
+   * unambiguously the micro prefix in every observed token, so 1e-6 is right even
+   * where the ATOM is misread. Ambiguity in the atom is harmless; ambiguity in
+   * the prefix is what corrupts data.
    */
   const ACKNOWLEDGED = new Set([
     'mA', 'mΩ', 'pF', 'uA', 'mV', 'mW', 'ns', 'MHz', 'nH', 'kV', 'nC', 'nA', 'MΩ',
@@ -320,6 +352,8 @@ describe('every allowlisted token that occurs in the corpus is accounted for', (
     'kA', 'µF', 'KV', 'ps', 'pA', 'GHz', 'GΩ', 'µs', 'KA', 'mH', 'uC', 'uV', 'mF',
     'µV', 'pC', 'KW', 'mS', 'uS', 'uW', 'µH', 'µW', 'µS', 'uJ', 'nW', 'mC', 'MW',
     'µC', 'kJ',
+    // Greek mu (U+03BC) — see the block comment above; each checked individually.
+    'μA', 'μs', 'μH', 'μW', 'μV', 'μF', 'μS', 'μC', 'μΩ',
   ]);
 
   it('finds no unreviewed token in 429 real source files', () => {

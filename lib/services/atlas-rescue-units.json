@@ -21,7 +21,6 @@
     "Shared verbatim by lib/services/atlasMapper.ts and scripts/atlas-ingest.mjs (the live ingest",
     "path, which cannot import TS). One file, not two hand-copied lists -- see [[two-lists-will-drift]]."
   ],
-
   "_safetyComment": [
     "⚠️ THE ALLOWLIST IS NOT SELF-VALIDATING. An earlier version of this file claimed the",
     "conversion 'can only make a number more correct or leave it untouched -- it can never",
@@ -39,7 +38,6 @@
     "corpus is accounted for'). Adding an atom widens the cross by 9 tokens; adding a prefix",
     "widens it by 11. Neither is a one-line change."
   ],
-
   "_prefixComment": [
     "Stored as EXPONENTS, not multipliers, so a negative power can DIVIDE instead of multiply:",
     "`9 * 1e-3` is 0.009000000000000001 but `9 / 1000` is exactly 0.009. Measured over the corpus,",
@@ -63,15 +61,26 @@
     "n": -9,
     "u": -6,
     "µ": -6,
+    "μ": -6,
     "m": -3,
     "k": 3,
     "K": 3,
     "M": 6,
     "G": 9
   },
-
-  "atoms": ["F", "A", "V", "W", "H", "Hz", "s", "Ω", "J", "C", "S"],
-
+  "atoms": [
+    "F",
+    "A",
+    "V",
+    "W",
+    "H",
+    "Hz",
+    "s",
+    "Ω",
+    "J",
+    "C",
+    "S"
+  ],
   "_excludedComment": [
     "Combinations the cross DOES produce but which are NOT prefixes in this corpus.",
     "",
@@ -94,5 +103,14 @@
     "(1,989 values), but enabling case-folding generatively also enables `UV`, `PW` and `NA` on",
     "tokens that mean something else. That is a separate, measured change -- not this one."
   ],
-  "excluded": ["MS", "KS", "Ms", "Ks", "Gs", "GS", "MH", "Mh"]
+  "excluded": [
+    "MS",
+    "KS",
+    "Ms",
+    "Ks",
+    "Gs",
+    "GS",
+    "MH",
+    "Mh"
+  ]
 }

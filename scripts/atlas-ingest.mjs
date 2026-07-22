@@ -2609,15 +2609,15 @@ function extractNumericWithPrefix(value) {
   const rangeMatch = t.match(/^([+-]?\d+\.?\d*)\s*[~–]\s*([+-]?\d+\.?\d*)/);
   if (rangeMatch) return { numericValue: parseFloat(rangeMatch[1]) };
 
-  const pmMatch = t.match(/^[±]\s*(\d+\.?\d*)\s*([a-zA-ZµΩ°%/√]*)/);
+  const pmMatch = t.match(/^[±]\s*(\d+\.?\d*)\s*([a-zA-ZµμΩ°%/√]*)/);
   if (pmMatch) return { numericValue: parseFloat(pmMatch[1]), parsedUnit: pmMatch[2]?.trim() || undefined };
-  const altPmMatch = t.match(/^\+\/-\s*(\d+\.?\d*)\s*([a-zA-ZµΩ°%/√]*)/);
+  const altPmMatch = t.match(/^\+\/-\s*(\d+\.?\d*)\s*([a-zA-ZµμΩ°%/√]*)/);
   if (altPmMatch) return { numericValue: parseFloat(altPmMatch[1]), parsedUnit: altPmMatch[2]?.trim() || undefined };
 
-  const cmpMatch = t.match(/^[≤≥<>=]\s*([+-]?\d+\.?\d*)\s*([a-zA-ZµΩ°%/√]*)/);
+  const cmpMatch = t.match(/^[≤≥<>=]\s*([+-]?\d+\.?\d*)\s*([a-zA-ZµμΩ°%/√]*)/);
   if (cmpMatch) return { numericValue: parseFloat(cmpMatch[1]), parsedUnit: cmpMatch[2]?.trim() || undefined };
 
-  const stdMatch = t.match(/^([+-]?\d+\.?\d*)\s*([a-zA-ZµΩ°%/√]*)/);
+  const stdMatch = t.match(/^([+-]?\d+\.?\d*)\s*([a-zA-ZµμΩ°%/√]*)/);
   if (stdMatch && stdMatch[1] !== '') return { numericValue: parseFloat(stdMatch[1]), parsedUnit: stdMatch[2]?.trim() || undefined };
 
   // Loose fallback — preserves extractNumeric's behavior for prefix-junk values.
