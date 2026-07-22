@@ -9235,7 +9235,7 @@ also enables `UV` and `PW`).
 | Display strings changed | **0** |
 | Numbers lost | **0** |
 | Conversions on a non-unit token (`ppm`, `pcs`, `mil`, `Max`…) | **0** |
-| **Numbers corrected** | **154,222** — **50,521** in scoring slots, across **69,742 products** |
+| **Numbers corrected** | **153,993** — **50,521** in scoring slots, across **69,639 products** |
 
 Headline, confirmed end-to-end: Siliup/SP40N25TQ ships `导通电阻(RDS(on)) = "80mΩ@10V"`, which
 slugs onto `rds_on` (weight 9, `lte`) and which `matchingEngine.ts:23` returns **verbatim** with no
@@ -9278,3 +9278,66 @@ the micro sign** — and they yield NO parsed unit at all, on *every* path. `"80
 not 0.0008. `applyUnitPrefix` even has a U+03BC branch that can never fire. Same class as the bug
 above and larger in reach, but fixing it changes the dictionary-mapped paths, so it is logged in
 BACKLOG rather than folded in here.
+
+### Post-merge review of #280 — five fixes, one of them a bug this change introduced (July 21, 2026)
+
+A max-effort review (10 angles, every finding reproduced against the real 429-file corpus)
+returned 15 findings. **One was a new data bug; four were cheap fixes mis-triaged as "log it".**
+
+**⚠️ THE HEADLINE: the allowlist's safety property was FALSE.** #280 asserted, in five places,
+that an unrecognised token keeps its value so the change "can never introduce a wrong one".
+The prefix×atom cross generates `Gs` — which in this corpus is **GAUSS**, not giga-second — so
+**229 real values** on Hall-effect sensors (HXYMOS `磁工作点`, Dowaytech `工作磁场范围`,
+ElecSuper) were multiplied by 1e9: `"70 Gs"` stored as 70,000,000,000.
+
+Two process failures made it invisible, and both are now closed:
+
+1. **The four corpus gates cannot detect this class by construction.** They count keys added /
+   removed / display strings changed / numbers lost. A newly-WRONG number and a newly-RIGHT one
+   are indistinguishable — both register as "corrected". *The gates measure change, not
+   correctness.*
+2. **The audit checked the wrong tokens.** The exclusion list guarded `MS`/`KS`, which occur
+   **zero** times in the corpus, while the collision that occurs **229** times was never looked
+   at. Hypothetical collisions were reasoned about; real ones were not measured.
+
+**The fix for the process, not just the data:** a test now enumerates *every allowlisted token
+that actually occurs in `data/atlas/*.json`* and fails on any that has not been explicitly
+acknowledged. Adding an atom widens the cross by 9 tokens, a prefix by 11 — neither is a
+one-line change any more. That audit immediately surfaced `MW` (`insulation_resistance =
+"100 MW"`), which turned out to be 100 **MEGAOHM** with Ω mangled to W by an encoding fault —
+harmless, since mega is mega either way, and now recorded so nobody re-litigates it.
+
+**Exact scaling — `evaluateThreshold` has no epsilon.** `9 * 1e-3` is `0.009000000000000001`;
+a source `rds_on` of `"0.009 Ω"` against a candidate `"9mΩ"` — the same resistance — returned a
+**hard FAIL**, and PASSED when the sides were swapped. Fixed by shifting the DECIMAL
+(`Number("244.6e-3")`) rather than doing float arithmetic. Measured over 339,490 real
+conversions: **multiply 20.43% inexact, divide 2.49%, decimal shift 0.00%.** Division was tried
+first and rejected on evidence — the golden diff caught it regressing `0.2446`.
+
+**The new suite tested the wrong copy.** `rescueNumericValue` / the allowlist were not exported
+from `scripts/atlas-ingest.mjs`, so all 25 assertions ran against `atlasMapper.ts`, *the copy
+with no runtime callers*. Deleting the exclusion loop from the LIVE file kept the suite green.
+Both are now exported for the parity test, every allowlist assertion runs through **both**
+copies via `describe.each`, and that mutation now fails 6 tests. Mutation-verified: live-copy
+exclusion delete (6 fails), float regression (13), gauss un-exclusion (7, incl. the corpus
+audit), wiring revert (2).
+
+**Kill switch.** `rescueNumericValue` ignored `APPLY_UNIT_PREFIX_TO_NUMERIC`, so flipping the
+documented rollback would have left dict-mapped values at display scale beside rescued values
+at base SI — two conventions in one product, worse than either setting. Verified by flipping it.
+
+**Cache versions.** `RECS_CACHE_SCHEMA_VERSION` v20→v21 and `BASE_RECS_SCHEMA_VERSION` v6→v7.
+The base-cache's own history records the precedent verbatim from Decision #217. Without it the
+30-day caches would keep serving scores from old wrong-scale numbers after the backfill —
+reading exactly like "the fix didn't work".
+
+**Final measured state**, full corpus (429 files / 437,387 products): keys added **0**, keys
+removed **0**, display strings changed **0**, numbers lost **0**, junk-token conversions **0**;
+**153,993 numbers corrected**, **50,521** in scoring slots, across **69,639 products**. The
+count fell by exactly 229 from #280's figure — the gauss values, a clean cross-check.
+
+**Left open, logged not fixed:** the stale CLAUDE.md KEY-parity claim; the deleted
+`applyUnitPrefix` TS↔.mjs parity block and `cased_unit_prefixes` golden fixture; the BACKLOG
+section still listing withdrawn mechanisms as FIXED; the 34,425 unvetted values in scoring
+slots; an epsilon for `evaluateThreshold`; the Greek-mu entry (overstated 2.6× — real figure
+**14,057**, and Decision #217 already fixed the handler in June).

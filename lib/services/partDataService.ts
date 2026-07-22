@@ -327,7 +327,11 @@ function buildRecommendationsVariant(
 // v6: parts.io candidate status normalized via mapPartsioStatus — allCandidates
 //     carry enum statuses ('Active' for Transferred/Acquired/empty) instead of raw
 //     codes, so the Active-first display sort works (Decision #232).
-const BASE_RECS_SCHEMA_VERSION = 'v6';
+// v7: Decision #280 — the rescued ingest path scales to base SI, so base-payload
+//     sourceAttrs + allCandidates carry different numericValues for Atlas-source
+//     parts (153,993 values). Same reason v2 was cut when unit-prefix conversion
+//     was first enabled. Takes effect with the backfill.
+const BASE_RECS_SCHEMA_VERSION = 'v7';
 
 interface SerializableBasePayload {
   v: typeof BASE_RECS_SCHEMA_VERSION;

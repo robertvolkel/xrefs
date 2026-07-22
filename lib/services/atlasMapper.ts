@@ -2548,13 +2548,42 @@ export function applyUnitPrefix(numericValue: number | undefined, unit: string |
  * that scripts/atlas-ingest.mjs (the LIVE ingest path) reads verbatim, so the
  * two copies cannot drift — a "keep in lockstep" comment is not a mechanism.
  */
-export const RESCUE_UNIT_MULTIPLIERS: ReadonlyMap<string, number> = (() => {
+export const RESCUE_UNIT_EXPONENTS: ReadonlyMap<string, number> = (() => {
   const m = new Map<string, number>();
-  for (const [prefix, mult] of Object.entries(rescueUnitData.prefixes as Record<string, number>))
-    for (const atom of rescueUnitData.atoms as string[]) m.set(prefix + atom, mult);
+  for (const [prefix, exp] of Object.entries(rescueUnitData.prefixes as Record<string, number>))
+    for (const atom of rescueUnitData.atoms as string[]) m.set(prefix + atom, exp);
   for (const token of rescueUnitData.excluded as string[]) m.delete(token);
   return m;
 })();
+
+/**
+ * Scale by a power of ten WITHOUT the float dust that multiplying introduces.
+ *
+ * `9 * 1e-3` is 0.009000000000000001; `9 / 1000` is exactly 0.009. Measured over
+ * the corpus this is not cosmetic — 69,351 of 339,725 conversions (20.4%) were
+ * not bit-exact under multiply, versus 8,454 (2.5%) under divide.
+ *
+ * ⚠️ It matters because `evaluateThreshold` compares with bare `>=`/`<=` and NO
+ * epsilon (unlike `evaluateIdentity`, which has a 1e-6 relative tolerance). A
+ * source `rds_on` of `"0.009 Ω"` against a candidate `"9mΩ"` — the same
+ * resistance — hard-FAILED on a 1.73e-18 artifact, and PASSED when the two
+ * sides were swapped, so the verdict depended on which side carried the prefix.
+ */
+export function scaleByExponent(value: number, exponent: number): number {
+  // Shift the DECIMAL rather than doing float arithmetic: re-parsing "244.6e-3"
+  // gives exactly 0.2446, where both 244.6*1e-3 and 244.6/1e3 introduce dust.
+  // Measured over 339,490 real conversions: multiply 20.43% inexact, divide
+  // 2.49%, decimal shift 0.00%.
+  const s = String(value);
+  if (!s.includes('e') && !s.includes('E')) {
+    const shifted = Number(`${s}e${exponent}`);
+    if (Number.isFinite(shifted)) return shifted;
+  }
+  // Fallback for a value JS already renders exponentially (String(1e-7) is
+  // "1e-7", and "1e-7e-3" parses to NaN). Zero occurrences in the corpus today,
+  // but a supplier shipping "0.0000001 V" would hit it.
+  return exponent < 0 ? value / 10 ** -exponent : value * 10 ** exponent;
+}
 
 /**
  * Read a rescued value's number and scale it to base SI — but ONLY when its
@@ -2564,15 +2593,22 @@ export const RESCUE_UNIT_MULTIPLIERS: ReadonlyMap<string, number> = (() => {
  * ignores the unit entirely: `"80mΩ@10V"` was stored as 80 rather than 0.08,
  * a thousand times too high, in a slot the engine scores on (weight 9, `lte`).
  * Every dictionary-mapped path already normalises; only this one did not.
- * Measured over all 429 source files: 154,312 values were stored at the wrong
- * scale, 50,521 of them in scoring slots, across 69,742 products.
+ * Measured over all 429 source files: 153,993 values were stored at the wrong
+ * scale, 50,521 of them in scoring slots, across 69,639 products.
  *
  * ⚠️ The allowlist is the safety property, not an implementation detail. A
  * first-letter prefix rule reads `ppm` as pico (11,122 values corpus-wide) and
  * `pcs` as pico (11,254); a strict whole-token rule instead BREAKS `PF` (1,989),
  * `nV/√Hz` (474), `mW/sr` (391), `Mbit` (431). So an unrecognised unit returns
- * the number UNCHANGED — identical to today's behaviour. This can only make a
- * value more correct or leave it alone; it can never introduce a wrong one.
+ * the number UNCHANGED — identical to today's behaviour.
+ *
+ * ⚠️⚠️ BUT AN ALLOWLIST IS NOT SELF-VALIDATING, and an earlier version of this
+ * docblock claimed it was ("can never introduce a wrong one"). That was FALSE:
+ * the cross generates `Gs`, which in this corpus is GAUSS, and 229 real values
+ * on Hall-effect sensors were being multiplied by 1e9. A generated token can
+ * collide with a unit that is not prefix+atom at all. Every change to the table
+ * must be followed by the corpus-occurrence audit pinned in
+ * atlasRescueUnits.test.ts — see the `_safetyComment` in the shared JSON.
  *
  * SCOPE: the rescued path only. The dictionary-mapped paths already normalise
  * and are NOT touched — applying this table there would REMOVE conversions
@@ -2581,10 +2617,15 @@ export const RESCUE_UNIT_MULTIPLIERS: ReadonlyMap<string, number> = (() => {
  * Mirror: rescueNumericValue in scripts/atlas-ingest.mjs.
  */
 export function rescueNumericValue(rawValue: string): number | undefined {
+  // Honour the same kill switch every other scaling path honours. Without this,
+  // flipping it would leave dict-mapped values at display scale while rescued
+  // values stayed base-SI — two incompatible conventions in one product, which
+  // is worse than either setting alone.
+  if (!APPLY_UNIT_PREFIX_TO_NUMERIC) return extractNumericWithPrefix(String(rawValue)).numericValue;
   const { numericValue, parsedUnit } = extractNumericWithPrefix(String(rawValue));
   if (numericValue === undefined) return undefined;
-  const mult = parsedUnit === undefined ? undefined : RESCUE_UNIT_MULTIPLIERS.get(parsedUnit);
-  return mult === undefined ? numericValue : numericValue * mult;
+  const exp = parsedUnit === undefined ? undefined : RESCUE_UNIT_EXPONENTS.get(parsedUnit);
+  return exp === undefined ? numericValue : scaleByExponent(numericValue, exp);
 }
 
 export function extractNumericWithPrefix(value: string): { numericValue?: number; parsedUnit?: string } {

@@ -736,11 +736,11 @@
       },
       "current_consumption_max_3": {
         "value": "97.4 mA",
-        "numericValue": 0.09740000000000001
+        "numericValue": 0.0974
       },
       "current_consumption_max_4": {
         "value": "97.4 mA",
-        "numericValue": 0.09740000000000001
+        "numericValue": 0.0974
       },
       "current_consumption_max_5": {
         "value": "TBD mA"
@@ -1259,7 +1259,7 @@
       },
       "supply_current_typical_4": {
         "value": "9 mA",
-        "numericValue": 0.009000000000000001
+        "numericValue": 0.009
       },
       "supply_current_typical_5": {
         "value": "198 mA",
@@ -1271,7 +1271,7 @@
       },
       "supply_current_typical_7": {
         "value": "207 mA",
-        "numericValue": 0.20700000000000002
+        "numericValue": 0.207
       },
       "supply_current_typical_8": {
         "value": "230 mA",

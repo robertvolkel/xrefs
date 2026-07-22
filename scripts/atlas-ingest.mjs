@@ -2759,13 +2759,29 @@ const MAX_LOSER_SUFFIX = 200;
  * SI-prefix allowlist for the RESCUED path. Built once from the shared JSON.
  * Mirror: RESCUE_UNIT_MULTIPLIERS in lib/services/atlasMapper.ts.
  */
-const RESCUE_UNIT_MULTIPLIERS = (() => {
+const RESCUE_UNIT_EXPONENTS = (() => {
   const m = new Map();
-  for (const [prefix, mult] of Object.entries(rescueUnitData.prefixes))
-    for (const atom of rescueUnitData.atoms) m.set(prefix + atom, mult);
+  for (const [prefix, exp] of Object.entries(rescueUnitData.prefixes))
+    for (const atom of rescueUnitData.atoms) m.set(prefix + atom, exp);
   for (const token of rescueUnitData.excluded) m.delete(token);
   return m;
 })();
+
+/**
+ * Scale by a power of ten without the float dust multiplying introduces:
+ * `9 * 1e-3` is 0.009000000000000001, `9 / 1000` is exactly 0.009. Measured
+ * corpus-wide, 20.4% of conversions were not bit-exact under multiply vs 2.5%
+ * under divide, and evaluateThreshold compares with no epsilon.
+ * Mirror: scaleByExponent in lib/services/atlasMapper.ts.
+ */
+function scaleByExponent(value, exponent) {
+  const s = String(value);
+  if (!s.includes('e') && !s.includes('E')) {
+    const shifted = Number(`${s}e${exponent}`);
+    if (Number.isFinite(shifted)) return shifted;
+  }
+  return exponent < 0 ? value / 10 ** -exponent : value * 10 ** exponent;
+}
 
 /**
  * Read a rescued value's number and scale it to base SI — but ONLY when its
@@ -2780,16 +2796,22 @@ const RESCUE_UNIT_MULTIPLIERS = (() => {
  * first-letter prefix rule reads `ppm` as pico (11,122 values corpus-wide) and
  * `pcs` as pico (11,254); a strict whole-token rule instead BREAKS `PF`,
  * `nV/√Hz`, `mW/sr`, `Mbit`. So an unrecognised unit returns the number
- * UNCHANGED — identical to today's behaviour. This can only make a value more
- * correct or leave it alone; it can never introduce a wrong one.
+ * UNCHANGED — identical to today's behaviour.
+ *
+ * ⚠️⚠️ BUT AN ALLOWLIST IS NOT SELF-VALIDATING. This docblock used to claim it
+ * "can never introduce a wrong one" — FALSE: the cross generates `Gs`, which
+ * here is GAUSS, and 229 real values were being multiplied by 1e9. Any change
+ * to the table needs the corpus-occurrence audit pinned in the test suite.
  *
  * Mirror: rescueNumericValue in lib/services/atlasMapper.ts.
  */
 function rescueNumericValue(rawValue) {
+  // Same kill switch every other scaling path honours (see applyUnitPrefix).
+  if (!APPLY_UNIT_PREFIX_TO_NUMERIC) return extractNumericWithPrefix(String(rawValue)).numericValue;
   const { numericValue, parsedUnit } = extractNumericWithPrefix(String(rawValue));
   if (numericValue === undefined) return undefined;
-  const mult = parsedUnit === undefined ? undefined : RESCUE_UNIT_MULTIPLIERS.get(parsedUnit);
-  return mult === undefined ? numericValue : numericValue * mult;
+  const exp = parsedUnit === undefined ? undefined : RESCUE_UNIT_EXPONENTS.get(parsedUnit);
+  return exp === undefined ? numericValue : scaleByExponent(numericValue, exp);
 }
 
 function storeRawValue(parameters, decodedName, rawValue, preferredId) {
@@ -5291,4 +5313,9 @@ if (IS_CLI) (async () => {
 // __tests__/services/atlasIngestMapper.test.ts can call the REAL mapping
 // function rather than a parallel implementation that drifts from it.
 // Adding an export has no effect on the CLI path.
-export { mapModel, classifyAtlasCategory, cleanManufacturerName };
+// `rescueNumericValue` / `RESCUE_UNIT_EXPONENTS` are exported for the PARITY TEST ONLY.
+// Without them every allowlist assertion runs against lib/services/atlasMapper.ts — the copy
+// with no runtime callers — so deleting the exclusion loop from THIS file (the live ingest
+// path) left the suite green while production started converting gauss. A "keep in lockstep"
+// comment is not a mechanism; the test is, and it can only be a mechanism if it can reach here.
+export { mapModel, classifyAtlasCategory, cleanManufacturerName, rescueNumericValue, RESCUE_UNIT_EXPONENTS };

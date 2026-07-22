@@ -119,8 +119,13 @@ export const TTL_RECOMMENDATIONS_MS = 30 * 24 * 60 * 60 * 1000;
  *       request for SOT-23 accepted a QFN-32 at half marks. SCORING CHANGES: a
  *       different-package candidate now FAILS in those families and sinks, as it always
  *       has everywhere else. Cached v19 recs hold the old flat-50% scores.
- *       (Full-result tier only — the base payload holds no scores.) */
-export const RECS_CACHE_SCHEMA_VERSION = 'v20';
+ *       (Full-result tier only — the base payload holds no scores.)
+ * v21: Decision #280 — the rescued (unmapped-column) ingest path now scales values to
+ *       base SI, so 153,993 Atlas numericValues change meaning, 50,521 of them in
+ *       scoring slots. Cached v20 recs hold scores computed from the old wrong-scale
+ *       numbers (e.g. rds_on "80mΩ@10V" stored as 80 rather than 0.08). Mirrors the
+ *       bump Decision #217 made for exactly this reason. Takes effect with the backfill. */
+export const RECS_CACHE_SCHEMA_VERSION = 'v21';
 
 /** Bump this when search merge/dedup/MFR-filter semantics change. v1→v2 on
  *  2026-06-02 to invalidate entries cached by the pre-MFR-filter merge that
