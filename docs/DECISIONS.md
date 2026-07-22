@@ -9180,3 +9180,101 @@ Same pass: `dictionaries/batch/undo` used the RLS-subject cookie client while it
 ### Not in this batch
 
 The 505 display/scoring mismatches (scoring is already correct); the Mapping Health detector's accuracy fixes and the 32/1/46 worksheet; and Layer 2, the typical-vs-maximum problem — confirmed again here, a source shipping `_Typ 2.1` and `_Max 2.8` stores **2.1**.
+
+## Decision #280 — Fix the mis-scaled numbers only; withdraw the reserved-id renaming (July 21, 2026)
+
+**Supersedes the storage half of Decision #279.** A max-effort review of #279 returned 15
+findings and a `DO NOT MERGE OR BACKFILL` hold. This decision keeps #279's *correct* half — the
+scale fix — and **withdraws the rename**.
+
+### What was wrong with #279
+
+#279 solved two problems at once and only one of them was real. Alongside the scale fix it moved
+unvetted values to a new key (`rds_on` → `raw_rds_on`). But the key **is** a storage contract:
+four consumers find values by it — the Specs panel (`fromParametersJsonb`), the coverage RPC, the
+widening RPC (in SQL, where `raw_` has no meaning) and the reclassify RPC. Only two were updated.
+The rename also freed the old slot, so a *different* measurement could occupy it — verified live
+on YANGJIE/FRD60A600AS-290A, where the vendor's own `VRRM = 600` was displaced by a dict-mapped
+`VR (V) = 630`.
+
+Measured, HEAD-vs-baseline over all 429 files / 437,387 products: the rename changed **14,110 key
+names across 6,559 products (16%)**. It also demoted CATEGORICAL values (`channel_type = "N"`),
+which makes matching *more* permissive, not safer — a missing value scores `review` = 50% credit
+that never fails, so an N-channel source could surface P-channel replacements.
+
+An `unvetted: true` annotation was designed as the replacement and **also rejected**, on two
+verified grounds: (1) `fromParametersJsonb` (`atlasMapper.ts:4026-4035`) builds its output as an
+explicit field-by-field literal, so an added field is silently dropped and the flag never reaches
+the engine; (2) probing the YANGJIE case showed the mapped write at `:3012` is an *unconditional*
+overwrite, so a naive annotation would have **destroyed** the 600 that HEAD at least preserved.
+
+### What ships
+
+ONE change, in `storeRawValue` (the rescued path) in both mapper copies: replace bare
+`extractNumeric` with `rescueNumericValue`, which scales the number **only** when its unit is on a
+conservative allowlist — `{p n u µ m k K M G} × {F A V W H Hz s Ω J C S}`, minus `MS`/`KS`, 97
+tokens — shared verbatim via `lib/services/atlas-rescue-units.json`.
+
+**The allowlist IS the safety property, not an implementation detail.** Both "proper" fixes were
+measured and rejected: a first-letter rule reads `ppm` as pico (11,122 values) and `pcs` as pico
+(11,254); a strict whole-token rule instead BREAKS `PF` (1,989), `nV/√Hz` (474), `mW/sr` (391),
+`Mbit` (431), `Kbyte` (372). There are **367 distinct unit spellings** in this corpus — recognising
+them all is its own project. An unrecognised token therefore keeps today's value **exactly**, so
+this change can only make a number more correct or leave it alone; it can never introduce a wrong
+one. Uppercase `P`/`U`/`N` are deliberately absent for the same reason (enabling `PF` generatively
+also enables `UV` and `PW`).
+
+**Scope: the rescued path only.** The dictionary-mapped paths already normalise and are untouched
+— applying this table there would REMOVE conversions that work today.
+
+### Verified by execution — full corpus, 429 files, 437,387 products
+
+| Gate | Result |
+| --- | --- |
+| Key names added / removed | **0 / 0** |
+| Display strings changed | **0** |
+| Numbers lost | **0** |
+| Conversions on a non-unit token (`ppm`, `pcs`, `mil`, `Max`…) | **0** |
+| **Numbers corrected** | **154,222** — **50,521** in scoring slots, across **69,742 products** |
+
+Headline, confirmed end-to-end: Siliup/SP40N25TQ ships `导通电阻(RDS(on)) = "80mΩ@10V"`, which
+slugs onto `rds_on` (weight 9, `lte`) and which `matchingEngine.ts:23` returns **verbatim** with no
+re-parse and no unit check. Stored as `80`, a genuinely better 80 mΩ candidate hard-*failed*
+against a 100 mΩ source. Now stored as `0.08`.
+
+Mutation-tested to the bar (`[[green-test-must-fail-on-broken-code]]`): 8 mutations, all caught.
+⚠️ One survived first time and the test was rewritten — the exclusion-list test *iterated*
+`SHARED.excluded`, so DELETING an entry made it check one fewer thing and still pass. Excluded
+tokens are now named explicitly. **A test whose coverage is defined by the data it tests cannot
+fail when that data shrinks.**
+
+### Withdrawn from #279
+
+The reserved-id guard, `atlas-reserved-attribute-ids.json`, its generator and npm script, and
+`readSlot` (which existed only to compensate for the rename) are all removed. Also parked, both
+independent of the bug: #279's raw-vs-raw comparison (measured: changes 78 keys) and its
+uppercase-prefix work (touches the mapped paths; its rule was generative — 18 combinations
+enabled, 5 measured).
+
+### The undo route
+
+`dictionaries/batch/undo` keeps its service-client swap — under the RLS-subject client a
+policy-filtered UPDATE returns `{data: [], error: null}`, success-shaped and empty, so the route
+reported a successful undo that changed nothing. `param-decisions/undo` keeps its `override_id`
+dedupe but **loses its compensating rollback**, which made the worst case unrecoverable rather
+than merely bad: `recordParamDecisions` inserts in chunks of 500 and returns false if any chunk
+fails *while earlier chunks stay committed*, so the rollback reactivated mappings the append-only
+log already, permanently, described as revoked. It also restored only
+`atlas_dictionary_overrides`, never the `atlas_unmapped_param_notes` writes, while telling the user
+"nothing was changed". The reversal now stands and the failure is reported — `buildUndoMessage`
+already appends "The log entry for this undo could not be written" and flips the alert to a
+warning. The real fix is atomicity (one `SECURITY DEFINER` function), in BACKLOG.
+
+### Found while verifying — NOT fixed here
+
+`extractNumericWithPrefix`'s unit character class accepts the MICRO SIGN (U+00B5) but not GREEK
+SMALL LETTER MU (U+03BC). Measured: **36,554 values use Greek mu — nearly 3× the 13,380 that use
+the micro sign** — and they yield NO parsed unit at all, on *every* path. `"800μA"` stores **800**,
+not 0.0008. `applyUnitPrefix` even has a U+03BC branch that can never fire. Same class as the bug
+above and larger in reach, but fixing it changes the dictionary-mapped paths, so it is logged in
+BACKLOG rather than folded in here.

@@ -25,7 +25,6 @@
     "baseline:update": "node scripts/check-baselines.mjs --update",
     "verify": "npm test && npm run baseline",
     "atlas:golden": "node scripts/gen-atlas-mapper-golden.mjs",
-    "atlas:reserved-ids": "tsx scripts/gen-reserved-attribute-ids.ts",
     "atlas:mapping-health": "node --env-file=.env.local --import tsx scripts/atlas-audit-mapping-health.ts",
     "atlas:mapping-health-report": "node --env-file=.env.local --import tsx scripts/atlas-mapping-health-report.ts"
   },

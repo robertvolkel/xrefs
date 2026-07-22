@@ -21,8 +21,9 @@ import {
   gaiaL2Dictionaries,
   type GaiaParamMapping,
 } from './atlasGaiaDictionaries';
-import { getLogicTable, getAllLogicTables } from '../logicTables';
+import { getLogicTable } from '../logicTables';
 import { getL2ParamMapForCategory, type ParamMapping } from './digikeyParamMap';
+import rescueUnitData from './atlas-rescue-units.json';
 
 /**
  * Belt-and-suspenders guard: ensure no user-facing parameter name ever leaks
@@ -67,9 +68,6 @@ function decodeLiteralByteEscapes(s: string): string {
   });
 }
 import { FAMILY_PARAM_SIGNATURES } from './atlasFamilyParamSignatures';
-// Shared with scripts/atlas-ingest.mjs (the live ingest path) so the two copies
-// of the prefix rule cannot drift. Same pattern as atlas-gaia-dicts.json.
-import unitCaseData from './atlas-unit-case.json';
 
 // ─── Atlas JSON Types ─────────────────────────────────────
 
@@ -2504,40 +2502,6 @@ export const APPLY_UNIT_PREFIX_TO_NUMERIC = true;
  * (V, A, Ω, °C, %, ppm/°C, nV/√Hz, etc.).
  */
 /**
- * Applies an SI prefix written in the WRONG CASE — but only when the remainder
- * is exactly a known unit atom, so a whole token is recognised rather than a
- * first letter.
- *
- * Suppliers write "4010 PF" for picofarads. The lowercase-only checks below
- * skipped it, so it stored 4010 instead of 4.01e-9 while "6.5 mΩ" on the SAME
- * product converted correctly (reproduced on the real file
- * data/atlas/mfr_389_AK_奥科_params.json, model AK4080).
- *
- * ⚠️ Case-INSENSITIVE matching would be destructive, not a fix. Measured over
- * all 429 source files it would newly "convert" 14,840 values reading 'Pin'
- * (pin count), 39,645 reading 'P', 7,106 reading 'N' and 342 reading 'Nm'
- * (newton-metre). Only ~2,100 of ~29,600 case-mismatched tokens are genuine
- * prefixes — the lowercase-only rule was PROTECTING the other 27,000.
- *
- * The table lives in atlas-unit-case.json, shared with scripts/atlas-ingest.mjs
- * (the live path) so the two copies cannot drift. See that file for why 'N' and
- * 'M' are deliberately excluded.
- *
- * Verified over all 429 files: converts 2,086 values (PF/UA/PA/Ps/Us), leaves
- * 661,728 untouched.
- */
-export function caseTolerantMultiplier(unit: string): number | null {
-  const multiplier = (unitCaseData.caseTolerantPrefixes as Record<string, number>)[unit[0]];
-  if (multiplier === undefined) return null;
-  // A bare 'P' leaves '' behind, which is not an atom — so this check alone
-  // rejects single-letter tokens. An explicit length guard here was verified
-  // dead by mutation testing (removing it failed nothing) and was dropped.
-  return PREFIXABLE_ATOMS.has(unit.slice(1)) ? multiplier : null;
-}
-
-const PREFIXABLE_ATOMS: ReadonlySet<string> = new Set(unitCaseData.prefixableAtoms);
-
-/**
  * Pure SI-prefix conversion — no flag check. Exported for unit testing
  * so the prefix logic stays covered regardless of kill-switch state.
  * Production code should call `applyUnitPrefix` (the gated wrapper) instead.
@@ -2545,8 +2509,6 @@ const PREFIXABLE_ATOMS: ReadonlySet<string> = new Set(unitCaseData.prefixableAto
 export function _applyUnitPrefixCore(numericValue: number | undefined, unit: string | undefined): number | undefined {
   if (numericValue === undefined || isNaN(numericValue)) return numericValue;
   if (!unit) return numericValue;
-  const cased = caseTolerantMultiplier(unit);
-  if (cased !== null) return numericValue * cased;
   if (unit.startsWith('p')) return numericValue * 1e-12;
   if (unit.startsWith('n') && !unit.startsWith('no')) return numericValue * 1e-9;
   if (unit.startsWith('µ') || unit.startsWith('μ') || unit.startsWith('u')) return numericValue * 1e-6;  // µ = U+00B5 (micro sign), μ = U+03BC (Greek small mu)
@@ -2581,6 +2543,50 @@ export function applyUnitPrefix(numericValue: number | undefined, unit: string |
  * applyUnitPrefix, so callers should prefer parsedUnit over dict's
  * declared unit. Dict unit is only the fallback for unit-less values.
  */
+/**
+ * SI-prefix allowlist for the RESCUED path. Built once from the shared JSON
+ * that scripts/atlas-ingest.mjs (the LIVE ingest path) reads verbatim, so the
+ * two copies cannot drift — a "keep in lockstep" comment is not a mechanism.
+ */
+export const RESCUE_UNIT_MULTIPLIERS: ReadonlyMap<string, number> = (() => {
+  const m = new Map<string, number>();
+  for (const [prefix, mult] of Object.entries(rescueUnitData.prefixes as Record<string, number>))
+    for (const atom of rescueUnitData.atoms as string[]) m.set(prefix + atom, mult);
+  for (const token of rescueUnitData.excluded as string[]) m.delete(token);
+  return m;
+})();
+
+/**
+ * Read a rescued value's number and scale it to base SI — but ONLY when its
+ * unit is one we recognise with certainty.
+ *
+ * This path used to call bare `extractNumeric`, which reads the number and
+ * ignores the unit entirely: `"80mΩ@10V"` was stored as 80 rather than 0.08,
+ * a thousand times too high, in a slot the engine scores on (weight 9, `lte`).
+ * Every dictionary-mapped path already normalises; only this one did not.
+ * Measured over all 429 source files: 154,312 values were stored at the wrong
+ * scale, 50,521 of them in scoring slots, across 69,742 products.
+ *
+ * ⚠️ The allowlist is the safety property, not an implementation detail. A
+ * first-letter prefix rule reads `ppm` as pico (11,122 values corpus-wide) and
+ * `pcs` as pico (11,254); a strict whole-token rule instead BREAKS `PF` (1,989),
+ * `nV/√Hz` (474), `mW/sr` (391), `Mbit` (431). So an unrecognised unit returns
+ * the number UNCHANGED — identical to today's behaviour. This can only make a
+ * value more correct or leave it alone; it can never introduce a wrong one.
+ *
+ * SCOPE: the rescued path only. The dictionary-mapped paths already normalise
+ * and are NOT touched — applying this table there would REMOVE conversions
+ * that work today.
+ *
+ * Mirror: rescueNumericValue in scripts/atlas-ingest.mjs.
+ */
+export function rescueNumericValue(rawValue: string): number | undefined {
+  const { numericValue, parsedUnit } = extractNumericWithPrefix(String(rawValue));
+  if (numericValue === undefined) return undefined;
+  const mult = parsedUnit === undefined ? undefined : RESCUE_UNIT_MULTIPLIERS.get(parsedUnit);
+  return mult === undefined ? numericValue : numericValue * mult;
+}
+
 export function extractNumericWithPrefix(value: string): { numericValue?: number; parsedUnit?: string } {
   if (isMissingValue(value)) return {};
   const trimmed = value.trim();
@@ -3351,12 +3357,7 @@ export interface MappedAtlasProduct {
  * being discarded and 195,886 (86.7%) carried a value the winner did not have.
  *
  * The loser is kept under its raw param name, exactly where an unmapped param
- * would have gone.
- *
- * ⚠️ This docblock used to claim "raw ids appear in no logic table, so scoring
- * is untouched." That was FALSE — see RESERVED_ATTRIBUTE_IDS. `rawIdForParam`
- * joins on underscores, so "RDS(on)" slugs to the weight-9 `rds_on` rule.
- * `storeRawValue` now refuses any reserved id and escapes it instead.
+ * would have gone. Raw ids appear in no logic table, so scoring is untouched.
  *
  * Value-equality guard: identical values are dropped (nothing to preserve).
  * The comparison is deliberately CONSERVATIVE — a false "differs" merely keeps
@@ -3366,34 +3367,6 @@ export interface MappedAtlasProduct {
  * path. Keep the two in lockstep — they are pinned against each other by
  * __tests__/services/atlasLayer1Parity.test.ts.
  */
-/**
- * Every attributeId the matching engine scores on, across all 43 logic tables
- * (434 as of Jul 2026). Computed from the registry, never hand-listed, so a new
- * family or rule is covered the moment it lands.
- *
- * ⚠️ Decision #278's docblock claimed "raw ids appear in no logic table, so
- * scoring is untouched." That was FALSE and is why this exists. `rawIdForParam`
- * joins on underscores, so an unmapped supplier column called "RDS(on)" slugs
- * to exactly `rds_on` — a weight-9 threshold rule — and `matchingEngine.ts:23`
- * takes the stored numericValue verbatim. Measured on the live database
- * (106,000 products, 24.3% of the corpus): 6,958 values were sitting in scoring
- * slots carrying a number derived by a path that never normalized units.
- *
- * Shared with scripts/atlas-ingest.mjs through the generated
- * atlas-reserved-attribute-ids.json; a test pins that file against this set so
- * it cannot go stale silently.
- */
-export const RESERVED_ATTRIBUTE_IDS: ReadonlySet<string> = new Set(
-  getAllLogicTables().flatMap(t => (t.rules ?? []).map(r => r.attributeId).filter(Boolean)),
-);
-
-/**
- * Prefix for a rescued/unmapped value whose natural key would land on a real
- * scoring slot. Deliberately NOT itself a reserved id (asserted by a test), so
- * the escape can never collide in turn.
- */
-export const RAW_KEY_PREFIX = 'raw_';
-
 export function rawIdForParam(decodedName: string): string {
   // Strip the gaia- provenance prefix before it can reach an attribute id —
   // vendor names must never surface to end users.
@@ -3476,20 +3449,6 @@ export function mapAtlasModel(
     : gaiaL2Dictionaries[classification.category];
   const parameters: ParametricAttribute[] = [];
   const seenAttributeIds = new Set<string>();
-  /**
-   * The RAW source string each winner arrived with, before any normalization.
-   *
-   * ⚠️ Blocker 2. `keepLosingValue` used to compare the loser's RAW value
-   * against the winner's STORED value — but the stored value has been through
-   * parseGaiaValue / normalizeTemperatureRange / normalizeVoltageRange. So
-   * "<8.0 mΩ" is stored as "8.0" (atlasGaiaDictionaries.ts, the `<`-branch),
-   * and a genuinely different loser reading "8.0" was judged identical and
-   * DELETED — the exact failure the comment two lines below warns about.
-   *
-   * Comparing raw-against-raw is the only direction that is safe: comparing two
-   * NORMALIZED forms would widen "identical" and delete more.
-   */
-  const rawByAttributeId = new Map<string, string>();
 
   /**
    * Layer 1 (Decision #278) — keep a losing spelling's value under its raw
@@ -3507,35 +3466,25 @@ export function mapAtlasModel(
     rawValue: string,
     preferredId?: string,
   ): string | null => {
-    const natural = preferredId || rawIdForParam(decodedName);
-    if (!natural) return null;
-    // A raw key must never occupy a slot the matching engine scores on. An
-    // unmapped column called "RDS(on)" slugs to exactly `rds_on` (weight 9),
-    // and nothing downstream can tell a vetted value from a raw one.
-    const base = RESERVED_ATTRIBUTE_IDS.has(natural) ? `${RAW_KEY_PREFIX}${natural}` : natural;
+    const base = preferredId || rawIdForParam(decodedName);
+    if (!base) return null;
     let key = base;
     for (let n = 2; seenAttributeIds.has(key) && n <= MAX_LOSER_SUFFIX; n++) key = `${base}_${n}`;
     if (seenAttributeIds.has(key)) return null;
     seenAttributeIds.add(key);
-    // Normalize to base SI exactly like every winner path does. Using the bare
-    // extractor here is what let "80mΩ@10V" store 80 instead of 0.08.
-    const { numericValue, parsedUnit } = extractNumericWithPrefix(String(rawValue));
     parameters.push({
       parameterId: key,
       parameterName: stripGaiaPrefix(decodedName.trim()),
       value: String(rawValue).trim(),
-      numericValue: applyUnitPrefix(numericValue, parsedUnit),
+      numericValue: rescueNumericValue(rawValue),
       sortOrder: 200 + parameters.length,
     });
     return key;
   };
 
   const keepLosingValue = (decodedName: string, rawValue: string, winnerId: string): void => {
-    // Drop ONLY when we know both RAW strings and they are identical. If the
-    // winner's raw was never recorded we keep the loser: a false "differs"
-    // costs a redundant copy, a false "same" destroys data.
-    const winnerRaw = rawByAttributeId.get(winnerId);
-    if (winnerRaw !== undefined && !losingValueDiffers(rawValue, winnerRaw)) return;
+    const winner = parameters.find(x => x.parameterId === winnerId);
+    if (!losingValueDiffers(rawValue, winner?.value)) return;
     storeRawValue(decodedName, rawValue);
   };
   let packageValue: string | undefined;
@@ -3594,7 +3543,6 @@ export function mapAtlasModel(
         // Store with auto-humanized name (nothing thrown away)
         if (!seenAttributeIds.has(gaia.stem)) {
           seenAttributeIds.add(gaia.stem);
-          rawByAttributeId.set(gaia.stem, p.value);
           const parsed = parseGaiaValue(p.value);
           // parseGaiaValue parses unit from value string ("5.8 mΩ" → unit='mΩ'); no dict fallback exists here.
           parameters.push({
@@ -3638,7 +3586,6 @@ export function mapAtlasModel(
         continue;
       }
       seenAttributeIds.add(gaiaMapping.attributeId);
-      rawByAttributeId.set(gaiaMapping.attributeId, p.value);
 
       // Parse value (gaia values embed units: "5.8 mΩ", "100 V")
       const parsed = parseGaiaValue(p.value);
@@ -3700,7 +3647,6 @@ export function mapAtlasModel(
       continue;
     }
     seenAttributeIds.add(mapping.attributeId);
-    rawByAttributeId.set(mapping.attributeId, p.value);
 
     // Normalize value based on attributeId
     let displayValue = p.value.trim();

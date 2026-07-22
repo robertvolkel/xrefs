@@ -407,25 +407,30 @@ describe('every requested id gets an answer', () => {
   });
 
   /**
-   * ⚠️ THIS CONTRACT WAS DELIBERATELY REVERSED (Blocker 3, Jul 2026).
+   * A FAILED LOG APPEND IS REPORTED, NOT COMPENSATED.
    *
-   * It previously asserted status 200 / `undone: 1` / `logged: false` with the
-   * override left INACTIVE, on the reasoning that "recordParamDecisions is
-   * non-fatal by design, so the undo itself stands".
+   * A compensating rollback was tried here (Jul 2026) and removed, because it
+   * made the worst case UNRECOVERABLE rather than merely bad:
    *
-   * That reasoning does not survive this table being append-only. The old
-   * outcome left the mappings OFF, nothing recording why or by whom, and a
-   * retry reporting "already inactive" — because the update filters on
-   * `.eq('is_active', true)` and matches nothing the second time. No later
-   * write could repair it, since there is no UPDATE and no DELETE policy.
+   *  1. `recordParamDecisions` inserts in chunks of 500 and returns false if
+   *     ANY chunk fails — while earlier chunks stay COMMITTED. Rolling the
+   *     overrides back then reactivated mappings the log already, permanently,
+   *     described as revoked. `atlas_param_decisions` has no UPDATE and no
+   *     DELETE policy, so nothing could ever repair it.
+   *  2. It restored only `atlas_dictionary_overrides`. The status branch writes
+   *     to `atlas_unmapped_param_notes` and was never put back, while the
+   *     response told the user "nothing was changed".
    *
-   * The suite's own stated invariant decides it: THE LOG MUST NEVER CLAIM A
-   * TRANSITION THAT DID NOT HAPPEN — and its converse is just as binding, that
-   * a transition must never happen unclaimed. Consistency between the state and
-   * its log outranks the undo succeeding, so the deactivation is rolled back
-   * and the failure reported honestly.
+   * So the reversal stands and the log failure is surfaced. That is visible,
+   * not silent: `buildUndoMessage` APPENDS "The log entry for this undo could
+   * not be written" and flips the alert to a warning (pinned by its own tests
+   * in atlasDecisionLogPanel). The resulting state — reversal applied, log
+   * entry missing — is recoverable by redoing the change in Triage.
+   *
+   * The real fix is atomicity, not compensation: one SECURITY DEFINER function
+   * doing both writes in a single transaction. See docs/BACKLOG.md.
    */
-  it('rolls the deactivation back when the log append fails', async () => {
+  it('the reversal STANDS when the log append fails — not silently rolled back', async () => {
     seed({
       decisions: [decisionRow({})],
       overrides: [{ id: 'ov-1', family_id: 'B1', is_active: true }],
@@ -434,48 +439,40 @@ describe('every requested id gets an answer', () => {
 
     const res = await undo(['d-1']);
 
-    expect(res.status).toBe(500);
-    expect(res.json.success).toBe(false);
-    expect(res.json.undone).toBe(0);
-    // The mapping is back exactly as it was — not stranded inactive.
-    expect(overrides().find((o) => o.id === 'ov-1')!.is_active).toBe(true);
-    // And no orphan revocation row survived the failure.
-    expect(appended()).toHaveLength(0);
-  });
-
-  it('explains the failure in plain language, not a raw error code', async () => {
-    seed({
-      decisions: [decisionRow({})],
-      overrides: [{ id: 'ov-1', family_id: 'B1', is_active: true }],
-      fail: { atlas_param_decisions: { insert: { message: 'insert blew up' } } },
-    });
-
-    const res = await undo(['d-1']);
-
-    expect(String(res.json.error)).toMatch(/nothing was changed|put back/i);
+    expect(res.status).toBe(200);
+    expect(res.json.success).toBe(true);
+    expect(res.json.undone).toBe(1);
+    // The override really is deactivated — the user's action took effect.
+    expect(overrides().find((o) => o.id === 'ov-1')!.is_active).toBe(false);
   });
 
   /**
-   * If the rollback ITSELF fails there is nothing left to do but say so
-   * loudly — the state really is divergent at that point, and an engineer has
-   * to look. Silence here would be the worst outcome of all.
+   * The whole reason the rollback could be dropped safely: the failure is
+   * REPORTED. If `logged` stopped being returned, the panel would render a
+   * plain success and the missing audit entry would be invisible.
    */
-  it('escalates when the rollback also fails, naming how many are stranded', async () => {
+  it('reports logged:false so the panel can warn about the missing audit entry', async () => {
     seed({
       decisions: [decisionRow({})],
       overrides: [{ id: 'ov-1', family_id: 'B1', is_active: true }],
-      fail: {
-        atlas_param_decisions: { insert: { message: 'insert blew up' } },
-        // Let the deactivation succeed; fail only the compensating restore.
-        atlas_dictionary_overrides: { update: { message: 'restore blew up', afterCalls: 1 } },
-      },
+      fail: { atlas_param_decisions: { insert: { message: 'insert blew up' } } },
     });
 
     const res = await undo(['d-1']);
 
-    expect(res.status).toBe(500);
-    expect(res.json.success).toBe(false);
-    expect(String(res.json.error)).toMatch(/tell an engineer/i);
+    expect(res.json.logged).toBe(false);
+  });
+
+  it('reports logged:true on the happy path, so the flag actually discriminates', async () => {
+    seed({
+      decisions: [decisionRow({})],
+      overrides: [{ id: 'ov-1', family_id: 'B1', is_active: true }],
+    });
+
+    const res = await undo(['d-1']);
+
+    expect(res.json.logged).toBe(true);
+    expect(appended()).toHaveLength(1);
   });
 
   /**

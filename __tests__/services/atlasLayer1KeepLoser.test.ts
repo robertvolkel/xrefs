@@ -350,53 +350,7 @@ describe('parity — mapModel (.mjs) and mapAtlasModel (.ts) rescue the same val
         { name: 'gaia-zzz_unknown_measurement-Max', value: '2 V' },
       ],
     },
-    /**
-     * ⚠️ BLOCKER 2 — the case that was silently deleting data.
-     *
-     * Both stems map to `vds_max`, so the second hits the dedup branch AFTER
-     * the first has been stored NORMALIZED. `parseGaiaValue`'s `<`-branch turns
-     * "<30 V" into displayValue "30", so comparing the loser's RAW "30" against
-     * the winner's STORED "30" judged them identical and dropped the loser —
-     * even though the source strings say different things ("under 30" vs "30").
-     *
-     * Must use two DIFFERENT stems: a Typ/Max pair on ONE stem routes through
-     * the preferredSuffix branch before any winner exists, so it never exercises
-     * this comparison. (The first version of this test did exactly that and was
-     * vacuous — it passed against the broken code.)
-     */
-    {
-      name: 'normalized winner vs raw loser — "<30 V" must not swallow "30"',
-      params: [
-        { name: 'gaia-drain_source_voltage', value: '<30 V' },
-        { name: 'gaia-drain_source_breakdown_voltage', value: '30' },
-      ],
-    },
-    {
-      name: 'normalized winner vs raw loser — ± form must not swallow the bare number',
-      params: [
-        { name: 'gaia-drain_source_voltage', value: '±20 V' },
-        { name: 'gaia-drain_source_breakdown_voltage', value: '20' },
-      ],
-    },
   ];
-
-  /**
-   * ⚠️ Comparing VALUES alone is not enough, and that gap hid Blocker 2.
-   *
-   * When a normalized winner ("<30 V" → stored "30") and a rescued loser
-   * ("30") carry the same string, the value SET is identical whether the loser
-   * was preserved under its own key or silently deleted. Only the KEYS differ.
-   * Both value assertions below passed against the broken code.
-   */
-  it.each(cases)('$name — the same set of KEYS survives in both', ({ params }) => {
-    const mjs = mapModel(mosfet(params), 'TestMfr', 'test.json');
-    const ts = mapAtlasModel(mosfet(params), 'TestMfr');
-
-    const mjsKeys = Object.keys(mjs.parameters).sort();
-    const tsKeys = ts.parameters.map(p => p.parameterId).sort();
-
-    expect(tsKeys).toEqual(mjsKeys);
-  });
 
   it.each(cases)('$name — the same set of VALUES survives in both', ({ params }) => {
     const mjs = mapModel(mosfet(params), 'TestMfr', 'test.json');
@@ -423,67 +377,5 @@ describe('parity — mapModel (.mjs) and mapAtlasModel (.ts) rescue the same val
       expect(mjsValues.map(core)).toContain(w);
       expect(tsValues.map(core)).toContain(w);
     }
-  });
-});
-
-/**
- * ⚠️ BLOCKER 2, asserted DIRECTLY rather than through parity.
- *
- * Parity only proves the two copies agree — it cannot catch a bug present in
- * both, and the value-set assertions cannot see this one at all because the
- * winner and the rescued loser stringify identically. What actually
- * distinguishes "preserved" from "deleted" here is the NUMBER OF ENTRIES.
- *
- * The mechanism: `parseGaiaValue("<30 V")` returns displayValue "30"
- * (atlasGaiaDictionaries.ts, the `<`-branch). `drain_source_voltage` and
- * `drain_source_breakdown_voltage` both map to `vds_max`, so the second one
- * hits the dedup branch after the first is already stored NORMALIZED. Comparing
- * the loser's raw "30" against the winner's stored "30" called them identical
- * and dropped a value whose source string says something different.
- */
-describe('Blocker 2 — a normalized winner must not swallow a raw loser', () => {
-  const model = (params: Array<{ name: string; value: string }>) => ({
-    componentName: 'TEST-B2',
-    description: 'N-Channel MOSFET',
-    datasheetUrl: '',
-    category: {
-      c1: { name: 'Discrete Semiconductors' },
-      c2: { name: 'Transistors' },
-      c3: { name: 'MOSFET' },
-    },
-    parameters: params,
-  });
-
-  const COLLIDING = [
-    { name: 'gaia-drain_source_voltage', value: '<30 V' },
-    { name: 'gaia-drain_source_breakdown_voltage', value: '30' },
-  ];
-
-  it('TS keeps BOTH entries — the winner and the rescued loser', () => {
-    const out = mapAtlasModel(model(COLLIDING) as Parameters<typeof mapAtlasModel>[0], 'TestMfr');
-    const ids = out.parameters.map(p => p.parameterId);
-    expect(ids).toContain('vds_max');
-    // The loser must exist as its OWN entry. Without the fix there is exactly
-    // one entry here and the second source value is gone for good.
-    expect(ids.length).toBeGreaterThan(1);
-    expect(ids.filter(i => i !== 'vds_max').length).toBeGreaterThan(0);
-  });
-
-  it('the LIVE .mjs copy keeps BOTH entries too', () => {
-    const out = mapModel(model(COLLIDING), 'TestMfr', 'test.json');
-    const keys = Object.keys(out.parameters);
-    expect(keys).toContain('vds_max');
-    expect(keys.length).toBeGreaterThan(1);
-  });
-
-  it('genuinely identical raw values are still dropped — this is a dedup, not a hoarder', () => {
-    const identical = [
-      { name: 'gaia-drain_source_voltage', value: '30 V' },
-      { name: 'gaia-drain_source_breakdown_voltage', value: '30 V' },
-    ];
-    const ts = mapAtlasModel(model(identical) as Parameters<typeof mapAtlasModel>[0], 'TestMfr');
-    const mjs = mapModel(model(identical), 'TestMfr', 'test.json');
-    expect(ts.parameters.map(p => p.parameterId)).toEqual(['vds_max']);
-    expect(Object.keys(mjs.parameters)).toEqual(['vds_max']);
   });
 });

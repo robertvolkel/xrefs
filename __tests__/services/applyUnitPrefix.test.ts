@@ -1,6 +1,4 @@
 import { _applyUnitPrefixCore, extractNumericWithPrefix, effectiveUnit } from '@/lib/services/atlasMapper';
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { applyUnitPrefix: mjsApplyUnitPrefix } = require('../../scripts/atlas-ingest.mjs');
 
 describe('_applyUnitPrefixCore — SI prefix conversion to base SI units', () => {
   describe('SI prefixes apply correctly', () => {
@@ -116,103 +114,6 @@ describe('_applyUnitPrefixCore — SI prefix conversion to base SI units', () =>
     it('uppercase K is treated as kilo (matches Digikey convention)', () => {
       expect(_applyUnitPrefixCore(10, 'Kohm')).toBe(10_000);
     });
-  });
-
-  /**
-   * Every token below is REAL — counts are occurrences across all 429 files in
-   * data/atlas/. This suite had 43 cases and covered only uppercase 'K', which
-   * is exactly how "4010 PF" shipped storing 4010 instead of 4.01e-9.
-   */
-  describe('wrong-case SI prefixes — whole token must be a unit, never a first letter', () => {
-    it('converts PF → F, the token that exposed this (1,989 values in the corpus)', () => {
-      // data/atlas/mfr_389_AK_奥科_params.json, model AK4080: "4010 PF".
-      expect(_applyUnitPrefixCore(4010, 'PF')).toBeCloseTo(4.01e-9, 15);
-    });
-
-    it('converts the remaining genuine cased tokens: UA, PA, Ps, Us', () => {
-      expect(_applyUnitPrefixCore(72, 'UA')).toBeCloseTo(7.2e-5, 12);   // microamp, 72x
-      expect(_applyUnitPrefixCore(18, 'PA')).toBeCloseTo(1.8e-11, 18);  // picoamp, 18x
-      expect(_applyUnitPrefixCore(5, 'Ps')).toBeCloseTo(5e-12, 18);     // picosecond, 5x
-      expect(_applyUnitPrefixCore(2, 'Us')).toBeCloseTo(2e-6, 12);      // microsecond, 2x
-    });
-
-    /**
-     * ⚠️ THE POINT OF THE WHOLE FIX. Case-insensitive prefix matching would
-     * "convert" every one of these. Counts are real; 'Pin' alone is 14,840.
-     */
-    it('refuses tokens whose remainder is not a unit — Pin, Pcs, PPM, PWM, PHONE', () => {
-      expect(_applyUnitPrefixCore(8, 'Pin')).toBe(8);       // pin count, 14,840x
-      expect(_applyUnitPrefixCore(100, 'Pcs')).toBe(100);   // pieces
-      expect(_applyUnitPrefixCore(50, 'PPM')).toBe(50);
-      expect(_applyUnitPrefixCore(1, 'PWM')).toBe(1);
-      expect(_applyUnitPrefixCore(3, 'PHONE')).toBe(3);     // parser junk, still must not convert
-      expect(_applyUnitPrefixCore(70, 'UI')).toBe(70);      // 'I' is not a unit atom
-    });
-
-    it('refuses a bare capital with no atom after it — P (39,645x), N (7,106x), U', () => {
-      expect(_applyUnitPrefixCore(9087, 'P')).toBe(9087);
-      expect(_applyUnitPrefixCore(3109, 'N')).toBe(3109);
-      expect(_applyUnitPrefixCore(6, 'U')).toBe(6);
-    });
-
-    /**
-     * 'N' is deliberately absent from the tolerant table. 'Nm' (newton-metre,
-     * 342x) outnumbers 'Ns' (nanosecond, 4x) ~85:1 and no lexical rule separates
-     * them, so N is refused entirely: loses 8 values, protects 342.
-     */
-    it('does NOT read Nm as nano-metre — newton-metre outnumbers nanosecond 85:1', () => {
-      expect(_applyUnitPrefixCore(342, 'Nm')).toBe(342);
-      expect(_applyUnitPrefixCore(4, 'Ns')).toBe(4); // accepted cost of refusing N
-    });
-
-    /**
-     * 'M' is already mega in the canonical path. Re-reading it as milli would
-     * corrupt 9,038 MΩ and 14,681 MHz values that are correct today.
-     */
-    it('leaves already-correct uppercase prefixes alone — MΩ and MHz stay mega', () => {
-      expect(_applyUnitPrefixCore(10, 'MΩ')).toBe(10_000_000);
-      expect(_applyUnitPrefixCore(1.5, 'MHz')).toBe(1_500_000);
-    });
-
-    it('does not treat F or A as femto/atto — they are farad and amp', () => {
-      expect(_applyUnitPrefixCore(10, 'F')).toBe(10);
-      expect(_applyUnitPrefixCore(10, 'A')).toBe(10);
-      expect(_applyUnitPrefixCore(10, 'FSR')).toBe(10);
-    });
-  });
-});
-
-/**
- * The prefix rule exists in TWO copies: atlasMapper.ts (TS) and
- * scripts/atlas-ingest.mjs (the LIVE ingest path). Comments saying "keep these
- * in lockstep" have drifted before. This block is the mechanism.
- *
- * The token list is not invented — every entry is a real unit string measured
- * across all 429 files in data/atlas/, chosen to cover both sides of the rule.
- */
-describe('parity — the TS copy and the LIVE .mjs copy agree on every real token', () => {
-  const REAL_CORPUS_TOKENS = [
-    // genuine wrong-case prefixes that must convert
-    'PF', 'UA', 'PA', 'Ps', 'Us',
-    // wrong-case look-alikes that must NOT convert
-    'Pin', 'Pins', 'Pcs', 'PCS', 'PPM', 'PWM', 'PFM', 'PHONE', 'UI', 'UIPP',
-    'Nm', 'Ns', 'NA', 'N/', 'P/', 'FSR', 'FPS', 'Form', 'General', 'Typ',
-    // bare capitals
-    'P', 'N', 'U', 'M', 'K', 'F', 'A', 'V', 'W', 'T', 'G',
-    // already-correct canonical units that must be untouched by the new path
-    'MΩ', 'MHz', 'kHz', 'KHz', 'mΩ', 'mA', 'µF', 'μF', 'uF', 'nF', 'pF',
-    'ns', 'µA', 'mV', 'GHz', 'Kohm', 'mm', 'MSL', 'no', '°C', '°C/W', '%',
-    'VAC', 'VDC', 'Mbyte', 'Gbps/lane', 'Ksps',
-  ];
-
-  it.each(REAL_CORPUS_TOKENS)('agrees on %s', (unit) => {
-    expect(mjsApplyUnitPrefix(1, unit)).toBe(_applyUnitPrefixCore(1, unit));
-  });
-
-  it('agrees on undefined/empty units and non-numeric input', () => {
-    expect(mjsApplyUnitPrefix(1, undefined)).toBe(_applyUnitPrefixCore(1, undefined));
-    expect(mjsApplyUnitPrefix(1, '')).toBe(_applyUnitPrefixCore(1, ''));
-    expect(mjsApplyUnitPrefix(undefined, 'PF')).toBe(_applyUnitPrefixCore(undefined, 'PF'));
   });
 });
 

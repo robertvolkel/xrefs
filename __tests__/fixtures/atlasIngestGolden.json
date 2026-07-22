@@ -131,6 +131,9 @@
     },
     "packageValue": "TO-252",
     "parameters": {
+      "channel_type": {
+        "value": "N"
+      },
       "height": {
         "value": "2.3 mm",
         "numericValue": 2.3,
@@ -148,9 +151,6 @@
       "package_case": {
         "value": "TO-252",
         "numericValue": -252
-      },
-      "raw_channel_type": {
-        "value": "N"
       },
       "rdson_vgs_10v_max": {
         "value": "1.300",
@@ -178,7 +178,7 @@
       {
         "paramName": "Channel type",
         "sampleValue": "N",
-        "attributeId": "raw_channel_type",
+        "attributeId": "channel_type",
         "kind": "standard"
       },
       {
@@ -353,7 +353,7 @@
       },
       "温度系数_温漂": {
         "value": "20ppm/℃",
-        "numericValue": 2e-11
+        "numericValue": 20
       },
       "输出电压_最大值": {
         "value": "36V",
@@ -897,7 +897,7 @@
       },
       "frequency_error_max": {
         "value": "+15 ppm",
-        "numericValue": 1.5e-11
+        "numericValue": 15
       },
       "input_high_voltage": {
         "value": "2.0",
@@ -2333,241 +2333,6 @@
         "paramName": "gaia-wifi_standard",
         "sampleValue": "IEEE 802.11b/g/n",
         "attributeId": "wifi_standard",
-        "kind": "gaia"
-      }
-    ]
-  },
-  "cased_unit_prefixes": {
-    "_why": "REAL model whose supplier wrote capital-cased SI prefixes (\"4010 PF\"). Pins the whole-token unit rule: PF/UA/PA must convert, and look-alikes like Pin/Nm must not. The golden was blind to this class until Jul 2026 — a change affecting 2,086 corpus values produced an empty diff.",
-    "_mpn": "AK4080",
-    "part": {
-      "mpn": "AK4080",
-      "manufacturer": "AK",
-      "description": "AK4080 N-Channel Enhancement Mode Power MOSFET with 40V drain-source voltage, 80A continuous drain current, RDS(ON) less than 6.5mΩ at VGS=10V, advanced trench technology for low on-resistance and high cell density, suitable for PWM and load switching applications.",
-      "category": "Transistors",
-      "subcategory": "MOSFET",
-      "familyId": "B5",
-      "status": "Active",
-      "datasheetUrl": "https://atlas.eefcdn.com/partdatasheet/666677/666677_23354494_1757293688339.pdf"
-    },
-    "classification": {
-      "category": "Transistors",
-      "subcategory": "MOSFET",
-      "familyId": "B5"
-    },
-    "packageValue": null,
-    "parameters": {
-      "avalanche_energy": {
-        "value": "670",
-        "numericValue": 0.67,
-        "unit": "mJ"
-      },
-      "body_diode_trr": {
-        "value": "33",
-        "numericValue": 3.3000000000000004e-8,
-        "unit": "ns"
-      },
-      "body_diode_vf": {
-        "value": "1.2",
-        "numericValue": 1.2,
-        "unit": "V"
-      },
-      "ciss": {
-        "value": "4010",
-        "numericValue": 4.01e-9,
-        "unit": "pF"
-      },
-      "coss": {
-        "value": "750",
-        "numericValue": 7.5e-10,
-        "unit": "pF"
-      },
-      "crss": {
-        "value": "390",
-        "numericValue": 3.9e-10,
-        "unit": "pF"
-      },
-      "derating_factor": {
-        "value": "0.6",
-        "numericValue": 0.6,
-        "unit": "W/℃"
-      },
-      "diode_forward_current": {
-        "value": "80",
-        "numericValue": 80,
-        "unit": "A"
-      },
-      "drain_current_continuous": {
-        "value": "56 A",
-        "numericValue": 56
-      },
-      "drain_source_breakdown_voltage_typ": {
-        "value": "45 V",
-        "numericValue": 45
-      },
-      "drain_source_on_state_resistance_typ": {
-        "value": "5.3 mΩ",
-        "numericValue": 0.0053
-      },
-      "forward_transconductance": {
-        "value": "15",
-        "numericValue": 15,
-        "unit": "S"
-      },
-      "gate_threshold_voltage_min": {
-        "value": "1.2 V",
-        "numericValue": 1.2
-      },
-      "gate_threshold_voltage_typ": {
-        "value": "1.8 V",
-        "numericValue": 1.8
-      },
-      "id_max": {
-        "value": "80",
-        "numericValue": 80,
-        "unit": "A"
-      },
-      "id_pulse": {
-        "value": "350",
-        "numericValue": 350,
-        "unit": "A"
-      },
-      "maximum_power_dissipation": {
-        "value": "90",
-        "numericValue": 90,
-        "unit": "W"
-      },
-      "operating_junction_and_storage_temperature_range": {
-        "value": "-55",
-        "numericValue": -55000000000000,
-        "unit": "To 175 ℃"
-      },
-      "qg": {
-        "value": "50",
-        "numericValue": 5.0000000000000004e-8,
-        "unit": "nC"
-      },
-      "qgd": {
-        "value": "13",
-        "numericValue": 1.3e-8,
-        "unit": "nC"
-      },
-      "qgs": {
-        "value": "12",
-        "numericValue": 1.2000000000000002e-8,
-        "unit": "nC"
-      },
-      "rds_on": {
-        "value": "6.5",
-        "numericValue": 0.006500000000000001,
-        "unit": "mΩ"
-      },
-      "reverse_recovery_charge": {
-        "value": "34",
-        "numericValue": 3.4e-8,
-        "unit": "nC"
-      },
-      "rth_jc": {
-        "value": "1.67",
-        "numericValue": 1.67,
-        "unit": "°C/W"
-      },
-      "turn_off_delay_time": {
-        "value": "38",
-        "numericValue": 3.8e-8,
-        "unit": "nS"
-      },
-      "turn_off_fall_time": {
-        "value": "11",
-        "numericValue": 1.1000000000000001e-8,
-        "unit": "nS"
-      },
-      "turn_on_delay_time": {
-        "value": "11",
-        "numericValue": 1.1000000000000001e-8,
-        "unit": "nS"
-      },
-      "turn_on_rise_time": {
-        "value": "10",
-        "numericValue": 1e-8,
-        "unit": "nS"
-      },
-      "vds_max": {
-        "value": "40",
-        "numericValue": 40,
-        "unit": "V"
-      },
-      "vgs_max": {
-        "value": "±20",
-        "numericValue": 20,
-        "unit": "V"
-      },
-      "vgs_th": {
-        "value": "2.5",
-        "numericValue": 2.5,
-        "unit": "V"
-      }
-    },
-    "warnings": [],
-    "unmappedParams": [
-      {
-        "paramName": "gaia-derating_factor",
-        "sampleValue": "0.6 W/℃",
-        "attributeId": "derating_factor",
-        "kind": "gaia"
-      },
-      {
-        "paramName": "gaia-diode_forward_current-Max",
-        "sampleValue": "80 A",
-        "attributeId": "diode_forward_current",
-        "kind": "gaia"
-      },
-      {
-        "paramName": "gaia-forward_transconductance-Min",
-        "sampleValue": "15 S",
-        "attributeId": "forward_transconductance",
-        "kind": "gaia"
-      },
-      {
-        "paramName": "gaia-maximum_power_dissipation",
-        "sampleValue": "90 W",
-        "attributeId": "maximum_power_dissipation",
-        "kind": "gaia"
-      },
-      {
-        "paramName": "gaia-operating_junction_and_storage_temperature_range",
-        "sampleValue": "-55 To 175 ℃",
-        "attributeId": "operating_junction_and_storage_temperature_range",
-        "kind": "gaia"
-      },
-      {
-        "paramName": "gaia-reverse_recovery_charge-Typ",
-        "sampleValue": "34 nC",
-        "attributeId": "reverse_recovery_charge",
-        "kind": "gaia"
-      },
-      {
-        "paramName": "gaia-turn_off_delay_time-Typ",
-        "sampleValue": "38 nS",
-        "attributeId": "turn_off_delay_time",
-        "kind": "gaia"
-      },
-      {
-        "paramName": "gaia-turn_off_fall_time-Typ",
-        "sampleValue": "11 nS",
-        "attributeId": "turn_off_fall_time",
-        "kind": "gaia"
-      },
-      {
-        "paramName": "gaia-turn_on_delay_time-Typ",
-        "sampleValue": "11 nS",
-        "attributeId": "turn_on_delay_time",
-        "kind": "gaia"
-      },
-      {
-        "paramName": "gaia-turn_on_rise_time-Typ",
-        "sampleValue": "10 nS",
-        "attributeId": "turn_on_rise_time",
         "kind": "gaia"
       }
     ]

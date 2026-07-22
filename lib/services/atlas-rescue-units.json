@@ -1,0 +1,65 @@
+{
+  "_comment": [
+    "SI prefix table for the RESCUED parameter path ONLY (storeRawValue).",
+    "",
+    "A value arriving under a column name no dictionary recognises used to be stored with its",
+    "number read but NEVER scaled — `\"80m\\u03a9@10V\"` became 80 instead of 0.08, a thousand times",
+    "too high, in a slot the matching engine scores on (weight 9, `lte`). Measured over all 429",
+    "source files: 154,312 values were stored at the wrong scale, 50,521 of them in scoring slots,",
+    "across 69,742 products.",
+    "",
+    "WHY AN ALLOWLIST RATHER THAN A RULE. A prefix rule that keys off the first letter is what",
+    "caused the damage it is supposed to fix: `startsWith('p')` reads `ppm` as pico. Measured over",
+    "the corpus, a first-letter rule mis-converts 11,254 `pcs`, 8,132 `ppm/`, 2,990 `ppm`, plus",
+    "`mil` / `Max` / `To` / `KE` / `KP`. But a strict whole-token rule is not the answer either --",
+    "it BREAKS 1,989 `PF`, 474 `nV/\\u221aHz`, 431 `Mbit`, 391 `mW/sr`, 372 `Kbyte`, 262 `mW/\\u00b0C`.",
+    "There are 367 distinct unit spellings in this corpus; recognising them all is its own project.",
+    "",
+    "So this table is deliberately CONSERVATIVE and its safety property is one-directional:",
+    "a token that is not listed keeps the value EXACTLY as it is stored today. This change can",
+    "only make a number more correct or leave it untouched -- it can never introduce a wrong one.",
+    "An unrecognised unit is a missed opportunity, never a corruption.",
+    "",
+    "SCOPE: the rescued path only. The dictionary-mapped paths already normalise and are NOT",
+    "touched -- applying this table there would REMOVE conversions that work today.",
+    "",
+    "Shared verbatim by lib/services/atlasMapper.ts and scripts/atlas-ingest.mjs (the live ingest",
+    "path, which cannot import TS). One file, not two hand-copied lists -- see [[two-lists-will-drift]]."
+  ],
+
+  "_prefixComment": [
+    "GREEK MU (U+03BC) IS DELIBERATELY ABSENT and its absence is NOT an oversight.",
+    "extractNumericWithPrefix's unit character class is [a-zA-Z\\u00b5\\u03a9\\u00b0%/\\u221a] -- it",
+    "accepts the MICRO SIGN (U+00B5) but not GREEK SMALL LETTER MU (U+03BC). So a value written",
+    "with U+03BC yields NO parsed unit at all and can never reach this table; listing it here",
+    "would be dead code that reads like working code. (`applyUnitPrefix` already has a U+03BC",
+    "branch that is unreachable for exactly this reason -- a pre-existing gap, logged in BACKLOG.",
+    "Widening that regex would change the dictionary-MAPPED paths too, which is out of scope here.)"
+  ],
+  "prefixes": {
+    "p": 1e-12,
+    "n": 1e-9,
+    "u": 1e-6,
+    "µ": 1e-6,
+    "m": 1e-3,
+    "k": 1e3,
+    "K": 1e3,
+    "M": 1e6,
+    "G": 1e9
+  },
+
+  "atoms": ["F", "A", "V", "W", "H", "Hz", "s", "Ω", "J", "C", "S"],
+
+  "_excludedComment": [
+    "Combinations the cross DOES produce but which are not prefixes:",
+    "  MS  -- ambiguous (mega-siemens vs a mis-cased millisecond); never a real prefix here.",
+    "  KS  -- same.",
+    "`mm` is NOT listed: `m` is not an atom, so the cross never generates it, and an exclusion",
+    "that cannot fire is a lie about the mechanism. Millimetre is safe because this is an",
+    "ALLOWLIST -- anything absent is left alone. A test pins that.",
+    "Uppercase P / U / N are deliberately ABSENT. A supplier writing `PF` for picofarad is real",
+    "(1,989 values), but enabling case-folding generatively also enables `UV`, `PW` and `NA` on",
+    "tokens that mean something else. That is a separate, measured change -- not this one."
+  ],
+  "excluded": ["MS", "KS"]
+}

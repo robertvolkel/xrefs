@@ -4,7 +4,73 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
-# Max-effort review of Decision #279, 21 July 2026 — 15 findings, DO NOT MERGE OR BACKFILL
+# Greek mu (U+03BC) is dropped by the unit parser — 36,554 values, EVERY path (P1)
+
+**Found while verifying Decision #280, 21 July 2026. Pre-existing; larger in reach than the bug
+#280 fixed.** `extractNumericWithPrefix`'s unit character class is
+`[a-zA-Z\u00b5\u03a9\u00b0%/\u221a]` — it accepts the MICRO SIGN (U+00B5) but **not** GREEK
+SMALL LETTER MU (U+03BC). Measured over all 429 files:
+
+| | values |
+| --- | --- |
+| contain GREEK MU (U+03BC) — unit NOT parsed | **36,554** |
+| contain MICRO SIGN (U+00B5) — unit parsed fine | 13,380 |
+
+Top tokens: `μA` 24,956 · `μs` 6,064 · `μH` 4,293 · `μV` 380 · `μW` 285 · `μF` 125.
+`"800μA"` yields `{ numericValue: 800 }` with **no unit**, so it is stored as 800 — amps, not
+microamps. Exactly the class of error Decision #280 fixed for `mΩ`, and ~3× more common than the
+character the parser does accept. `applyUnitPrefix` already has a `startsWith('μ')` branch that
+is **unreachable** for this reason — the handler was written, the regex upstream strips its input.
+
+⚠️ Not folded into #280 deliberately: `extractNumericWithPrefix` is shared, so widening the class
+changes the dictionary-MAPPED paths too (a much larger blast radius than #280's rescued-path-only
+scope). Do it as its own change, with #280's four corpus gates re-run: **keys added / removed /
+display strings changed / numbers lost must stay 0**, and the value diff read token by token.
+
+---
+
+# Decision #279's remaining findings — status after Decision #280
+
+Decision #280 **withdrew the reserved-id rename** and shipped only the scale fix. That dissolved
+findings 1, 3, 4, 7, 8, 9 and 15 (all consequences of renaming keys), and 5, 6 and 10 (the undo
+rollback). What remains from the 15:
+
+- **(P2) Finding 2 — `applyUnitPrefix` corrupts non-unit tokens on the MAPPED paths.** `ppm`→×1e-12,
+  `pcs`→×1e-12, `units`→×1e-6. #280's allowlist protects the rescued path only; the mapped paths
+  still run the first-letter rule. Corpus-wide upper bound: 11,254 `pcs`, 11,122 `ppm`/`ppm/`,
+  plus `mil` / `Max` / `To` / `KE` / `KP`. Same change as the Greek-mu item above — do them together.
+- **(P2) Finding 12 — seven test assertions cannot fail.** #280 fixed one of its own (an
+  exclusion-list test that iterated the list it was testing, so deleting an entry still passed).
+  The rest stand: the 114 unit-prefix tests target `atlasMapper.ts`, **the copy with no runtime
+  callers**; a `warnings` assertion on a field with zero push sites; an `expect(0).toBe(0)`; a
+  suite declaring `undone` where the route returns `reverted`; a registry test comparing an
+  expression to a copy of itself; and 9 parity cases that all sit on ONE B5 fixture, so they never
+  reach the L2/shared dicts where real divergences live.
+- **(P2) Finding 14 was withdrawn with the uppercase-prefix work** (parked, not shipped). If it is
+  revived, pin the 5 measured tokens explicitly rather than generating 18 combinations.
+- **Finding 13 is WRONG and needs no work** — it claimed the anchored regex drops `约0.9W`
+  (2,276×). Verified by running it: `extractNumericWithPrefix('约0.9W')` returns `0.9`. A loose
+  unanchored fallback already exists at the end of the function.
+
+### Parked from Decision #279, both independent of the bug
+
+- **Raw-vs-raw loser comparison.** Sound in itself, but measured at **78 key changes** across 40
+  files, so it breaks #280's zero-key-churn gate. Revive as its own change with its own gate run.
+- **Uppercase SI prefixes** (`"4010 PF"` → 4.01e-9, 1,989 values). Touches the mapped paths.
+  Fold into the Greek-mu / `ppm` change above — they are all one job on the shared extractor.
+
+### Deferred — the undo route wants atomicity, not compensation
+
+`param-decisions/undo` performs the reversal and appends its log entry as two separate writes.
+Decision #280 removed the compensating rollback (it made the worst case unrecoverable) and the
+reversal now stands with the failure reported. The durable fix is to move deactivate + notes-clear
++ append into ONE `SECURITY DEFINER` function so it is a single transaction — the repo already
+uses that shape elsewhere. This also closes `dictionaries/batch/undo`, which still discards
+`recordParamDecisions`' return value entirely.
+
+---
+
+# Max-effort review of Decision #279, 21 July 2026 — 15 findings (SUPERSEDED by Decision #280)
 
 10 finder angles + independent verification over `ac3591e..HEAD`, most findings confirmed by
 EXECUTION against the real 429-file corpus (437,387 products) and the live database.
