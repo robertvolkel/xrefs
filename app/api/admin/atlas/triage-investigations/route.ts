@@ -181,6 +181,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       resulting_override_id: resultingOverrideId,
     };
 
+    // NOTE: this route deliberately does NOT write to atlas_param_decisions.
+    //
+    // The client calls it IN ADDITION to the mutation that actually made the
+    // decision (recordInvestigationAction fires alongside the POST
+    // /dictionaries or PUT /unmapped-param-notes call). Logging a decision
+    // row here too would produce TWO rows for one decision — and because the
+    // decision log is append-only, the duplicate could never be cleaned up.
+    //
+    // So the mutation route is the single writer of decision rows, and the
+    // AI evidence reaches the log by being passed INTO that mutation (the
+    // `analysis` / `investigationId` fields on its body), which is why it has
+    // to travel with the request rather than being attached afterwards.
     const supabase = createServiceClient();
     const { data, error } = await supabase
       .from('atlas_triage_investigations')

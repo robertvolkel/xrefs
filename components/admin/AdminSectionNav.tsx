@@ -17,7 +17,7 @@ export type AdminSection =
   | 'manufacturers'
   | 'atlas-dictionaries'
   | 'atlas-dict-triage'
-  | 'atlas-ai-log'
+  | 'atlas-decision-log'
   | 'atlas-domain-cards'
   | 'atlas-ingest'
   | 'param-mappings'
@@ -32,7 +32,7 @@ const atlasSections: SectionItem[] = [
   { id: 'atlas-ingest', icon: CloudUploadOutlinedIcon, labelKey: 'admin.atlasIngest' },
   { id: 'atlas-dictionaries', icon: TranslateOutlinedIcon, labelKey: 'admin.atlasDictionaries' },
   { id: 'atlas-dict-triage', icon: AssignmentLateOutlinedIcon, labelKey: 'admin.atlasDictTriage' },
-  { id: 'atlas-ai-log', icon: HistoryEduOutlinedIcon, labelKey: 'admin.atlasAiLog' },
+  { id: 'atlas-decision-log', icon: HistoryEduOutlinedIcon, labelKey: 'admin.atlasDecisionLog' },
   { id: 'atlas-domain-cards', icon: MenuBookOutlinedIcon, labelKey: 'admin.atlasDomainCards' },
 ];
 

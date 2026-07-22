@@ -1,0 +1,31 @@
+# Runs on every push and pull request, so the test signal exists without
+# anyone remembering to type a command.
+#
+# Deliberately NOT a bare `eslint`/`tsc` gate: both already exit non-zero on
+# main (86 lint errors, 92 type errors, all pre-existing). A check that is red
+# on day one gets ignored, and then a real failure hides inside it. Instead
+# `npm run baseline` ratchets — it fails only when a count goes UP.
+#
+# Every test here is hermetic: no network, no database, no secrets. That is a
+# constraint worth keeping — it is also why no committed test may import
+# Playwright, which is installed --no-save and absent from package.json.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Tests
+        run: npm test
+      - name: Lint + typecheck ratchet (must not increase)
+        run: npm run baseline

@@ -459,7 +459,7 @@
     "attrLogicGroup": "属性与逻辑",
     "atlasDictionaries": "字典",
     "atlasDictTriage": "映射审核",
-    "atlasAiLog": "调查日志",
+    "atlasDecisionLog": "决策日志",
     "atlasDomainCards": "领域知识卡",
     "atlasIngest": "数据导入",
     "atlasDictDesc": "将 Atlas 参数名称映射到内部属性的翻译字典。",

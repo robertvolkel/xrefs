@@ -9004,3 +9004,378 @@ The TS copy was *faithful*. **The document itself had the hole**: C2 switching r
 **Verification (gate: prove before writing anything).** Proof 1 — new [atlasMapper.test.ts](../__tests__/services/atlasMapper.test.ts) cases proven to FAIL on the pre-fix code (override falls to the stem fallback) and PASS after; full suite 3254 green. Proof 2 — scoped **dry-run** backfill of Gainsil (op-amp maker) on real data showed products gaining `avol`/`iq`/`input_noise_voltage` from the accepts, **zero writes**. Then LIVE scoped backfill of the **30 affected MFRs** (only ones carrying an accepted gaia param — provably complete since only the 183 change behavior): ~9,400 products updated, 0 errors, **family-scoped** (a MOSFET got `id_max`, a TVS got `ir_leakage`; no op-amp `avol` leaked onto discretes). `--rescan-unmapped-params` removed 1,334 stale report entries; **0 accepted gaia names remain in the Triage queue** (gaia rows 18,815→18,729; the ~18,700 remainder are un-accepted long tail, untouched by design).
 
 **Status.** Branch `fix/atlas-gaia-override-honoring`, commit `3f83e3b` (code + tests). Data backfilled + queue cleared live (single shared Supabase — live everywhere). Not yet merged to `main`.
+
+## Decision #277 — The Decision Log: an append-only record of every Triage parameter decision (July 20, 2026)
+
+**The reframe (the user's, and it changed the build).** The starting BACKLOG item was "Deferred leaves no trace in the AI Investigation Log," whose cheap fix was to add `'deferred'` to that table's `action_taken` CHECK. The user rejected the framing outright: *"I don't think 'investigations' is the right idea. It's really about what decision was made… An investigation is just an action that generates more information to lead to a decision."* That inverts the model — the decision is the record, the AI verdict is one optional input — and the inversion is what makes the cheap fix insufficient.
+
+**Why a rename would have been worse than nothing (measured).** `atlas_triage_investigations` is written only when the AI Investigate drawer is used. Against live data (July 19): **2,032** active accepted mappings, **65** in the log — **1,967 invisible (97%)** — plus **80** deferred params, **0** logged. A surface *named* "Decision Log" containing 3% of decisions promises a completeness it does not have. So: new append-only table, not a relabel.
+
+**Correction to the premise, found by reading the code.** The schema header on the investigations table claims "every click of Investigate writes a row." That comment is **stale and wrong** — the POST route logs at *decision* time, corroborated by data (0 of 97 rows carry a null `action_taken`). The existing table was already decision-shaped; it was simply blind to every decision not made through the drawer. (I had told the user the wrong thing first and corrected it — the comment, not the code, was the source.)
+
+**Shape: current-state table + event log, deliberately complementary.** `atlas_unmapped_param_notes` stays exactly as it is — it is the fast last-write-wins state driving the ~26k-row Triage queue's filters and counts. `atlas_param_decisions` is added *alongside*; current state is **not** derived from events (that would be a real regression on a queue that already has a scaling item in BACKLOG).
+
+**Append-only is enforced, not documented.** SELECT + INSERT RLS policies only — **no UPDATE, no DELETE**. The absence *is* the guarantee. Undo never edits the original row; it performs the reversal and appends (`mapping_revoked` / `reopened`), so the log reads "Accepted 09:00 → Reverted 09:05."
+
+**One choke point + an anti-drift guard test.** Every decision goes through `recordParamDecision()` ([lib/services/paramDecisionLog.ts](../lib/services/paramDecisionLog.ts)). The original failure was structural — nothing *failed* when a route logged nothing — so a comment saying "remember to log" is not a control; [the guard test](../__tests__/services/paramDecisionLog.test.ts) enumerates the six decision-writing routes and goes red if any stops calling the helper, plus an **inverse** guard that `triage-investigations` POST does *not* (the client calls it alongside the real mutation; logging in both places would double-count, permanently).
+
+**Backfill: `is_active=false` does NOT mean "revoked."** The plan's first draft said emit `mapping_revoked` for every deactivated override. Measured: of **218** inactive rows, **209** were superseded by a newer active row (an **edit**) and only **9** were genuinely revoked — independently corroborated by the Triage page's own "REVERTED 9" chip. Shipping the draft would have opened the log announcing 218 revocations that never happened: fabricated history, in the feature built to prevent it. The risky logic lives in a pure, unit-tested module ([paramDecisionBackfill.ts](../lib/services/paramDecisionBackfill.ts)); the script is **TypeScript so it imports the tested code** rather than mirroring it into `.mjs` (this repo has been bitten by mirror drift). 2,631 rows reconstructed, all tagged `source='backfill'` and shown as *reconstructed*, never as observed.
+
+**What is NOT recoverable, stated in the UI.** The notes table is one mutable row per param. A param deferred → reopened → deferred yields exactly ONE backfilled row: its final state. Every intermediate transition is permanently gone, and the panel says so on `backfill` rows rather than implying precision it lacks.
+
+**Two review rounds, 20 findings, and the pattern in them.** Round 1 (10) included revokes dated at their own creation instant — up to 18 days off, from a documented `updated_at` fallback that was never implemented — and a reverted-unmappable recorded as `confirmed_in_family` (the only row of that type in the log, 100% fabricated). Round 2 (10) was mostly **the same defect in sibling paths an earlier fix had not swept**: three separate routes could log a decision that had not actually happened (repeat DELETE appending duplicate permanent revokes; status-undo appending `reopened` off an unchecked write; batch accept recording every write as a fresh accept when it had replaced a live mapping). The log's one true blind spot was **erasing an engineer's note**, which both notes handlers dropped because each guarded on the *new* note being non-empty — fixed with a `note_cleared` type and by lifting the rule out of the two routes into `decisionForNoteWrite()`, since the duplicated copies had already diverged.
+
+**Verification.** Every fix has a test proven to fail on the pre-fix source — route guards checked by stashing the routes (8 red, control green), the note-clear cases against verbatim copies of both old inline rules (both returned `null` where the fix returns `note_cleared`). Grouping assumptions were **measured, not assumed**: under the route's ordering, batch rows are contiguous (7 batches in the newest 200, none fragmented), one batch holds **55** rows against a 50-row page (so the straddle case is real and the group reports its TRUE size), and **31** timestamps in 200 rows are shared — which is why the `id` tiebreak on the sort is load-bearing, not decoration. Suite 3,310 green; production build clean.
+
+**Status.** Branch `feat/param-decision-log`. Schema applied live. Investigation Log retired (`?section=atlas-ai-log` redirects); `AtlasAiLogPanel.tsx` still on disk pending the user's first look at the new panel.
+
+---
+
+### Round 3, and the diagnosis that changed what got built (July 20, 2026)
+
+A third review found **12 more** defects, all in the panel — the one layer I had shipped without ever loading. That is 32 across three rounds, every one found by *review*, none by a test. The user's response reframed the work: *"I have no idea how to trust any of the work you've done… parameter mappings are crucial for the working of this product."*
+
+**The diagnosis is structural, not "be more careful."** This repo had 1,631 tests and **not one executed an API route** — while every write to a parameter mapping happens in a route. The tests proved the pure calculations right and said nothing about whether accepting a mapping writes the right row, or whether that row is ever read back.
+
+**Two facts established before writing anything**, so the scope was the real problem and not the visible one:
+- **The live mapping path was untouched by the branch.** `atlasMapper.ts`, `atlas-ingest.mjs`, `atlasDictOverrides.ts`, `matchingEngine.ts`, `partDataService.ts` byte-identical to `main`.
+- **A larger, older hole:** `atlasMapper.ts` had a thorough suite for `mapAtlasModel()` — a function with **no runtime callers** — while `mapModel()` in `atlas-ingest.mjs`, which actually applies accepted mappings during ingest, was guarded by two regexes checking that certain text appears in the file. A tested dead function beside an untested live one is worse than testing neither: it reads as coverage.
+
+**What was built.** A route-test harness in `__tests__/helpers/` (stateful Supabase mock supporting *writes* — the four pre-existing mocks are read-only — plus an auth-guard stub and a handler invoker), **zero new dependencies**, then suites over the five mapping-write routes, the override read layer, and the real ingest mapper. Suite 1,631 → 3,477.
+
+**Every suite proven by mutation, not by going green.** The source is broken one line at a time and the suite must catch it: **undo 12/12 · batch 14/14 · accept 16/16 · notes 13/13 · read layer 12/12 · mapper 7/7 · entrypoint guard 3/4**. Mutation kept finding what review had not:
+- Two contracts `paramDecisionLog` states in prose that nothing enforced — it chunks inserts at 500 so one rejected request cannot lose a whole batch's trail, and it never throws so a logging hiccup cannot turn a successful mapping write into a 500. Breaking either left all 58 tests green.
+- Nothing asserted the `is_active` filter on the override read, because the stub ignored it — a *revoked* mapping coming back to life, the mirror of an accepted one never applying.
+- Two survivors on the mapper were **fixture gaps, not test gaps**: nothing exercised the #175 reclassification loop or the gaia path. Real models were found for each (CT815 reclassifies E1→B6).
+
+**One survivor was left standing on purpose, then killed by a better assertion.** Deleting the accept route's insert-error check still returns 500 — the route falls through to a null dereference and the outer catch produces 500 anyway. A status-only assertion cannot tell a handled failure from a crash. Tightening it to the message the operator actually sees (`Failed to create dictionary override`) caught it.
+
+**The CLI became importable under a byte-identical gate.** ~10 lines of entrypoint guard; `--report --dry-run` and the no-argument usage output verified identical before and after across stdout, stderr and exit code.
+
+**TWO REAL FINDINGS, recorded in [BACKLOG](BACKLOG.md) rather than fixed here** — changing mapper output deserves its own before/after:
+1. **The override-merge rule exists twice and the copies disagree on 5 of 10 shapes** (a dropped unit on MODIFY; a non-canonical name becoming a *second* entry rather than overwriting). Measured against the live table: **not firing today** — 2,032 active overrides, all `add`, all canonical — so it is a landmine, not a fault. Both the agreement and the divergence are pinned.
+2. **`"–55 to 125 ℃"` yields `numericValue: NaN`, not `null`** (3 in 365,726 mapped params). Found *only* because the golden file encodes `NaN` — `JSON.stringify(NaN)` is `null`, so a plain dump would have recorded the bug as normal. Worse than null in process: `typeof NaN === 'number'`, so "do we have a number?" says yes while every comparison is false.
+
+**What tests structurally cannot cover** is written down and handed over, not glossed: real-database behaviour (unique indexes, RLS, the 1000-row cap, Postgres collation), concurrency, and rendering. [docs/QA_PARAM_MAPPING.md](QA_PARAM_MAPPING.md) is the permanent coverage for that — nine scenarios in plain language, every step carrying an exact expected number and a specific *FAILS IF*. Every command in it was **verified by running it**, which corrected two things written from reading the code alone: `--mfr` matches a substring of the *source file name*, not a slug; and the rescan is currently clean (`0 batches / 0 stale`), so its key signal is 0 → non-zero rather than a small delta.
+
+**The honest limit.** A green suite here is not a promise the write survives real Postgres, and the mock's header says so explicitly. Two of my own mistakes in this round were caught by mutation rather than by review — a child-process guard test that passed its flag where `argv.slice(2)` never saw it, and a mutation harness that reported "survived" for a mutation that had killed the jest run outright.
+
+---
+
+## Decision #278 — A parameter value is never discarded: accepting a mapping must not delete data (July 21, 2026)
+
+**The bug, found by hand and not by any test.** Accepting a mapping in Triage could **delete product data**. Good-Ark's source file ships `Rdson@ 10V(mΩ) Typ` at column 7 and `Rdson@ 10V(mΩ) Max` at column 8. Both point at `rds_on`. The mapper takes the first and drops the rest — so accepting the *Max* spelling silently removed the Max value (6.0) from all 44 parts, and left `rds_on` holding a **typical** number on a **weight-9 threshold rule**. Nothing errored. The panel looked fine. The value was simply gone.
+
+This surfaced during the manual QA run of [docs/QA_PARAM_MAPPING.md](QA_PARAM_MAPPING.md) (Decision #277), not from the 3,477-test suite — a reminder of what the checklist is *for*. It was diagnosed, the 44 parts were restored, and the restore was verified against four predictions made **before** running it.
+
+### The scale, measured rather than estimated
+
+The real mapper was instrumented and run over **all 429 files in `data/atlas/` (437,093 products) with the live 2,033 dictionary overrides loaded** — not over fixtures, and not with an empty dictionary (`--report --dry-run` loads zero overrides and would have understated it badly).
+
+| Discard site | Values | Notes |
+| --- | --- | --- |
+| Mapped loser (two spellings, one slot) | 225,902 | **195,886 (86.7%) carried a value the winner did not have** |
+| Unmapped, empty key | 251,643 | pure-Chinese name → key `''` → value binned |
+| Unmapped, key collision | 7,062 | |
+| Gaia stem collision | 80,228 | `…-Min`/`-Max`/`-Typ` all reduce to one stem |
+| **Total no longer deleted** | **534,819** | ~1.2 values per product |
+
+The second leak was **larger than the one we set out to fix** and was found only by measuring the fix: the storage key is built by discarding every non-English character, so `额定线圈功率` (rated coil power, 14,198 occurrences), `工作电压` (operating voltage), `额定电压` and `触点电流` slugged to the empty string and were dropped outright. Those params also reached Triage carrying an **empty `attributeId`**.
+
+### The fix — Layer 1 of three
+
+One `storeRawValue()` choke point per copy keeps a displaced value under its raw parameter name, exactly where an unmapped param already goes. **No domain judgement is involved** — keeping beats binning — raw ids appear in no logic table so scoring is untouched, and rescued values are deliberately **not** pushed into Triage (they are mapped, just displaced; ~196k entries would bury the genuine gaps).
+
+Three load-bearing details:
+
+1. **The key keeps Unicode letters and digits.** An ASCII-only rule is exactly what dropped the 251,643, and the stored key *is* the display name (`fromParametersJsonb` humanizes it).
+2. **Identical values are still dropped** (30,016 — nothing to preserve). The comparison is deliberately **conservative**: a false "differs" keeps a redundant copy, a false "same" deletes data.
+3. **Colliding keys are suffixed, never overwritten.** `MAX_LOSER_SUFFIX = 200` is a runaway guard, **not a data cap** — a bound of 20 dropped 1,530 real values. Do not tighten it casually.
+
+**Existing keys do not change.** The first occurrence keeps its historical id, so no ingested row re-keys; only previously-deleted values gain new numbered keys. Verified in the golden diff.
+
+### Both copies, pinned against each other
+
+`mapModel()` in `scripts/atlas-ingest.mjs` is the **live ingest path**; `mapAtlasModel()` in `lib/services/atlasMapper.ts` backs the admin surfaces. A "keep in lockstep" comment is **not a mechanism** — the override-merge pair already diverges on 5 of 10 shapes (BACKLOG). The parity block in `__tests__/services/atlasLayer1KeepLoser.test.ts` is the mechanism.
+
+### Verification
+
+- **Mutation score 18/18** across both copies. The first run scored 15/18; all three survivors were **fixture gaps, not test gaps** — no case exercised the gaia *dedup* branch (distinct from the preferredSuffix branch) or the unmapped-gaia stem collision. Both added; the fix was to go find real colliding dictionary spellings, not to weaken a test.
+- Full suite 3,511 pass / 94 suites; lint 86 and type 92 both unchanged.
+- CLI usage output byte-identical including exit code, with the revert **proven to land** before believing the comparison.
+- Golden regenerated and the diff **read**: 132 → 221 parameters, 89 additions, zero real removals — every `-` line is an empty `attributeId` or a key superseded by a numbered sibling.
+
+### What this does NOT fix — and the finding that came free
+
+Layer 1 stops a wrong mapping *destroying* the correct value. It does not make the mapping right. Instrumenting the corpus exposed that **some accepted mappings are semantically wrong**, and dedup had been hiding them — the wrong mapping won the slot and the correct value was deleted, so nothing looked broken:
+
+| Slot | Losing params routed into it |
+| --- | --- |
+| `color` | 功率 (power), 峰值波长 (peak wavelength) — 11,826, 100% differing |
+| `supply_voltage` | `gaia-current_consumption-Max`, `gaia-idd-Max` — a *current* in a *voltage* slot |
+| `contact_rating` | `gaia-contact_resistance`, `-Max` — resistance in a rating slot |
+| `vrwm` | 电源电压 (supply voltage) |
+| `tolerance` | 温度系数Tf (temperature coefficient) — visible in the golden fixture |
+
+These need engineering judgement to resolve and are in BACKLOG, not fixed here.
+
+**Layers 2 and 3 remain deferred**, with their cost stated: `rds_on` still holds *typical* values where *maximum* was available (Layer 2 — conservative pick by `thresholdDirection`), and the underlying problem is that `Rdson@10V` and `Rdson@4.5V` are genuinely *different attributes* that the schema has no way to distinguish (Layer 3 — condition-qualified attributes; the rds_on rule's own `engineeringReason` says "a comparison is ONLY VALID if the drive voltage matches").
+
+**Accepted consequence.** Where a vendor repeats one column name — one file carries 20 columns named `gaia-reflow_zone_temperature-Typical` holding 135…215 °C — all 20 now survive as numbered siblings. Previously 19 were deleted and the first was presented as *the* reflow temperature, which was a false claim. The extras list is longer; nothing else in the product is affected. The real fix is for extraction to carry the test condition (BACKLOG).
+
+---
+
+## Decision #279 — Four defects that let unvetted or mis-scaled numbers reach the matching engine (July 21, 2026)
+
+Decision #278's docblock claimed *"raw ids appear in no logic table, so scoring is untouched."* That was **false**, and re-verifying it before starting the fix work turned up three more problems. All four are fixed together because one re-import repairs all of them, and doing it twice is the expensive part.
+
+### What was measured (live database, 106,000 products = 24.3% of the corpus)
+
+Every value sitting in a scoring slot was re-derived from its own string and compared against what was stored:
+
+| | count | meaning |
+| --- | --- | --- |
+| values in a scoring slot holding the WRONG number | **6,958 (1.43%)** across 45 attributeIds | scoring is wrong |
+| values whose DISPLAY disagrees with the scored number | 505 (0.10%) across 30 attributeIds | scoring is right, the spec on screen is wrong — **deferred** |
+
+Worst case, `rds_on` — the heaviest rule B5 has (weight 9, `lte`) — appeared **1,777 times** in the sample holding `"80mΩ@10V"` as **80**, not 0.08.
+
+**End-to-end demonstration** (not inference — every link was also read in code): against a source part at 100 mΩ, a genuinely *better* candidate at 80 mΩ scored `fail` with a hard failure at 89%; after the fix it scores `pass`, rated **better**, at 94%. Good Chinese parts were being rejected on the strength of a unit conversion that never happened.
+
+### The four defects
+
+**1 — A raw value could occupy a real scoring slot.** `rawIdForParam` joins on underscores, so an unmapped supplier column `"RDS(on)"` slugs to exactly `rds_on`, and `matchingEngine.ts:23` returns a stored `numericValue` verbatim with no re-parse. **Two different routes reach the same slot**: the Unicode-preserving key for an ASCII name, and the *historical ASCII slug* (passed as `preferredId`) for a Chinese one — 导通电阻(RDS(on)) reduces to `rds_on` because every CJK character becomes a separator and is then stripped. The guard therefore sits inside `storeRawValue`, below both, escaping any reserved id to `raw_<id>`.
+
+`RESERVED_ATTRIBUTE_IDS` (434 ids / 43 families) is computed from the registry in TS and **generated** into `lib/services/atlas-reserved-attribute-ids.json` for `scripts/atlas-ingest.mjs`, which cannot import TS. A test pins the file against the live registry, so adding a family and forgetting `npm run atlas:reserved-ids` fails the build.
+
+**Measured cost, not assumed:** the guard demotes ~8,640 values per 67,000 products (~56,000 corpus-wide) out of scoring slots, including some that were correct by luck (`"Channel type" = "N"`). Accepted because (a) nothing can distinguish a lucky-correct raw value from `"NA"` or a scale-ambiguous bare `"5"` — all three bypassed the dictionary; (b) a missing value scores `review`, which is flagged for a human, whereas a wrong value is silently wrong; and (c) **verified**: these params were already reported as unmapped and already in the Triage queue, so the engineer's workload does not change — only where the value is stored.
+
+**2 — Rescued values skipped unit normalization.** `storeRawValue` used the bare `extractNumeric` while every winner path used `applyUnitPrefix`. This is what turned `"80mΩ@10V"` into 80.
+
+**3 — The rescue still deleted data.** `keepLosingValue` compared the loser's RAW string against the winner's *stored* string, which has been through `parseGaiaValue` / `normalizeTemperatureRange` / `normalizeVoltageRange`. `"<30 V"` is stored as `"30"`, so a genuinely different loser reading `"30"` was judged identical and dropped — exactly what the comment above it warned about. Fixed by recording each winner's raw source string (`rawByAttributeId`) and comparing raw-against-raw. Comparing two *normalized* forms would have been the wrong direction: it widens "identical" and deletes more.
+
+**4 — SI prefixes written in the wrong case were silently ignored** (new, found during verification). `applyUnitPrefix` tested `unit.startsWith('p')` — lowercase only. Reproduced on real data: `data/atlas/mfr_389_AK_奥科_params.json`, model AK4080, ships `"4010 PF"` and stored 4010 instead of 4.01e-9, while `"6.5 mΩ"` on the *same product* converted correctly.
+
+⚠️ **The obvious fix is destructive.** Measured over all 429 files, case-folding the first letter would newly "convert" **14,840** values reading `Pin` (pin count), 39,645 `P`, 7,106 `N` and 342 `Nm` (newton-metre). Only ~2,100 of ~29,600 case-mismatched tokens are genuine prefixes — **the lowercase-only rule was protecting the other 27,000**. So a prefix applies only when the *remainder* is exactly a known unit atom. Verified corpus-wide: converts 2,086 values (PF/UA/PA/Ps/Us), leaves 661,728 untouched including `MΩ` (9,038) and `MHz` (14,681).
+
+`N` and `M` are deliberately excluded — `Nm` outnumbers `Ns` ~85:1 with no lexical rule to separate them, and `M` already means mega. **`splitUnit` from `mappingHealthCore.ts` was NOT reused**: its `UNIT_ATOMS` contains `['m', 'length']` because a *classifier* wants breadth, and that entry alone would silently convert every newton-metre. A converter needs a narrow list.
+
+### Blocker 3 — an undo could diverge from its own audit log
+
+The undo route deactivated overrides and appended `mapping_revoked` rows as two writes with no transaction, returning `success: true` regardless. On an append failure the mappings were OFF, nothing recorded why, and a retry said "already inactive" (`.eq('is_active', true)` matches nothing the second time) — unrepairable, because the table has no UPDATE and no DELETE policy. Now a **compensating rollback** re-activates exactly what the request deactivated and reports the failure; if the rollback itself fails it says so and names how many are stranded.
+
+**This reverses a documented decision.** The existing test asserted the opposite in so many words ("recordParamDecisions is non-fatal by design, so the undo itself stands"). The suite's own stated invariant settles it: *the log must never claim a transition that did not happen* — and its converse binds equally.
+
+Same pass: `dictionaries/batch/undo` used the RLS-subject cookie client while its sibling used the service client. A policy-filtered UPDATE **does not error** — it returns `{ data: [], error: null }`, indistinguishable from "nothing needed undoing" — so it reported successful undos that changed nothing.
+
+### Two lessons worth more than the fixes
+
+**A test that passes against the broken code is worse than no test.** Two of the suites written here were vacuous on the first attempt and only mutation testing exposed them:
+- The Blocker 2 cases used a Typ/Max pair on ONE stem, which routes through the `preferredSuffix` branch *before* a winner exists and never reaches the comparison. The case needs two **different** stems sharing an attributeId.
+- The parity block compared **value sets** only. When a normalized winner (`"<30 V"` → `"30"`) and a rescued loser (`"30"`) carry the same string, the value set is identical whether the loser was preserved or deleted — only the KEYS differ. It now compares keys.
+- The client-swap test mocked both Supabase clients to one instance. `supabaseMock` deliberately does not model RLS, so the two were **indistinguishable** and the test passed whichever client the route picked. The cookie client is now modelled by its real signature: empty result, no error.
+
+**The golden fixture was blind to a whole defect class.** A change affecting 2,086 values produced an *empty* golden diff, because none of the 8 fixture models carried a capital-cased unit. The real AK4080 model was added. Every subsequent golden diff was read, not rubber-stamped — Blocker 1's 32 changes are all corrections (20 → 2e-11 pF, 82.4 → 0.0824 mΩ, 275 → 275000 kHz→Hz).
+
+### Not in this batch
+
+The 505 display/scoring mismatches (scoring is already correct); the Mapping Health detector's accuracy fixes and the 32/1/46 worksheet; and Layer 2, the typical-vs-maximum problem — confirmed again here, a source shipping `_Typ 2.1` and `_Max 2.8` stores **2.1**.
+
+## Decision #280 — Fix the mis-scaled numbers only; withdraw the reserved-id renaming (July 21, 2026)
+
+**Supersedes the storage half of Decision #279.** A max-effort review of #279 returned 15
+findings and a `DO NOT MERGE OR BACKFILL` hold. This decision keeps #279's *correct* half — the
+scale fix — and **withdraws the rename**.
+
+### What was wrong with #279
+
+#279 solved two problems at once and only one of them was real. Alongside the scale fix it moved
+unvetted values to a new key (`rds_on` → `raw_rds_on`). But the key **is** a storage contract:
+four consumers find values by it — the Specs panel (`fromParametersJsonb`), the coverage RPC, the
+widening RPC (in SQL, where `raw_` has no meaning) and the reclassify RPC. Only two were updated.
+The rename also freed the old slot, so a *different* measurement could occupy it — verified live
+on YANGJIE/FRD60A600AS-290A, where the vendor's own `VRRM = 600` was displaced by a dict-mapped
+`VR (V) = 630`.
+
+Measured, HEAD-vs-baseline over all 429 files / 437,387 products: the rename changed **14,110 key
+names across 6,559 products (16%)**. It also demoted CATEGORICAL values (`channel_type = "N"`),
+which makes matching *more* permissive, not safer — a missing value scores `review` = 50% credit
+that never fails, so an N-channel source could surface P-channel replacements.
+
+An `unvetted: true` annotation was designed as the replacement and **also rejected**, on two
+verified grounds: (1) `fromParametersJsonb` (`atlasMapper.ts:4026-4035`) builds its output as an
+explicit field-by-field literal, so an added field is silently dropped and the flag never reaches
+the engine; (2) probing the YANGJIE case showed the mapped write at `:3012` is an *unconditional*
+overwrite, so a naive annotation would have **destroyed** the 600 that HEAD at least preserved.
+
+### What ships
+
+ONE change, in `storeRawValue` (the rescued path) in both mapper copies: replace bare
+`extractNumeric` with `rescueNumericValue`, which scales the number **only** when its unit is on a
+conservative allowlist — `{p n u µ m k K M G} × {F A V W H Hz s Ω J C S}`, minus `MS`/`KS`, 97
+tokens — shared verbatim via `lib/services/atlas-rescue-units.json`.
+
+**The allowlist IS the safety property, not an implementation detail.** Both "proper" fixes were
+measured and rejected: a first-letter rule reads `ppm` as pico (11,122 values) and `pcs` as pico
+(11,254); a strict whole-token rule instead BREAKS `PF` (1,989), `nV/√Hz` (474), `mW/sr` (391),
+`Mbit` (431), `Kbyte` (372). There are **367 distinct unit spellings** in this corpus — recognising
+them all is its own project. An unrecognised token therefore keeps today's value **exactly**, so
+this change can only make a number more correct or leave it alone; it can never introduce a wrong
+one. Uppercase `P`/`U`/`N` are deliberately absent for the same reason (enabling `PF` generatively
+also enables `UV` and `PW`).
+
+**Scope: the rescued path only.** The dictionary-mapped paths already normalise and are untouched
+— applying this table there would REMOVE conversions that work today.
+
+### Verified by execution — full corpus, 429 files, 437,387 products
+
+| Gate | Result |
+| --- | --- |
+| Key names added / removed | **0 / 0** |
+| Display strings changed | **0** |
+| Numbers lost | **0** |
+| Conversions on a non-unit token (`ppm`, `pcs`, `mil`, `Max`…) | **0** |
+| **Numbers corrected** | **153,993** — **50,521** in scoring slots, across **69,639 products** |
+
+Headline, confirmed end-to-end: Siliup/SP40N25TQ ships `导通电阻(RDS(on)) = "80mΩ@10V"`, which
+slugs onto `rds_on` (weight 9, `lte`) and which `matchingEngine.ts:23` returns **verbatim** with no
+re-parse and no unit check. Stored as `80`, a genuinely better 80 mΩ candidate hard-*failed*
+against a 100 mΩ source. Now stored as `0.08`.
+
+Mutation-tested to the bar (`[[green-test-must-fail-on-broken-code]]`): 8 mutations, all caught.
+⚠️ One survived first time and the test was rewritten — the exclusion-list test *iterated*
+`SHARED.excluded`, so DELETING an entry made it check one fewer thing and still pass. Excluded
+tokens are now named explicitly. **A test whose coverage is defined by the data it tests cannot
+fail when that data shrinks.**
+
+### Withdrawn from #279
+
+The reserved-id guard, `atlas-reserved-attribute-ids.json`, its generator and npm script, and
+`readSlot` (which existed only to compensate for the rename) are all removed. Also parked, both
+independent of the bug: #279's raw-vs-raw comparison (measured: changes 78 keys) and its
+uppercase-prefix work (touches the mapped paths; its rule was generative — 18 combinations
+enabled, 5 measured).
+
+### The undo route
+
+`dictionaries/batch/undo` keeps its service-client swap — under the RLS-subject client a
+policy-filtered UPDATE returns `{data: [], error: null}`, success-shaped and empty, so the route
+reported a successful undo that changed nothing. `param-decisions/undo` keeps its `override_id`
+dedupe but **loses its compensating rollback**, which made the worst case unrecoverable rather
+than merely bad: `recordParamDecisions` inserts in chunks of 500 and returns false if any chunk
+fails *while earlier chunks stay committed*, so the rollback reactivated mappings the append-only
+log already, permanently, described as revoked. It also restored only
+`atlas_dictionary_overrides`, never the `atlas_unmapped_param_notes` writes, while telling the user
+"nothing was changed". The reversal now stands and the failure is reported — `buildUndoMessage`
+already appends "The log entry for this undo could not be written" and flips the alert to a
+warning. The real fix is atomicity (one `SECURITY DEFINER` function), in BACKLOG.
+
+### Found while verifying — NOT fixed here
+
+`extractNumericWithPrefix`'s unit character class accepts the MICRO SIGN (U+00B5) but not GREEK
+SMALL LETTER MU (U+03BC). Measured: **36,554 values use Greek mu — nearly 3× the 13,380 that use
+the micro sign** — and they yield NO parsed unit at all, on *every* path. `"800μA"` stores **800**,
+not 0.0008. `applyUnitPrefix` even has a U+03BC branch that can never fire. Same class as the bug
+above and larger in reach, but fixing it changes the dictionary-mapped paths, so it is logged in
+BACKLOG rather than folded in here.
+
+### Post-merge review of #280 — five fixes, one of them a bug this change introduced (July 21, 2026)
+
+A max-effort review (10 angles, every finding reproduced against the real 429-file corpus)
+returned 15 findings. **One was a new data bug; four were cheap fixes mis-triaged as "log it".**
+
+**⚠️ THE HEADLINE: the allowlist's safety property was FALSE.** #280 asserted, in five places,
+that an unrecognised token keeps its value so the change "can never introduce a wrong one".
+The prefix×atom cross generates `Gs` — which in this corpus is **GAUSS**, not giga-second — so
+**229 real values** on Hall-effect sensors (HXYMOS `磁工作点`, Dowaytech `工作磁场范围`,
+ElecSuper) were multiplied by 1e9: `"70 Gs"` stored as 70,000,000,000.
+
+Two process failures made it invisible, and both are now closed:
+
+1. **The four corpus gates cannot detect this class by construction.** They count keys added /
+   removed / display strings changed / numbers lost. A newly-WRONG number and a newly-RIGHT one
+   are indistinguishable — both register as "corrected". *The gates measure change, not
+   correctness.*
+2. **The audit checked the wrong tokens.** The exclusion list guarded `MS`/`KS`, which occur
+   **zero** times in the corpus, while the collision that occurs **229** times was never looked
+   at. Hypothetical collisions were reasoned about; real ones were not measured.
+
+**The fix for the process, not just the data:** a test now enumerates *every allowlisted token
+that actually occurs in `data/atlas/*.json`* and fails on any that has not been explicitly
+acknowledged. Adding an atom widens the cross by 9 tokens, a prefix by 11 — neither is a
+one-line change any more. That audit immediately surfaced `MW` (`insulation_resistance =
+"100 MW"`), which turned out to be 100 **MEGAOHM** with Ω mangled to W by an encoding fault —
+harmless, since mega is mega either way, and now recorded so nobody re-litigates it.
+
+**Exact scaling — `evaluateThreshold` has no epsilon.** `9 * 1e-3` is `0.009000000000000001`;
+a source `rds_on` of `"0.009 Ω"` against a candidate `"9mΩ"` — the same resistance — returned a
+**hard FAIL**, and PASSED when the sides were swapped. Fixed by shifting the DECIMAL
+(`Number("244.6e-3")`) rather than doing float arithmetic. Measured over 339,490 real
+conversions: **multiply 20.43% inexact, divide 2.49%, decimal shift 0.00%.** Division was tried
+first and rejected on evidence — the golden diff caught it regressing `0.2446`.
+
+**The new suite tested the wrong copy.** `rescueNumericValue` / the allowlist were not exported
+from `scripts/atlas-ingest.mjs`, so all 25 assertions ran against `atlasMapper.ts`, *the copy
+with no runtime callers*. Deleting the exclusion loop from the LIVE file kept the suite green.
+Both are now exported for the parity test, every allowlist assertion runs through **both**
+copies via `describe.each`, and that mutation now fails 6 tests. Mutation-verified: live-copy
+exclusion delete (6 fails), float regression (13), gauss un-exclusion (7, incl. the corpus
+audit), wiring revert (2).
+
+**Kill switch.** `rescueNumericValue` ignored `APPLY_UNIT_PREFIX_TO_NUMERIC`, so flipping the
+documented rollback would have left dict-mapped values at display scale beside rescued values
+at base SI — two conventions in one product, worse than either setting. Verified by flipping it.
+
+**Cache versions.** `RECS_CACHE_SCHEMA_VERSION` v20→v21 and `BASE_RECS_SCHEMA_VERSION` v6→v7.
+The base-cache's own history records the precedent verbatim from Decision #217. Without it the
+30-day caches would keep serving scores from old wrong-scale numbers after the backfill —
+reading exactly like "the fix didn't work".
+
+**Final measured state**, full corpus (429 files / 437,387 products): keys added **0**, keys
+removed **0**, display strings changed **0**, numbers lost **0**, junk-token conversions **0**;
+**153,993 numbers corrected**, **50,521** in scoring slots, across **69,639 products**. The
+count fell by exactly 229 from #280's figure — the gauss values, a clean cross-check.
+
+### Applied to the database — July 22, 2026
+
+`Scanned 437093 / Changed 52997 / Unchanged 363825 / Missing 20271 / Errors 0`. Siliup/SP40N25TQ
+`rds_on` now stores **0.08**; the display string `"80mΩ@10V"` is byte-identical.
+
+**Rehearsed before the full run.** The restore path had never written anything — it had only ever
+reported "0 differences," which proves it runs, not that it works. So the whole round trip was
+run on one manufacturer first: apply (729 changed, 0 errors) → backup detects (**729**) → restore
+(**729**, 0 failures) → verify (**0** differing). Siliup was then deliberately left reverted so the
+full run's predicted 52,997 stayed a checkable number rather than an assertion. It matched exactly.
+
+**The four corpus gates were re-run against the DATABASE, not just source-vs-source.** #280's gates
+compared HEAD's mapper output to baseline's; that says nothing about what a write would do to rows
+accumulated over many past ingests under different dictionary states. A value-level audit over all
+416,822 stored products returned keys added **0**, keys removed **0**, display strings changed **0**,
+numbers lost **0**, extraction/manual entries dropped **0**, with 104,445 numbers corrected — every
+ratio a clean power of ten matching the unit in its own value string.
+
+⚠️ **A harness that imports this mapper inherits none of the CLI's startup state, and every omission
+looks like a data finding rather than a crash.** The dispatcher runs THREE initializers before any
+mapping. Skipping `loadAndApplyDictOverrides` made 2,033 accepted mappings vanish, so every
+override-mapped key read as a rename (`id_max` → `id`) — a scoring regression that did not exist.
+Skipping `loadCollidingEnNames` shortened "HX 红星" to "HX", so 3,289 products across the Decision
+#225 collision manufacturers matched no DB row at all. Both were reported as findings before being
+recognised as instrument error. They are now exported as one commented set for that reason.
+
+**52,997 written vs 52,992 actually changed — the gap is now measured, not accepted.** Those 5
+products carry a field where the mapper emits `NaN`; JSON serialises it to `null`; stored null never
+equals in-memory NaN, so they are rewritten on every run while their stored content never changes.
+The same cause leaves **43 products permanently "would change"** on a follow-up dry run (ETA 21,
+COSINE 14, Geehy 5, MXChip 3 — `supply_voltage`, `operating_temp`, `storage_temperature_range`).
+Pre-existing, no data impact, logged in BACKLOG. **A non-zero dry run here is not evidence of a
+failed backfill** until the reason is shown to be something other than null-vs-NaN.
+
+**Verified by an independently-written parser.** 15,104 corrected values were re-read by a
+from-scratch SI table rather than by `rescueNumericValue`, because reusing the source would only
+prove the code agrees with itself. **0 disagreements.**
+
+**Left open, logged not fixed:** the stale CLAUDE.md KEY-parity claim; the deleted
+`applyUnitPrefix` TS↔.mjs parity block and `cased_unit_prefixes` golden fixture; the BACKLOG
+section still listing withdrawn mechanisms as FIXED; the 34,425 unvetted values in scoring
+slots; an epsilon for `evaluateThreshold`; the Greek-mu entry (overstated 2.6× — real figure
+**14,057**, and Decision #217 already fixed the handler in June).

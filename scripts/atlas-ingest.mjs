@@ -21,11 +21,14 @@
 
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'fs';
 import { resolve, basename } from 'path';
+import { fileURLToPath } from 'url';
 import { createHash } from 'crypto';
 import { createClient } from '@supabase/supabase-js';
 
 // ─── Load Gaia dictionaries from shared JSON ────────────
 const gaiaData = JSON.parse(readFileSync(resolve(process.cwd(), 'lib/services/atlas-gaia-dicts.json'), 'utf-8'));
+// Shared with lib/services/atlasMapper.ts — see the _comment block in the file.
+const rescueUnitData = JSON.parse(readFileSync(resolve(process.cwd(), 'lib/services/atlas-rescue-units.json'), 'utf-8'));
 const GAIA_SKIP_STEMS = new Set(gaiaData.skipStems);
 const GAIA_FAMILIES = gaiaData.families;
 const GAIA_SHARED = gaiaData.shared;
@@ -2687,6 +2690,153 @@ function cleanManufacturerName(raw) {
 
 // ─── Main mapping function ────────────────────────────────
 
+/**
+ * Layer 1 — never discard a losing spelling (Decision #278).
+ *
+ * When two source params resolve to the SAME (family, attributeId) slot, only
+ * the first wins; the rest used to be dropped on the floor. That is real data
+ * loss, and it is caused by a mapping ACCEPT: the Good-Ark case had
+ * `Rdson@ 10V(mΩ) Typ` at column 7 and `Rdson@ 10V(mΩ) Max` at column 8 both
+ * pointing at `rds_on`, so accepting the Max spelling silently deleted the Max
+ * value from all 44 parts and left `rds_on` holding a TYPICAL number on a
+ * weight-9 threshold rule.
+ *
+ * Measured over all 429 source files / 437,093 products: 225,902 values were
+ * being discarded this way and 195,886 of them (86.7%) carried a value the
+ * winner did not have. So this is not a rounding error — it is ~0.45 lost
+ * measurements per product.
+ *
+ * The fix keeps the loser under its raw param name, exactly where an unmapped
+ * param would have gone. No domain judgement is involved (keeping beats
+ * binning), nothing changes for the winner, and raw ids are not in any logic
+ * table so scoring is untouched — the value simply stops vanishing.
+ *
+ * Deliberately NOT recorded in unmappedParams: these params ARE mapped, they
+ * just lost a slot. Flooding Triage with them would bury the genuine gaps.
+ *
+ * Value-equality guard: when the loser's value is identical to the winner's,
+ * dropping it loses nothing, so we skip it and avoid pure noise (that is ~13%
+ * of cases). The comparison is deliberately CONSERVATIVE — a false "differs"
+ * merely keeps a redundant copy, while a false "same" would delete data.
+ *
+ * Mirror: `keepLosingValue` in lib/services/atlasMapper.ts (keep in lockstep).
+ */
+function rawIdForParam(decodedName) {
+  // Strip the gaia- provenance prefix before it can reach an attribute id —
+  // vendor names must never surface to end users.
+  return decodedName
+    .replace(/^gaia[-_]/i, '')
+    .normalize('NFC') // one encoding per name, so 额定线圈功率 can't become two keys
+    .toLowerCase()
+    .trim()
+    // Keep Unicode LETTERS and NUMBERS, not just [a-z0-9]. An ASCII-only rule
+    // slugs a pure-Chinese name (额定线圈功率, 类型, 峰值波长) to the empty
+    // string, and the value gets dropped anyway — measured at 42,902 values
+    // across the corpus, 14,198 of them from 额定线圈功率 alone. The stored key
+    // IS the display name (fromParametersJsonb humanizes it), so keeping the
+    // characters keeps the parameter identifiable.
+    .replace(/[^\p{L}\p{N}_]+/gu, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+}
+
+// Bound on same-slug losers per product. Purely a runaway guard — measured
+// across all 429 source files, 200 preserves 100% of differing values (a bound
+// of 20 dropped 1,530 of them, so this is not a knob to tighten casually).
+const MAX_LOSER_SUFFIX = 200;
+
+/**
+ * Store a value under a raw (non-canonical) key, without ever overwriting or
+ * dropping. Returns the key used, or null if the name yields no usable key.
+ *
+ * Shared by BOTH rescue paths so they cannot drift:
+ *  - a mapped param that lost a slot (keepLosingValue, below)
+ *  - a param with no dictionary entry at all (the unmapped branches in mapModel)
+ *
+ * Mirror: storeRawValue in lib/services/atlasMapper.ts.
+ */
+/**
+ * SI-prefix allowlist for the RESCUED path. Built once from the shared JSON.
+ * Mirror: RESCUE_UNIT_MULTIPLIERS in lib/services/atlasMapper.ts.
+ */
+const RESCUE_UNIT_EXPONENTS = (() => {
+  const m = new Map();
+  for (const [prefix, exp] of Object.entries(rescueUnitData.prefixes))
+    for (const atom of rescueUnitData.atoms) m.set(prefix + atom, exp);
+  for (const token of rescueUnitData.excluded) m.delete(token);
+  return m;
+})();
+
+/**
+ * Scale by a power of ten without the float dust multiplying introduces:
+ * `9 * 1e-3` is 0.009000000000000001, `9 / 1000` is exactly 0.009. Measured
+ * corpus-wide, 20.4% of conversions were not bit-exact under multiply vs 2.5%
+ * under divide, and evaluateThreshold compares with no epsilon.
+ * Mirror: scaleByExponent in lib/services/atlasMapper.ts.
+ */
+function scaleByExponent(value, exponent) {
+  const s = String(value);
+  if (!s.includes('e') && !s.includes('E')) {
+    const shifted = Number(`${s}e${exponent}`);
+    if (Number.isFinite(shifted)) return shifted;
+  }
+  return exponent < 0 ? value / 10 ** -exponent : value * 10 ** exponent;
+}
+
+/**
+ * Read a rescued value's number and scale it to base SI — but ONLY when its
+ * unit is one we recognise with certainty.
+ *
+ * This path used to call bare `extractNumeric`, which reads the number and
+ * ignores the unit entirely: `"80mΩ@10V"` was stored as 80 rather than 0.08,
+ * a thousand times too high, in a slot the engine scores on (weight 9, `lte`).
+ * Every dictionary-mapped path already normalises; only this one did not.
+ *
+ * ⚠️ The allowlist is the safety property, not an implementation detail. A
+ * first-letter prefix rule reads `ppm` as pico (11,122 values corpus-wide) and
+ * `pcs` as pico (11,254); a strict whole-token rule instead BREAKS `PF`,
+ * `nV/√Hz`, `mW/sr`, `Mbit`. So an unrecognised unit returns the number
+ * UNCHANGED — identical to today's behaviour.
+ *
+ * ⚠️⚠️ BUT AN ALLOWLIST IS NOT SELF-VALIDATING. This docblock used to claim it
+ * "can never introduce a wrong one" — FALSE: the cross generates `Gs`, which
+ * here is GAUSS, and 229 real values were being multiplied by 1e9. Any change
+ * to the table needs the corpus-occurrence audit pinned in the test suite.
+ *
+ * Mirror: rescueNumericValue in lib/services/atlasMapper.ts.
+ */
+function rescueNumericValue(rawValue) {
+  // Same kill switch every other scaling path honours (see applyUnitPrefix).
+  if (!APPLY_UNIT_PREFIX_TO_NUMERIC) return extractNumericWithPrefix(String(rawValue)).numericValue;
+  const { numericValue, parsedUnit } = extractNumericWithPrefix(String(rawValue));
+  if (numericValue === undefined) return undefined;
+  const exp = parsedUnit === undefined ? undefined : RESCUE_UNIT_EXPONENTS.get(parsedUnit);
+  return exp === undefined ? numericValue : scaleByExponent(numericValue, exp);
+}
+
+function storeRawValue(parameters, decodedName, rawValue, preferredId) {
+  const base = preferredId || rawIdForParam(decodedName);
+  if (!base) return null;
+  // Two different names can slug to the same key (or collide with a mapped
+  // winner). Suffix rather than drop — otherwise the second value is silently
+  // binned, which is the bug this whole mechanism exists to fix.
+  let key = base;
+  for (let n = 2; parameters[key] !== undefined && n <= MAX_LOSER_SUFFIX; n++) key = `${base}_${n}`;
+  if (parameters[key] !== undefined) return null; // pathological; bail rather than loop forever
+  const numericValue = rescueNumericValue(rawValue);
+  parameters[key] = {
+    value: String(rawValue).trim(),
+    ...(numericValue !== undefined && { numericValue }),
+  };
+  return key;
+}
+
+function keepLosingValue(parameters, decodedName, rawValue, winner) {
+  const norm = (v) => String(v ?? '').trim().toLowerCase();
+  if (norm(rawValue) === norm(winner?.value)) return; // identical — nothing to preserve
+  storeRawValue(parameters, decodedName, rawValue);
+}
+
 function mapModel(model, manufacturerName, sourceFile) {
   const warnings = [];
   // Tracks param names that fell through dictionary lookups and were stored under an
@@ -2774,6 +2924,7 @@ function mapModel(model, manufacturerName, sourceFile) {
       const gaiaMapping = overrideMapping ?? gaiaDict?.[gaia.stem] ?? GAIA_SHARED[gaia.stem];
       if (!gaiaMapping) {
         // Store with auto-humanized name (nothing thrown away)
+        let gaiaKey = gaia.stem;
         if (!parameters[gaia.stem]) {
           const parsed = parseGaiaValue(p.value);
           const numConverted = applyUnitPrefix(parsed.numericValue, parsed.unit);
@@ -2782,18 +2933,33 @@ function mapModel(model, manufacturerName, sourceFile) {
             ...(numConverted !== undefined && { numericValue: numConverted }),
             ...(parsed.unit ? { unit: parsed.unit } : {}),
           };
+        } else {
+          // Suffix variants of one stem (…-Min / …-Max / …-Typ) all reduce to
+          // the SAME stem, so every variant after the first used to be dropped
+          // — 80,228 values across the corpus. The stem keeps its historical
+          // key (no re-keying of ingested rows); the variants land under their
+          // own suffixed names. (Decision #278)
+          gaiaKey = storeRawValue(parameters, decodedName, p.value) ?? gaia.stem;
         }
-        unmappedParams.push({ paramName: decodedName, sampleValue: String(p.value).slice(0, 80), attributeId: gaia.stem, kind: 'gaia' });
+        unmappedParams.push({ paramName: decodedName, sampleValue: String(p.value).slice(0, 80), attributeId: gaiaKey, kind: 'gaia' });
         continue;
       }
       if (gaiaMapping.preferredSuffix && gaia.suffix && gaia.suffix !== gaiaMapping.preferredSuffix) {
         // Skip only if the preferred-suffix variant is actually present for
         // this stem; otherwise fall through and map the available variant.
         const present = gaiaStemSuffixes.get(gaia.stem);
-        if (present && present.has(gaiaMapping.preferredSuffix)) continue;
+        if (present && present.has(gaiaMapping.preferredSuffix)) {
+          // The preferred variant wins the slot, but the non-preferred one is a
+          // genuinely different measurement (Typ vs Max) — keep it. (Decision #278)
+          keepLosingValue(parameters, decodedName, p.value, parameters[gaiaMapping.attributeId]);
+          continue;
+        }
       }
       if (gaiaMapping.attributeId.startsWith('_')) continue;
-      if (parameters[gaiaMapping.attributeId]) continue; // dedup
+      if (parameters[gaiaMapping.attributeId]) {
+        keepLosingValue(parameters, decodedName, p.value, parameters[gaiaMapping.attributeId]);
+        continue; // dedup
+      }
 
       const parsed = parseGaiaValue(p.value);
       let displayValue = parsed.displayValue;
@@ -2820,19 +2986,24 @@ function mapModel(model, manufacturerName, sourceFile) {
     const mapping = familyDict?.[lowerName] ?? SHARED_PARAMS[lowerName] ?? METADATA_PARAMS[lowerName];
     if (!mapping) {
       // Store with raw param name (nothing thrown away)
+      // The historical key: ASCII-only slug. Kept as the PREFERRED key so
+      // already-ingested products don't re-key on the next backfill.
       const rawId = lowerName.replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
-      if (rawId && !parameters[rawId]) {
-        parameters[rawId] = {
-          value: p.value.trim(),
-          ...(extractNumeric(p.value) !== undefined && { numericValue: extractNumeric(p.value) }),
-        };
-      }
-      unmappedParams.push({ paramName: decodedName, sampleValue: String(p.value).slice(0, 80), attributeId: rawId, kind: 'standard' });
+      // ...but when it is empty (a pure-Chinese name like 工作电压 reduces to
+      // '') or already taken, the value used to be dropped outright. Measured
+      // across the corpus: 251,643 values lost to the empty slug and 7,062 to
+      // collisions — operating voltage, rated voltage, contact current. Fall
+      // back to the Unicode-preserving key so nothing is binned. (Decision #278)
+      const storedId = storeRawValue(parameters, decodedName, p.value, rawId || undefined);
+      unmappedParams.push({ paramName: decodedName, sampleValue: String(p.value).slice(0, 80), attributeId: storedId ?? rawId, kind: 'standard' });
       continue;
     }
 
     if (mapping.attributeId.startsWith('_')) continue;
-    if (parameters[mapping.attributeId]) continue; // dedup
+    if (parameters[mapping.attributeId]) {
+      keepLosingValue(parameters, decodedName, p.value, parameters[mapping.attributeId]);
+      continue; // dedup
+    }
 
     let displayValue = p.value.trim();
     // Hybrid: parse number AND unit from value string; dict unit is fallback.
@@ -3265,7 +3436,37 @@ function aggregateUnmappedParams(perProductUnmapped) {
 }
 
 // ─── CLI argument parsing ─────────────────────────────────
-const args = process.argv.slice(2);
+
+/**
+ * Is this file being RUN, or IMPORTED?
+ *
+ * WHY THIS EXISTS. `mapModel()` below is the function that actually applies
+ * your accepted dictionary mappings to product data during ingest — and until
+ * now it could not be tested, because merely importing this file ran the CLI:
+ * it parsed process.argv, called process.exit(1) when the arguments didn't
+ * look like a command, built a Supabase client, and kicked off a dispatcher.
+ * So the only guard on it was a pair of regexes asserting certain text appears
+ * in the source. Meanwhile lib/services/atlasMapper.ts has a thorough test
+ * suite for mapAtlasModel(), a function with NO runtime callers. A tested dead
+ * function beside an untested live one is worse than testing neither: it reads
+ * as coverage.
+ *
+ * The guard is deliberately minimal — it changes nothing about running this
+ * file from the terminal, and everything about importing it. Verified by
+ * capturing `--report --dry-run` and the no-argument usage output before and
+ * after, and diffing them byte for byte.
+ */
+const IS_CLI = (() => {
+  try {
+    return !!process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+})();
+
+// When imported, argv belongs to whatever is doing the importing (jest, a
+// script). Parsing it would pick up test file paths as ingest inputs.
+const args = IS_CLI ? process.argv.slice(2) : [];
 let mode = null;
 let modeArg = null;
 const files = [];
@@ -3309,7 +3510,7 @@ for (let i = 0; i < args.length; i++) {
 // Default mode: when files passed without explicit mode flag, generate reports.
 if (mode === null && files.length > 0) mode = 'report';
 
-if (mode === null) {
+if (mode === null && IS_CLI) {
   printUsage();
   process.exit(1);
 }
@@ -3370,11 +3571,17 @@ Idempotent.
 
 // Need Supabase for everything except --dry-run report.
 const needsSupabase = !(mode === 'report' && dryRun);
-if (needsSupabase && (!SUPABASE_URL || !SUPABASE_SERVICE_KEY)) {
+if (IS_CLI && needsSupabase && (!SUPABASE_URL || !SUPABASE_SERVICE_KEY)) {
   console.error('Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env.local');
   process.exit(1);
 }
-const supabase = needsSupabase ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY) : null;
+// On the CLI path the check above has already guaranteed both are present, so
+// this is the same expression it always was. On the import path there are no
+// credentials and no command to run, so the client is simply null — every
+// consumer already handles that (loadAndApplyDictOverrides returns early on it).
+const supabase = needsSupabase && SUPABASE_URL && SUPABASE_SERVICE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+  : null;
 
 // ─── Dictionary override merge (admin-curated entries from atlas_dictionary_overrides) ──────
 //
@@ -5063,7 +5270,9 @@ function numericValuesEqual(a, b) {
 }
 
 // ─── Dispatcher ───────────────────────────────────────────
-(async () => {
+// Guarded so importing this module for its mapping functions does not run a
+// command. `if (IS_CLI)` wraps the whole IIFE; the body is untouched.
+if (IS_CLI) (async () => {
   try {
     // Load shared English manufacturer codes so cleanManufacturerName() keeps
     // full names for collisions (e.g. "HX 红星" not "HX"). Decision #225.
@@ -5097,3 +5306,32 @@ function numericValuesEqual(a, b) {
     process.exit(1);
   }
 })();
+
+// ─── Exports (for tests only) ─────────────────────────────
+// This file stays a standalone CLI by design — it is deliberately NOT
+// refactored into lib/. These exports exist so the golden-file test in
+// __tests__/services/atlasIngestMapper.test.ts can call the REAL mapping
+// function rather than a parallel implementation that drifts from it.
+// Adding an export has no effect on the CLI path.
+// `rescueNumericValue` / `RESCUE_UNIT_EXPONENTS` are exported for the PARITY TEST ONLY.
+// Without them every allowlist assertion runs against lib/services/atlasMapper.ts — the copy
+// with no runtime callers — so deleting the exclusion loop from THIS file (the live ingest
+// path) left the suite green while production started converting gauss. A "keep in lockstep"
+// comment is not a mechanism; the test is, and it can only be a mechanism if it can reach here.
+// `mapManufacturerProducts` / `dedupRichestByMpn` / `tagAtlasParameters` / `mergeAtlasParameters`
+// are exported so a pre-backfill VALUE-LEVEL audit can compute exactly the JSONB the backfill
+// would write, using the backfill's own merge — not a re-implementation of it. The CLI dry run
+// reports COUNTS only (`--verbose` adds key-level added/removed), which is blind to a value
+// replaced in place — the 600 V → 630 V substitution that went unseen the first time.
+export {
+  mapModel, classifyAtlasCategory, cleanManufacturerName, rescueNumericValue, RESCUE_UNIT_EXPONENTS,
+  mapManufacturerProducts, dedupRichestByMpn, tagAtlasParameters, mergeAtlasParameters,
+  // ⚠️ ALL THREE startup initializers, exported together on purpose. The dispatcher
+  // runs them in this order before any mapping; a harness that imports the mapper
+  // and skips one silently gets DIFFERENT output, and the difference looks like a
+  // finding rather than a bug in the harness. Skipping loadAndApplyDictOverrides
+  // made 2,033 accepted mappings vanish (every one looked like a key rename);
+  // skipping loadCollidingEnNames shortened "HX 红星" to "HX" so 3,289 products
+  // matched no DB row at all. Import the set, not a member of it.
+  loadCollidingEnNames, loadAndApplyDictOverrides, loadAndApplyFamilyParamSignatures,
+};

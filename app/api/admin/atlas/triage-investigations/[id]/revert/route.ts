@@ -21,6 +21,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createServiceClient } from '@/lib/supabase/service';
 import { invalidateTriageQueueCacheAndAwaitFresh } from '@/lib/services/triageQueueCache';
+import { recordParamDecision } from '@/lib/services/paramDecisionLog';
 
 interface InvestigationRow {
   id: string;
@@ -151,6 +152,21 @@ export async function POST(
       // since the dictionary-override / note state is the source of truth.
       console.error('triage-investigations revert stamp failed:', stampErr);
     }
+
+    // A revert is itself a decision, so it APPENDS rather than editing the
+    // original. Unlike the investigations table (which stamps reverted_at on
+    // the same row), the decision log keeps both entries — "Accepted 09:00 →
+    // Reverted 09:05" — because rewriting history is exactly what this log
+    // exists to prevent.
+    await recordParamDecision({
+      paramName: row.param_name,
+      decision: row.action_taken === 'override_created' ? 'mapping_revoked' : 'reopened',
+      decidedBy: user!.id,
+      overrideId: row.resulting_override_id ?? null,
+      investigationId: row.id,
+      note: 'Reverted from the AI investigation log',
+      source: 'ui',
+    });
 
     // Bring the row back into the Triage open queue. Same wait-then-restart
     // pattern as other batch-state mutations (Decision #180/#182).

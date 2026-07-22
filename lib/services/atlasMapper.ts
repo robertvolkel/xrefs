@@ -23,6 +23,7 @@ import {
 } from './atlasGaiaDictionaries';
 import { getLogicTable } from '../logicTables';
 import { getL2ParamMapForCategory, type ParamMapping } from './digikeyParamMap';
+import rescueUnitData from './atlas-rescue-units.json';
 
 /**
  * Belt-and-suspenders guard: ensure no user-facing parameter name ever leaks
@@ -2542,6 +2543,91 @@ export function applyUnitPrefix(numericValue: number | undefined, unit: string |
  * applyUnitPrefix, so callers should prefer parsedUnit over dict's
  * declared unit. Dict unit is only the fallback for unit-less values.
  */
+/**
+ * SI-prefix allowlist for the RESCUED path. Built once from the shared JSON
+ * that scripts/atlas-ingest.mjs (the LIVE ingest path) reads verbatim, so the
+ * two copies cannot drift — a "keep in lockstep" comment is not a mechanism.
+ */
+export const RESCUE_UNIT_EXPONENTS: ReadonlyMap<string, number> = (() => {
+  const m = new Map<string, number>();
+  for (const [prefix, exp] of Object.entries(rescueUnitData.prefixes as Record<string, number>))
+    for (const atom of rescueUnitData.atoms as string[]) m.set(prefix + atom, exp);
+  for (const token of rescueUnitData.excluded as string[]) m.delete(token);
+  return m;
+})();
+
+/**
+ * Scale by a power of ten WITHOUT the float dust that multiplying introduces.
+ *
+ * `9 * 1e-3` is 0.009000000000000001; `9 / 1000` is exactly 0.009. Measured over
+ * the corpus this is not cosmetic — 69,351 of 339,725 conversions (20.4%) were
+ * not bit-exact under multiply, versus 8,454 (2.5%) under divide.
+ *
+ * ⚠️ It matters because `evaluateThreshold` compares with bare `>=`/`<=` and NO
+ * epsilon (unlike `evaluateIdentity`, which has a 1e-6 relative tolerance). A
+ * source `rds_on` of `"0.009 Ω"` against a candidate `"9mΩ"` — the same
+ * resistance — hard-FAILED on a 1.73e-18 artifact, and PASSED when the two
+ * sides were swapped, so the verdict depended on which side carried the prefix.
+ */
+export function scaleByExponent(value: number, exponent: number): number {
+  // Shift the DECIMAL rather than doing float arithmetic: re-parsing "244.6e-3"
+  // gives exactly 0.2446, where both 244.6*1e-3 and 244.6/1e3 introduce dust.
+  // Measured over 339,490 real conversions: multiply 20.43% inexact, divide
+  // 2.49%, decimal shift 0.00%.
+  const s = String(value);
+  if (!s.includes('e') && !s.includes('E')) {
+    const shifted = Number(`${s}e${exponent}`);
+    if (Number.isFinite(shifted)) return shifted;
+  }
+  // Fallback for a value JS already renders exponentially (String(1e-7) is
+  // "1e-7", and "1e-7e-3" parses to NaN). Zero occurrences in the corpus today,
+  // but a supplier shipping "0.0000001 V" would hit it.
+  return exponent < 0 ? value / 10 ** -exponent : value * 10 ** exponent;
+}
+
+/**
+ * Read a rescued value's number and scale it to base SI — but ONLY when its
+ * unit is one we recognise with certainty.
+ *
+ * This path used to call bare `extractNumeric`, which reads the number and
+ * ignores the unit entirely: `"80mΩ@10V"` was stored as 80 rather than 0.08,
+ * a thousand times too high, in a slot the engine scores on (weight 9, `lte`).
+ * Every dictionary-mapped path already normalises; only this one did not.
+ * Measured over all 429 source files: 153,993 values were stored at the wrong
+ * scale, 50,521 of them in scoring slots, across 69,639 products.
+ *
+ * ⚠️ The allowlist is the safety property, not an implementation detail. A
+ * first-letter prefix rule reads `ppm` as pico (11,122 values corpus-wide) and
+ * `pcs` as pico (11,254); a strict whole-token rule instead BREAKS `PF` (1,989),
+ * `nV/√Hz` (474), `mW/sr` (391), `Mbit` (431). So an unrecognised unit returns
+ * the number UNCHANGED — identical to today's behaviour.
+ *
+ * ⚠️⚠️ BUT AN ALLOWLIST IS NOT SELF-VALIDATING, and an earlier version of this
+ * docblock claimed it was ("can never introduce a wrong one"). That was FALSE:
+ * the cross generates `Gs`, which in this corpus is GAUSS, and 229 real values
+ * on Hall-effect sensors were being multiplied by 1e9. A generated token can
+ * collide with a unit that is not prefix+atom at all. Every change to the table
+ * must be followed by the corpus-occurrence audit pinned in
+ * atlasRescueUnits.test.ts — see the `_safetyComment` in the shared JSON.
+ *
+ * SCOPE: the rescued path only. The dictionary-mapped paths already normalise
+ * and are NOT touched — applying this table there would REMOVE conversions
+ * that work today.
+ *
+ * Mirror: rescueNumericValue in scripts/atlas-ingest.mjs.
+ */
+export function rescueNumericValue(rawValue: string): number | undefined {
+  // Honour the same kill switch every other scaling path honours. Without this,
+  // flipping it would leave dict-mapped values at display scale while rescued
+  // values stayed base-SI — two incompatible conventions in one product, which
+  // is worse than either setting alone.
+  if (!APPLY_UNIT_PREFIX_TO_NUMERIC) return extractNumericWithPrefix(String(rawValue)).numericValue;
+  const { numericValue, parsedUnit } = extractNumericWithPrefix(String(rawValue));
+  if (numericValue === undefined) return undefined;
+  const exp = parsedUnit === undefined ? undefined : RESCUE_UNIT_EXPONENTS.get(parsedUnit);
+  return exp === undefined ? numericValue : scaleByExponent(numericValue, exp);
+}
+
 export function extractNumericWithPrefix(value: string): { numericValue?: number; parsedUnit?: string } {
   if (isMissingValue(value)) return {};
   const trimmed = value.trim();
@@ -2614,8 +2700,13 @@ export function effectiveUnit(parsedUnit: string | undefined, dictUnit: string |
 
 /**
  * Checks if a raw value is a "missing" placeholder.
+ *
+ * Exported because any consumer that reasons about real values has to agree
+ * with ingest on what "no value" means. Mapping Health learned this the hard
+ * way: treating "-" as a text value made every placeholder-heavy parameter
+ * look like a categorical one clashing with its numeric siblings.
  */
-function isMissingValue(value: string): boolean {
+export function isMissingValue(value: string): boolean {
   const trimmed = value.trim();
   return trimmed === '-' || trimmed === '/' || trimmed === '' || trimmed === 'N/A' || trimmed === 'n/a';
 }
@@ -3294,6 +3385,60 @@ export interface MappedAtlasProduct {
 }
 
 /**
+ * Layer 1 — never discard a losing spelling (Decision #278).
+ *
+ * When two source params resolve to the SAME (family, attributeId) slot, only
+ * the first wins; the rest used to be dropped on the floor. That is real data
+ * loss, and it is caused by a mapping ACCEPT: the Good-Ark case had
+ * `Rdson@ 10V(mΩ) Typ` at column 7 and `Rdson@ 10V(mΩ) Max` at column 8 both
+ * pointing at `rds_on`, so accepting the Max spelling silently deleted the Max
+ * value from all 44 parts.
+ *
+ * Measured over all 429 source files / 437,093 products: 225,902 values were
+ * being discarded and 195,886 (86.7%) carried a value the winner did not have.
+ *
+ * The loser is kept under its raw param name, exactly where an unmapped param
+ * would have gone. Raw ids appear in no logic table, so scoring is untouched.
+ *
+ * Value-equality guard: identical values are dropped (nothing to preserve).
+ * The comparison is deliberately CONSERVATIVE — a false "differs" merely keeps
+ * a redundant copy, while a false "same" would delete data.
+ *
+ * ⚠️ Mirror: `keepLosingValue` in scripts/atlas-ingest.mjs is the LIVE ingest
+ * path. Keep the two in lockstep — they are pinned against each other by
+ * __tests__/services/atlasLayer1Parity.test.ts.
+ */
+export function rawIdForParam(decodedName: string): string {
+  // Strip the gaia- provenance prefix before it can reach an attribute id —
+  // vendor names must never surface to end users.
+  return stripGaiaPrefix(decodedName)
+    .normalize('NFC') // one encoding per name, so 额定线圈功率 can't become two keys
+    .toLowerCase()
+    .trim()
+    // Keep Unicode LETTERS and NUMBERS, not just [a-z0-9]. An ASCII-only rule
+    // slugs a pure-Chinese name to the empty string and the value gets dropped
+    // anyway (42,902 values across the corpus). The stored key IS the display
+    // name (fromParametersJsonb humanizes it), so keep the characters.
+    .replace(/[^\p{L}\p{N}_]+/gu, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+}
+
+/**
+ * Bound on same-slug losers per product. Purely a runaway guard — measured
+ * across all 429 source files, 200 preserves 100% of differing values (a bound
+ * of 20 dropped 1,530 of them, so this is not a knob to tighten casually).
+ * Mirror: MAX_LOSER_SUFFIX in scripts/atlas-ingest.mjs.
+ */
+export const MAX_LOSER_SUFFIX = 200;
+
+/** True when the losing value carries information the winner does not. */
+export function losingValueDiffers(rawValue: string, winnerValue: string | undefined): boolean {
+  const norm = (v: string | undefined) => String(v ?? '').trim().toLowerCase();
+  return norm(rawValue) !== norm(winnerValue);
+}
+
+/**
  * Maps a single Atlas model to internal types.
  * Returns a MappedAtlasProduct with Part, ParametricAttribute[], familyId, and warnings.
  */
@@ -3345,6 +3490,44 @@ export function mapAtlasModel(
     : gaiaL2Dictionaries[classification.category];
   const parameters: ParametricAttribute[] = [];
   const seenAttributeIds = new Set<string>();
+
+  /**
+   * Layer 1 (Decision #278) — keep a losing spelling's value under its raw
+   * param name instead of dropping it. Mirror of `keepLosingValue` in
+   * scripts/atlas-ingest.mjs.
+   */
+  /**
+   * Store a value under a raw (non-canonical) key without ever overwriting or
+   * dropping. Returns the key used, or null if the name yields no usable key.
+   * Shared by both rescue paths so they cannot drift.
+   * Mirror: storeRawValue in scripts/atlas-ingest.mjs.
+   */
+  const storeRawValue = (
+    decodedName: string,
+    rawValue: string,
+    preferredId?: string,
+  ): string | null => {
+    const base = preferredId || rawIdForParam(decodedName);
+    if (!base) return null;
+    let key = base;
+    for (let n = 2; seenAttributeIds.has(key) && n <= MAX_LOSER_SUFFIX; n++) key = `${base}_${n}`;
+    if (seenAttributeIds.has(key)) return null;
+    seenAttributeIds.add(key);
+    parameters.push({
+      parameterId: key,
+      parameterName: stripGaiaPrefix(decodedName.trim()),
+      value: String(rawValue).trim(),
+      numericValue: rescueNumericValue(rawValue),
+      sortOrder: 200 + parameters.length,
+    });
+    return key;
+  };
+
+  const keepLosingValue = (decodedName: string, rawValue: string, winnerId: string): void => {
+    const winner = parameters.find(x => x.parameterId === winnerId);
+    if (!losingValueDiffers(rawValue, winner?.value)) return;
+    storeRawValue(decodedName, rawValue);
+  };
   let packageValue: string | undefined;
 
   // Pre-scan gaia params: stem -> set of suffixes present in THIS product.
@@ -3411,6 +3594,13 @@ export function mapAtlasModel(
             unit: parsed.unit,
             sortOrder: 200 + parameters.length,
           });
+        } else {
+          // Suffix variants of one stem (…-Min / …-Max / …-Typ) all reduce to the
+          // SAME stem, so every variant after the first used to be dropped —
+          // 80,228 values corpus-wide. The stem keeps its historical key (no
+          // re-keying of ingested rows); variants land under their own suffixed
+          // names. (Decision #278)
+          storeRawValue(decodedName, p.value);
         }
         continue;
       }
@@ -3421,6 +3611,9 @@ export function mapAtlasModel(
       if (gaiaMapping.preferredSuffix && gaia.suffix && gaia.suffix !== gaiaMapping.preferredSuffix) {
         const present = gaiaStemSuffixes.get(gaia.stem);
         if (present && present.has(gaiaMapping.preferredSuffix)) {
+          // The preferred variant wins the slot, but the non-preferred one is a
+          // genuinely different measurement (Typ vs Max) — keep it. (Decision #278)
+          keepLosingValue(decodedName, p.value, gaiaMapping.attributeId);
           continue;
         }
       }
@@ -3429,7 +3622,10 @@ export function mapAtlasModel(
       if (gaiaMapping.attributeId.startsWith('_')) continue;
 
       // Deduplicate — first occurrence of each attributeId wins
-      if (seenAttributeIds.has(gaiaMapping.attributeId)) continue;
+      if (seenAttributeIds.has(gaiaMapping.attributeId)) {
+        keepLosingValue(decodedName, p.value, gaiaMapping.attributeId);
+        continue;
+      }
       seenAttributeIds.add(gaiaMapping.attributeId);
 
       // Parse value (gaia values embed units: "5.8 mΩ", "100 V")
@@ -3473,18 +3669,13 @@ export function mapAtlasModel(
       ?? metadataParamDictionary[lowerName];
 
     if (!mapping) {
-      // Store with raw param name (nothing thrown away)
+      // Store with raw param name (nothing thrown away). The historical
+      // ASCII-only slug stays the PREFERRED key so ingested rows don't re-key;
+      // when it is empty (a pure-Chinese name reduces to '') or already taken,
+      // fall back to the Unicode-preserving key instead of binning the value.
+      // (Decision #278 — 251,643 + 7,062 values corpus-wide.)
       const rawId = lowerName.replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
-      if (rawId && !seenAttributeIds.has(rawId)) {
-        seenAttributeIds.add(rawId);
-        parameters.push({
-          parameterId: rawId,
-          parameterName: stripGaiaPrefix(decodedName.trim()),
-          value: p.value.trim(),
-          numericValue: extractNumeric(p.value),
-          sortOrder: 200 + parameters.length,
-        });
-      }
+      storeRawValue(decodedName, p.value, rawId || undefined);
       continue;
     }
 
@@ -3492,7 +3683,10 @@ export function mapAtlasModel(
     if (mapping.attributeId.startsWith('_')) continue;
 
     // Deduplicate — gaia may have already provided this attributeId
-    if (seenAttributeIds.has(mapping.attributeId)) continue;
+    if (seenAttributeIds.has(mapping.attributeId)) {
+      keepLosingValue(decodedName, p.value, mapping.attributeId);
+      continue;
+    }
     seenAttributeIds.add(mapping.attributeId);
 
     // Normalize value based on attributeId
