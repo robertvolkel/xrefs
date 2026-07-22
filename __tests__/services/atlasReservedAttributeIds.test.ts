@@ -117,3 +117,64 @@ describe.each([
     expect(params.raw_rds_on.numericValue).toBeCloseTo(0.08, 9);
   });
 });
+
+/**
+ * ⚠️ SECOND-ORDER EFFECT of the reserved-id guard, caught by a full dry run of
+ * the re-import BEFORE it was allowed to write.
+ *
+ * Post-mapping derivations read the merged parameter map — `package_case` to
+ * infer mounting style and height, `tj_max` to synthesize an operating-temperature
+ * range. Once the guard moves an UNMAPPED value to `raw_<id>`, reading
+ * `parameters.<id>` directly makes those derivations silently stop firing.
+ * Measured over all 429 source files: 113 products lost BOTH `height` and
+ * `mounting_style`, and the temperature path was exposed the same way.
+ *
+ * The fix (`readSlot`) is safe because the guard exists to keep an unvetted
+ * value out of a SCORING slot, and these derivations do not pass one through:
+ * PACKAGE_TRAITS is a curated allowlist, so a package string has to match a
+ * known entry to yield anything at all. It is also strictly LESS exposure than
+ * before the guard, when that same unvetted value was scored directly.
+ *
+ * These derivations live ONLY in scripts/atlas-ingest.mjs (the live ingest
+ * path); the TS copy has never had them.
+ */
+describe('post-mapping derivations still see a value the guard escaped', () => {
+  const tvsWithUnmappedPackage = {
+    componentName: 'TEST-DERIVE-1',
+    description: 'TVS Diode',
+    datasheetUrl: '',
+    category: {
+      c1: { name: 'Circuit Protection' },
+      c2: { name: 'Transient Voltage Suppressors (TVS)' },
+      c3: { name: 'TVS Diodes' },
+    },
+    // "package case" has no dictionary entry, so it slugs to `package_case` —
+    // a reserved scoring id — and is escaped to `raw_package_case`. This is the
+    // exact shape that cost Rectron's TEP-series their height and mounting.
+    parameters: [{ name: 'package case', value: 'DO-41' }],
+  };
+
+  it('escapes the package value off the scoring slot', () => {
+    const params = mapModel(tvsWithUnmappedPackage, 'TestMfr', 'test.json').parameters;
+    expect(params.package_case).toBeUndefined();
+    expect(params.raw_package_case?.value).toBe('DO-41');
+  });
+
+  it('STILL derives mounting_style and height from it', () => {
+    const params = mapModel(tvsWithUnmappedPackage, 'TestMfr', 'test.json').parameters;
+    expect(params.mounting_style?.value).toBe('Through Hole');
+    expect(params.height?.numericValue).toBeCloseTo(4.7, 6);
+  });
+
+  it('derives nothing for a package the curated table does not know', () => {
+    const unknown = {
+      ...tvsWithUnmappedPackage,
+      parameters: [{ name: 'package case', value: 'NOT-A-REAL-PACKAGE' }],
+    };
+    const params = mapModel(unknown, 'TestMfr', 'test.json').parameters;
+    // The allowlist IS the vetting — an unrecognised string yields nothing.
+    expect(params.mounting_style).toBeUndefined();
+    expect(params.height).toBeUndefined();
+    expect(params.raw_package_case?.value).toBe('NOT-A-REAL-PACKAGE');
+  });
+});

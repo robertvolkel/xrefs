@@ -3052,13 +3052,31 @@ function mapModel(model, manufacturerName, sourceFile) {
 
   // ── operating_temp range synthesis ──────────────────────
   // Some MFRs (Galaxy specifically) split operating temp into max/min
+  /**
+   * Read a canonical slot OR the `raw_<id>` the reserved-id guard moved it to.
+   *
+   * ⚠️ Post-mapping derivations run AFTER `storeRawValue` has escaped any
+   * unmapped value off a scoring slot, so reading `parameters.<id>` directly
+   * makes them silently stop firing. Measured on a full dry run: 113 products
+   * lost `height` + `mounting_style` and 231 lost `operating_temp` purely
+   * because their source column was unmapped.
+   *
+   * Safe because the guard exists to keep an unvetted value out of a SCORING
+   * slot, and these derivations do not pass one through — `PACKAGE_TRAITS` is a
+   * curated allowlist ("SOT-23" must match a known package to yield a height),
+   * and the temperature path builds a range from two parsed numbers. Both are
+   * strictly LESS exposure than the status quo before the guard, where the same
+   * unvetted value was being scored directly.
+   */
+  const readSlot = (id) => parameters[id] ?? parameters[`${RAW_KEY_PREFIX}${id}`];
+
   // separate columns. Synthesize the canonical `operating_temp` range
   // field when both bounds are present and the canonical isn't already
   // set. We read max from parameters.tj_max if dict routed it there,
   // and min from the raw model.parameters (since satellite mappings
   // like _operating_temp_min are dropped at line 2211).
   if (!parameters.operating_temp) {
-    const tMaxFromTj = parameters.tj_max?.numericValue;
+    const tMaxFromTj = readSlot('tj_max')?.numericValue;
     const minRaw = model.parameters.find(p => {
       const n = (p.name || '').toLowerCase();
       return n === '最低工作温度' || n.includes('min operating temp') || n.includes('min. operating temp');
@@ -3081,7 +3099,7 @@ function mapModel(model, manufacturerName, sourceFile) {
   // ── mounting_style + height from package_case ───────────
   // Common discrete-semi packages (TVS, rectifier, Zener, MOSFET).
   // Derivation only — operator can override via dict for new packages.
-  const pkg = parameters.package_case?.value;
+  const pkg = readSlot('package_case')?.value;
   if (pkg) {
     const pkgUp = String(pkg).toUpperCase().trim();
     const traits = PACKAGE_TRAITS[pkgUp];
