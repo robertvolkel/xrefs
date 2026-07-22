@@ -21,7 +21,7 @@ import {
   gaiaL2Dictionaries,
   type GaiaParamMapping,
 } from './atlasGaiaDictionaries';
-import { getLogicTable } from '../logicTables';
+import { getLogicTable, getAllLogicTables } from '../logicTables';
 import { getL2ParamMapForCategory, type ParamMapping } from './digikeyParamMap';
 
 /**
@@ -3351,7 +3351,12 @@ export interface MappedAtlasProduct {
  * being discarded and 195,886 (86.7%) carried a value the winner did not have.
  *
  * The loser is kept under its raw param name, exactly where an unmapped param
- * would have gone. Raw ids appear in no logic table, so scoring is untouched.
+ * would have gone.
+ *
+ * ⚠️ This docblock used to claim "raw ids appear in no logic table, so scoring
+ * is untouched." That was FALSE — see RESERVED_ATTRIBUTE_IDS. `rawIdForParam`
+ * joins on underscores, so "RDS(on)" slugs to the weight-9 `rds_on` rule.
+ * `storeRawValue` now refuses any reserved id and escapes it instead.
  *
  * Value-equality guard: identical values are dropped (nothing to preserve).
  * The comparison is deliberately CONSERVATIVE — a false "differs" merely keeps
@@ -3361,6 +3366,34 @@ export interface MappedAtlasProduct {
  * path. Keep the two in lockstep — they are pinned against each other by
  * __tests__/services/atlasLayer1Parity.test.ts.
  */
+/**
+ * Every attributeId the matching engine scores on, across all 43 logic tables
+ * (434 as of Jul 2026). Computed from the registry, never hand-listed, so a new
+ * family or rule is covered the moment it lands.
+ *
+ * ⚠️ Decision #278's docblock claimed "raw ids appear in no logic table, so
+ * scoring is untouched." That was FALSE and is why this exists. `rawIdForParam`
+ * joins on underscores, so an unmapped supplier column called "RDS(on)" slugs
+ * to exactly `rds_on` — a weight-9 threshold rule — and `matchingEngine.ts:23`
+ * takes the stored numericValue verbatim. Measured on the live database
+ * (106,000 products, 24.3% of the corpus): 6,958 values were sitting in scoring
+ * slots carrying a number derived by a path that never normalized units.
+ *
+ * Shared with scripts/atlas-ingest.mjs through the generated
+ * atlas-reserved-attribute-ids.json; a test pins that file against this set so
+ * it cannot go stale silently.
+ */
+export const RESERVED_ATTRIBUTE_IDS: ReadonlySet<string> = new Set(
+  getAllLogicTables().flatMap(t => (t.rules ?? []).map(r => r.attributeId).filter(Boolean)),
+);
+
+/**
+ * Prefix for a rescued/unmapped value whose natural key would land on a real
+ * scoring slot. Deliberately NOT itself a reserved id (asserted by a test), so
+ * the escape can never collide in turn.
+ */
+export const RAW_KEY_PREFIX = 'raw_';
+
 export function rawIdForParam(decodedName: string): string {
   // Strip the gaia- provenance prefix before it can reach an attribute id —
   // vendor names must never surface to end users.
@@ -3460,17 +3493,24 @@ export function mapAtlasModel(
     rawValue: string,
     preferredId?: string,
   ): string | null => {
-    const base = preferredId || rawIdForParam(decodedName);
-    if (!base) return null;
+    const natural = preferredId || rawIdForParam(decodedName);
+    if (!natural) return null;
+    // A raw key must never occupy a slot the matching engine scores on. An
+    // unmapped column called "RDS(on)" slugs to exactly `rds_on` (weight 9),
+    // and nothing downstream can tell a vetted value from a raw one.
+    const base = RESERVED_ATTRIBUTE_IDS.has(natural) ? `${RAW_KEY_PREFIX}${natural}` : natural;
     let key = base;
     for (let n = 2; seenAttributeIds.has(key) && n <= MAX_LOSER_SUFFIX; n++) key = `${base}_${n}`;
     if (seenAttributeIds.has(key)) return null;
     seenAttributeIds.add(key);
+    // Normalize to base SI exactly like every winner path does. Using the bare
+    // extractor here is what let "80mΩ@10V" store 80 instead of 0.08.
+    const { numericValue, parsedUnit } = extractNumericWithPrefix(String(rawValue));
     parameters.push({
       parameterId: key,
       parameterName: stripGaiaPrefix(decodedName.trim()),
       value: String(rawValue).trim(),
-      numericValue: extractNumeric(rawValue),
+      numericValue: applyUnitPrefix(numericValue, parsedUnit),
       sortOrder: 200 + parameters.length,
     });
     return key;

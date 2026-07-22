@@ -131,9 +131,6 @@
     },
     "packageValue": "TO-252",
     "parameters": {
-      "channel_type": {
-        "value": "N"
-      },
       "height": {
         "value": "2.3 mm",
         "numericValue": 2.3,
@@ -151,6 +148,9 @@
       "package_case": {
         "value": "TO-252",
         "numericValue": -252
+      },
+      "raw_channel_type": {
+        "value": "N"
       },
       "rdson_vgs_10v_max": {
         "value": "1.300",
@@ -178,7 +178,7 @@
       {
         "paramName": "Channel type",
         "sampleValue": "N",
-        "attributeId": "channel_type",
+        "attributeId": "raw_channel_type",
         "kind": "standard"
       },
       {
@@ -353,7 +353,7 @@
       },
       "温度系数_温漂": {
         "value": "20ppm/℃",
-        "numericValue": 20
+        "numericValue": 2e-11
       },
       "输出电压_最大值": {
         "value": "36V",
@@ -365,7 +365,7 @@
       },
       "阴极电流": {
         "value": "1mA~100mA",
-        "numericValue": 1
+        "numericValue": 0.001
       }
     },
     "warnings": [],
@@ -702,11 +702,11 @@
       },
       "current_consumption_average_3": {
         "value": "82.4 mA",
-        "numericValue": 82.4
+        "numericValue": 0.0824
       },
       "current_consumption_average_4": {
         "value": "35.6 mA",
-        "numericValue": 35.6
+        "numericValue": 0.0356
       },
       "current_consumption_average_5": {
         "value": "TBD mA"
@@ -719,11 +719,11 @@
       },
       "current_consumption_average_8": {
         "value": "67.9 mA",
-        "numericValue": 67.9
+        "numericValue": 0.0679
       },
       "current_consumption_average_9": {
         "value": "86.4 mA",
-        "numericValue": 86.4
+        "numericValue": 0.0864
       },
       "current_consumption_max": {
         "value": "TBD mA"
@@ -736,11 +736,11 @@
       },
       "current_consumption_max_3": {
         "value": "97.4 mA",
-        "numericValue": 97.4
+        "numericValue": 0.09740000000000001
       },
       "current_consumption_max_4": {
         "value": "97.4 mA",
-        "numericValue": 97.4
+        "numericValue": 0.09740000000000001
       },
       "current_consumption_max_5": {
         "value": "TBD mA"
@@ -753,11 +753,11 @@
       },
       "current_consumption_max_8": {
         "value": "244.6 mA",
-        "numericValue": 244.6
+        "numericValue": 0.2446
       },
       "current_consumption_max_9": {
         "value": "101.5 mA",
-        "numericValue": 101.5
+        "numericValue": 0.1015
       },
       "data_rates": {
         "value": "802.11b: 1, 2, 5.5 and 11Mbps; 802.11g: 6, 9, 12, 18, 24, 36, 48 and 54 Mbps; 802.11n: MCS0~7, up to 72.2Mbps"
@@ -774,7 +774,7 @@
       },
       "delta_f1avg_max": {
         "value": "275 KHz",
-        "numericValue": 275
+        "numericValue": 275000
       },
       "delta_f2avg": {
         "value": "185",
@@ -788,7 +788,7 @@
       },
       "delta_f2avg_max": {
         "value": "275 KHz",
-        "numericValue": 275
+        "numericValue": 275000
       },
       "delta_f2avg_over_delta_f1avg": {
         "value": "0.8",
@@ -822,7 +822,7 @@
       },
       "delta_fn_max_max": {
         "value": "150 KHz",
-        "numericValue": 150
+        "numericValue": 150000
       },
       "esd_level": {
         "value": "2",
@@ -888,7 +888,7 @@
       },
       "frequency_drift_error_max": {
         "value": "50 KHz",
-        "numericValue": 50
+        "numericValue": 50000
       },
       "frequency_error": {
         "value": "-15",
@@ -897,7 +897,7 @@
       },
       "frequency_error_max": {
         "value": "+15 ppm",
-        "numericValue": 15
+        "numericValue": 1.5e-11
       },
       "input_high_voltage": {
         "value": "2.0",
@@ -1058,7 +1058,7 @@
       },
       "pcb_antenna_frequency_max": {
         "value": "2500 MHz",
-        "numericValue": 2500
+        "numericValue": 2500000000
       },
       "pcb_antenna_gain-Typical": {
         "value": "≤2dBi"
@@ -1228,26 +1228,26 @@
       },
       "supply_current_typical_10": {
         "value": "315 mA",
-        "numericValue": 315
+        "numericValue": 0.315
       },
       "supply_current_typical_11": {
         "value": "67 mA",
-        "numericValue": 67
+        "numericValue": 0.067
       },
       "supply_current_typical_12": {
         "value": "TBD mA"
       },
       "supply_current_typical_13": {
         "value": "61 mA",
-        "numericValue": 61
+        "numericValue": 0.061
       },
       "supply_current_typical_14": {
         "value": "33 mA",
-        "numericValue": 33
+        "numericValue": 0.033
       },
       "supply_current_typical_15": {
         "value": "24 mA",
-        "numericValue": 24
+        "numericValue": 0.024
       },
       "supply_current_typical_2": {
         "value": "200 μA",
@@ -1259,27 +1259,27 @@
       },
       "supply_current_typical_4": {
         "value": "9 mA",
-        "numericValue": 9
+        "numericValue": 0.009000000000000001
       },
       "supply_current_typical_5": {
         "value": "198 mA",
-        "numericValue": 198
+        "numericValue": 0.198
       },
       "supply_current_typical_6": {
         "value": "218 mA",
-        "numericValue": 218
+        "numericValue": 0.218
       },
       "supply_current_typical_7": {
         "value": "207 mA",
-        "numericValue": 207
+        "numericValue": 0.20700000000000002
       },
       "supply_current_typical_8": {
         "value": "230 mA",
-        "numericValue": 230
+        "numericValue": 0.23
       },
       "supply_current_typical_9": {
         "value": "249 mA",
-        "numericValue": 249
+        "numericValue": 0.249
       },
       "supply_voltage": {
         "value": "–0.3 V"
@@ -2411,7 +2411,7 @@
       },
       "drain_source_on_state_resistance_typ": {
         "value": "5.3 mΩ",
-        "numericValue": 5.3
+        "numericValue": 0.0053
       },
       "forward_transconductance": {
         "value": "15",
