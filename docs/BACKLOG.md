@@ -54,6 +54,23 @@ in the sample. Demonstrated end-to-end: against a source at 100 mΩ a genuinely 
   path already exists — they were already in the Triage queue — but mapping them
   properly is real work and it is now the thing standing between those parts and being
   scored on those attributes.
+- **(P2) 616 values are lost by the re-import for a PRE-EXISTING reason.** Measured on a
+  full dry run against a worktree at `ac3591e`, the pre-#279 code loses the *identical*
+  616 keys — so this is not caused by (or fixed by) Decision #279. Cause: products whose
+  category classifies to `familyId: null`, so no family dictionary applies and
+  previously-mapped Chinese columns fall through to raw keys. The clean example is
+  `WCM5025F2SF-501T40`, stored as family 69 (Common Mode Chokes) but present in
+  TAI-TECH's source file under "Arrays, Signal Transformers" → `familyId: null`. This is
+  Decision #225 territory (one MPN in two manufacturers' files). Affected ids:
+  `rated_current` (167), `number_of_lines` (115), `voltage_rated` (96),
+  `insulation_voltage` (54), `cm_impedance` (32), `insulation_resistance` (30),
+  plus `ir_a`/`pd_25_w`/`vf_v`/`vge_v`/`vce_sat_25_typ_v`/`ul`/`cm_inductance`.
+- **(P2) The backfill has no snapshot and no revert path**, unlike the batch-ingest flow
+  (`atlas_products_snapshots`, 30-day window). It is *reproducible* rather than
+  reversible — it re-maps from the immutable source files, so a bad run is fixed by
+  fixing the code and re-running. The only values those files cannot regenerate are
+  LLM-extracted ones (628 per 40,000 products); `mergeAtlasParameters` preserves them,
+  verified on AK/SR820. Worth adding a snapshot before the next large backfill.
 - **(P3) Semantically wrong mappings Layer 1 exposed** (power → `color`, current →
   `supply_voltage`, resistance → `contact_rating`, supply voltage → `vrwm`, temperature
   coefficient → `tolerance`). Need engineering judgement.
