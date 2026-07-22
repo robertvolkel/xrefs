@@ -406,10 +406,26 @@ describe('every requested id gets an answer', () => {
     expect(res.json.skipped).toContainEqual({ id: 'd-ghost', reason: 'no such decision' });
   });
 
-  it('reports a failed log append rather than implying an entry that is not there', async () => {
-    // recordParamDecisions is non-fatal by design, so the undo itself stands —
-    // but this action was initiated FROM the log, and the page must not show a
-    // history that has a hole in it.
+  /**
+   * ⚠️ THIS CONTRACT WAS DELIBERATELY REVERSED (Blocker 3, Jul 2026).
+   *
+   * It previously asserted status 200 / `undone: 1` / `logged: false` with the
+   * override left INACTIVE, on the reasoning that "recordParamDecisions is
+   * non-fatal by design, so the undo itself stands".
+   *
+   * That reasoning does not survive this table being append-only. The old
+   * outcome left the mappings OFF, nothing recording why or by whom, and a
+   * retry reporting "already inactive" — because the update filters on
+   * `.eq('is_active', true)` and matches nothing the second time. No later
+   * write could repair it, since there is no UPDATE and no DELETE policy.
+   *
+   * The suite's own stated invariant decides it: THE LOG MUST NEVER CLAIM A
+   * TRANSITION THAT DID NOT HAPPEN — and its converse is just as binding, that
+   * a transition must never happen unclaimed. Consistency between the state and
+   * its log outranks the undo succeeding, so the deactivation is rolled back
+   * and the failure reported honestly.
+   */
+  it('rolls the deactivation back when the log append fails', async () => {
     seed({
       decisions: [decisionRow({})],
       overrides: [{ id: 'ov-1', family_id: 'B1', is_active: true }],
@@ -418,11 +434,69 @@ describe('every requested id gets an answer', () => {
 
     const res = await undo(['d-1']);
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(500);
+    expect(res.json.success).toBe(false);
+    expect(res.json.undone).toBe(0);
+    // The mapping is back exactly as it was — not stranded inactive.
+    expect(overrides().find((o) => o.id === 'ov-1')!.is_active).toBe(true);
+    // And no orphan revocation row survived the failure.
+    expect(appended()).toHaveLength(0);
+  });
+
+  it('explains the failure in plain language, not a raw error code', async () => {
+    seed({
+      decisions: [decisionRow({})],
+      overrides: [{ id: 'ov-1', family_id: 'B1', is_active: true }],
+      fail: { atlas_param_decisions: { insert: { message: 'insert blew up' } } },
+    });
+
+    const res = await undo(['d-1']);
+
+    expect(String(res.json.error)).toMatch(/nothing was changed|put back/i);
+  });
+
+  /**
+   * If the rollback ITSELF fails there is nothing left to do but say so
+   * loudly — the state really is divergent at that point, and an engineer has
+   * to look. Silence here would be the worst outcome of all.
+   */
+  it('escalates when the rollback also fails, naming how many are stranded', async () => {
+    seed({
+      decisions: [decisionRow({})],
+      overrides: [{ id: 'ov-1', family_id: 'B1', is_active: true }],
+      fail: {
+        atlas_param_decisions: { insert: { message: 'insert blew up' } },
+        // Let the deactivation succeed; fail only the compensating restore.
+        atlas_dictionary_overrides: { update: { message: 'restore blew up', afterCalls: 1 } },
+      },
+    });
+
+    const res = await undo(['d-1']);
+
+    expect(res.status).toBe(500);
+    expect(res.json.success).toBe(false);
+    expect(String(res.json.error)).toMatch(/tell an engineer/i);
+  });
+
+  /**
+   * Two undoable decision rows can point at ONE override. Both would append
+   * their own `mapping_revoked` row for a single revocation — and an
+   * append-only table can never take the duplicate back.
+   */
+  it('dedupes on override_id so one revocation appends exactly one row', async () => {
+    seed({
+      decisions: [decisionRow({}), decisionRow({ id: 'd-2' })], // same override_id 'ov-1'
+      overrides: [{ id: 'ov-1', family_id: 'B1', is_active: true }],
+    });
+
+    const res = await undo(['d-1', 'd-2']);
+
     expect(res.json.undone).toBe(1);
-    expect(res.json.logged).toBe(false);
-    // The reversal itself still happened.
-    expect(overrides().find((o) => o.id === 'ov-1')!.is_active).toBe(false);
+    expect(appended()).toHaveLength(1);
+    expect(res.json.skipped).toContainEqual({
+      id: 'd-2',
+      reason: 'another decision in this request already reverts this mapping',
+    });
   });
 });
 

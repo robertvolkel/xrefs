@@ -57,8 +57,13 @@ export interface MockSpec {
   tables?: Record<string, Row[]>;
   /** rpc(name) → rows. */
   rpc?: Record<string, unknown>;
-  /** Inject a failure: { atlas_dictionary_overrides: { insert: { message: '…' } } } */
-  fail?: Record<string, Partial<Record<Op, { message: string; code?: string }>>>;
+  /**
+   * Inject a failure: { atlas_dictionary_overrides: { insert: { message: '…' } } }
+   * `afterCalls: N` lets the first N matching calls succeed and fails the rest,
+   * which is the only way to reach a branch where a route's SECOND write to a
+   * table fails (e.g. a compensating rollback after a failed log append).
+   */
+  fail?: Record<string, Partial<Record<Op, { message: string; code?: string; afterCalls?: number }>>>;
 }
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
@@ -112,7 +117,23 @@ export function createSupabaseMock(spec: MockSpec = {}) {
   const ops: RecordedOp[] = [];
   let idCounter = 0;
 
-  const failFor = (table: string, op: Op) => spec.fail?.[table]?.[op];
+  /**
+   * `afterCalls: N` fails only from the (N+1)th matching call onward, leaving
+   * the first N to succeed. Without it a route that writes the same table twice
+   * — deactivate, then a compensating restore — cannot have its SECOND write
+   * fail, so the divergent-state branch is unreachable and any test for it
+   * silently exercises the first failure instead.
+   */
+  const opCallCounts = new Map<string, number>();
+  const failFor = (table: string, op: Op) => {
+    const injected = spec.fail?.[table]?.[op];
+    if (!injected) return undefined;
+    const key = `${table}:${op}`;
+    const seen = opCallCounts.get(key) ?? 0;
+    opCallCounts.set(key, seen + 1);
+    const after = (injected as { afterCalls?: number }).afterCalls ?? 0;
+    return seen >= after ? injected : undefined;
+  };
 
   function build(table: string) {
     if (!(table in tables)) {

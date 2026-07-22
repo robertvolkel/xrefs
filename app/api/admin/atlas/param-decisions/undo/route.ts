@@ -87,6 +87,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const appended: ParamDecisionInput[] = [];
     const families = new Set<string>();
     const skipped: Array<{ id: string; reason: string }> = [];
+    // Override ids THIS request actually deactivated — the exact set the
+    // compensating rollback below puts back if the log append fails.
+    let revertedIds: string[] = [];
 
     // A requested id that matched no row was silently dropped before: the
     // caller asked to undo N decisions, got `undone: N-1` and no explanation.
@@ -97,7 +100,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // ── Mapping undos: deactivate the overrides in one indexed update ────
-    const mappingRows = rows.filter((r) => isUndoableMapping(r.decision) && r.override_id);
+    // Deduped on override_id: two decision rows can point at ONE override (an
+    // accept followed by an edit). Without this, both would append their own
+    // `mapping_revoked` row for a single revocation, and the log is
+    // append-only — the duplicate could never be taken back.
+    const seenOverrideIds = new Set<string>();
+    const mappingRows = rows.filter((r) => {
+      if (!isUndoableMapping(r.decision) || !r.override_id) return false;
+      if (seenOverrideIds.has(r.override_id)) {
+        skipped.push({ id: r.id, reason: 'another decision in this request already reverts this mapping' });
+        return false;
+      }
+      seenOverrideIds.add(r.override_id);
+      return true;
+    });
     if (mappingRows.length > 0) {
       const overrideIds = mappingRows.map((r) => r.override_id as string);
       // `.select()` is load-bearing, not decoration: `.eq('is_active', true)`
@@ -121,7 +137,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
       }
 
-      const actuallyReverted = new Set(((reverted ?? []) as Array<{ id: string }>).map((x) => x.id));
+      revertedIds = ((reverted ?? []) as Array<{ id: string }>).map((x) => x.id);
+      const actuallyReverted = new Set(revertedIds);
       for (const r of mappingRows) {
         if (!actuallyReverted.has(r.override_id as string)) {
           skipped.push({ id: r.id, reason: 'mapping was already inactive — nothing to undo' });
@@ -222,6 +239,47 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // the log — so if the append failed, say so rather than letting the page
     // imply an entry that isn't there.
     const logged = await recordParamDecisions(appended);
+
+    /**
+     * COMPENSATING ROLLBACK. The deactivation above and this append are two
+     * separate writes with no transaction between them. If the append fails we
+     * would be left with the mappings OFF, no record of why, and a retry that
+     * reports "already inactive" (the `.eq('is_active', true)` filter matches
+     * nothing the second time). `atlas_param_decisions` is append-only, so
+     * nothing could ever repair that state.
+     *
+     * Consistency between the state and its log matters more than the undo
+     * succeeding, so put the overrides back and report the failure honestly.
+     * `revertedIds` names exactly what THIS request changed — never more.
+     */
+    if (appended.length > 0 && !logged) {
+      let restoreError: string | null = null;
+      if (revertedIds.length > 0) {
+        const { error: restoreErr } = await supabase
+          .from('atlas_dictionary_overrides')
+          .update({ is_active: true, updated_at: new Date().toISOString() })
+          .in('id', revertedIds);
+        if (restoreErr) restoreError = restoreErr.message;
+      }
+      // Caches were never invalidated on this path, but the failed append may
+      // have left a partial write; clear them so nothing serves a stale view.
+      for (const fam of families) invalidateDictOverrideCache(fam);
+      await invalidateTriageQueueCache();
+
+      return NextResponse.json(
+        {
+          success: false,
+          undone: 0,
+          logged: false,
+          skipped,
+          error: restoreError
+            ? `Could not record the undo, and restoring the mappings also failed (${restoreError}). ${revertedIds.length} mapping(s) may be left inactive with no log entry — tell an engineer before retrying.`
+            : 'Could not record the undo in the decision log, so nothing was changed. The mappings were put back exactly as they were. Please try again.',
+          restored: restoreError ? 0 : revertedIds.length,
+        },
+        { status: 500 },
+      );
+    }
 
     for (const fam of families) invalidateDictOverrideCache(fam);
     await invalidateTriageQueueCache();

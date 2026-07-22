@@ -15,7 +15,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
-import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { invalidateDictOverrideCache } from '@/lib/services/atlasDictOverrides';
 import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
 import { recordParamDecisions } from '@/lib/services/paramDecisionLog';
@@ -43,7 +43,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ success: false, error: 'no valid overrideIds' }, { status: 400 });
     }
 
-    const supabase = await createClient();
+    // Service client, matching the sibling param-decisions/undo route. With the
+    // RLS-subject cookie client an update the policy filters out returns
+    // `{ data: [], error: null }` — indistinguishable from "nothing needed
+    // undoing", so this route would report a successful undo that changed
+    // nothing at all.
+    const supabase = createServiceClient();
     // Widened from `family_id` alone so the decision log can record WHICH
     // params were undone, not just how many.
     const { data, error } = await supabase
