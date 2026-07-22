@@ -9122,3 +9122,61 @@ These need engineering judgement to resolve and are in BACKLOG, not fixed here.
 **Layers 2 and 3 remain deferred**, with their cost stated: `rds_on` still holds *typical* values where *maximum* was available (Layer 2 — conservative pick by `thresholdDirection`), and the underlying problem is that `Rdson@10V` and `Rdson@4.5V` are genuinely *different attributes* that the schema has no way to distinguish (Layer 3 — condition-qualified attributes; the rds_on rule's own `engineeringReason` says "a comparison is ONLY VALID if the drive voltage matches").
 
 **Accepted consequence.** Where a vendor repeats one column name — one file carries 20 columns named `gaia-reflow_zone_temperature-Typical` holding 135…215 °C — all 20 now survive as numbered siblings. Previously 19 were deleted and the first was presented as *the* reflow temperature, which was a false claim. The extras list is longer; nothing else in the product is affected. The real fix is for extraction to carry the test condition (BACKLOG).
+
+---
+
+## Decision #279 — Four defects that let unvetted or mis-scaled numbers reach the matching engine (July 21, 2026)
+
+Decision #278's docblock claimed *"raw ids appear in no logic table, so scoring is untouched."* That was **false**, and re-verifying it before starting the fix work turned up three more problems. All four are fixed together because one re-import repairs all of them, and doing it twice is the expensive part.
+
+### What was measured (live database, 106,000 products = 24.3% of the corpus)
+
+Every value sitting in a scoring slot was re-derived from its own string and compared against what was stored:
+
+| | count | meaning |
+| --- | --- | --- |
+| values in a scoring slot holding the WRONG number | **6,958 (1.43%)** across 45 attributeIds | scoring is wrong |
+| values whose DISPLAY disagrees with the scored number | 505 (0.10%) across 30 attributeIds | scoring is right, the spec on screen is wrong — **deferred** |
+
+Worst case, `rds_on` — the heaviest rule B5 has (weight 9, `lte`) — appeared **1,777 times** in the sample holding `"80mΩ@10V"` as **80**, not 0.08.
+
+**End-to-end demonstration** (not inference — every link was also read in code): against a source part at 100 mΩ, a genuinely *better* candidate at 80 mΩ scored `fail` with a hard failure at 89%; after the fix it scores `pass`, rated **better**, at 94%. Good Chinese parts were being rejected on the strength of a unit conversion that never happened.
+
+### The four defects
+
+**1 — A raw value could occupy a real scoring slot.** `rawIdForParam` joins on underscores, so an unmapped supplier column `"RDS(on)"` slugs to exactly `rds_on`, and `matchingEngine.ts:23` returns a stored `numericValue` verbatim with no re-parse. **Two different routes reach the same slot**: the Unicode-preserving key for an ASCII name, and the *historical ASCII slug* (passed as `preferredId`) for a Chinese one — 导通电阻(RDS(on)) reduces to `rds_on` because every CJK character becomes a separator and is then stripped. The guard therefore sits inside `storeRawValue`, below both, escaping any reserved id to `raw_<id>`.
+
+`RESERVED_ATTRIBUTE_IDS` (434 ids / 43 families) is computed from the registry in TS and **generated** into `lib/services/atlas-reserved-attribute-ids.json` for `scripts/atlas-ingest.mjs`, which cannot import TS. A test pins the file against the live registry, so adding a family and forgetting `npm run atlas:reserved-ids` fails the build.
+
+**Measured cost, not assumed:** the guard demotes ~8,640 values per 67,000 products (~56,000 corpus-wide) out of scoring slots, including some that were correct by luck (`"Channel type" = "N"`). Accepted because (a) nothing can distinguish a lucky-correct raw value from `"NA"` or a scale-ambiguous bare `"5"` — all three bypassed the dictionary; (b) a missing value scores `review`, which is flagged for a human, whereas a wrong value is silently wrong; and (c) **verified**: these params were already reported as unmapped and already in the Triage queue, so the engineer's workload does not change — only where the value is stored.
+
+**2 — Rescued values skipped unit normalization.** `storeRawValue` used the bare `extractNumeric` while every winner path used `applyUnitPrefix`. This is what turned `"80mΩ@10V"` into 80.
+
+**3 — The rescue still deleted data.** `keepLosingValue` compared the loser's RAW string against the winner's *stored* string, which has been through `parseGaiaValue` / `normalizeTemperatureRange` / `normalizeVoltageRange`. `"<30 V"` is stored as `"30"`, so a genuinely different loser reading `"30"` was judged identical and dropped — exactly what the comment above it warned about. Fixed by recording each winner's raw source string (`rawByAttributeId`) and comparing raw-against-raw. Comparing two *normalized* forms would have been the wrong direction: it widens "identical" and deletes more.
+
+**4 — SI prefixes written in the wrong case were silently ignored** (new, found during verification). `applyUnitPrefix` tested `unit.startsWith('p')` — lowercase only. Reproduced on real data: `data/atlas/mfr_389_AK_奥科_params.json`, model AK4080, ships `"4010 PF"` and stored 4010 instead of 4.01e-9, while `"6.5 mΩ"` on the *same product* converted correctly.
+
+⚠️ **The obvious fix is destructive.** Measured over all 429 files, case-folding the first letter would newly "convert" **14,840** values reading `Pin` (pin count), 39,645 `P`, 7,106 `N` and 342 `Nm` (newton-metre). Only ~2,100 of ~29,600 case-mismatched tokens are genuine prefixes — **the lowercase-only rule was protecting the other 27,000**. So a prefix applies only when the *remainder* is exactly a known unit atom. Verified corpus-wide: converts 2,086 values (PF/UA/PA/Ps/Us), leaves 661,728 untouched including `MΩ` (9,038) and `MHz` (14,681).
+
+`N` and `M` are deliberately excluded — `Nm` outnumbers `Ns` ~85:1 with no lexical rule to separate them, and `M` already means mega. **`splitUnit` from `mappingHealthCore.ts` was NOT reused**: its `UNIT_ATOMS` contains `['m', 'length']` because a *classifier* wants breadth, and that entry alone would silently convert every newton-metre. A converter needs a narrow list.
+
+### Blocker 3 — an undo could diverge from its own audit log
+
+The undo route deactivated overrides and appended `mapping_revoked` rows as two writes with no transaction, returning `success: true` regardless. On an append failure the mappings were OFF, nothing recorded why, and a retry said "already inactive" (`.eq('is_active', true)` matches nothing the second time) — unrepairable, because the table has no UPDATE and no DELETE policy. Now a **compensating rollback** re-activates exactly what the request deactivated and reports the failure; if the rollback itself fails it says so and names how many are stranded.
+
+**This reverses a documented decision.** The existing test asserted the opposite in so many words ("recordParamDecisions is non-fatal by design, so the undo itself stands"). The suite's own stated invariant settles it: *the log must never claim a transition that did not happen* — and its converse binds equally.
+
+Same pass: `dictionaries/batch/undo` used the RLS-subject cookie client while its sibling used the service client. A policy-filtered UPDATE **does not error** — it returns `{ data: [], error: null }`, indistinguishable from "nothing needed undoing" — so it reported successful undos that changed nothing.
+
+### Two lessons worth more than the fixes
+
+**A test that passes against the broken code is worse than no test.** Two of the suites written here were vacuous on the first attempt and only mutation testing exposed them:
+- The Blocker 2 cases used a Typ/Max pair on ONE stem, which routes through the `preferredSuffix` branch *before* a winner exists and never reaches the comparison. The case needs two **different** stems sharing an attributeId.
+- The parity block compared **value sets** only. When a normalized winner (`"<30 V"` → `"30"`) and a rescued loser (`"30"`) carry the same string, the value set is identical whether the loser was preserved or deleted — only the KEYS differ. It now compares keys.
+- The client-swap test mocked both Supabase clients to one instance. `supabaseMock` deliberately does not model RLS, so the two were **indistinguishable** and the test passed whichever client the route picked. The cookie client is now modelled by its real signature: empty result, no error.
+
+**The golden fixture was blind to a whole defect class.** A change affecting 2,086 values produced an *empty* golden diff, because none of the 8 fixture models carried a capital-cased unit. The real AK4080 model was added. Every subsequent golden diff was read, not rubber-stamped — Blocker 1's 32 changes are all corrections (20 → 2e-11 pF, 82.4 → 0.0824 mΩ, 275 → 275000 kHz→Hz).
+
+### Not in this batch
+
+The 505 display/scoring mismatches (scoring is already correct); the Mapping Health detector's accuracy fixes and the 32/1/46 worksheet; and Layer 2, the typical-vs-maximum problem — confirmed again here, a source shipping `_Typ 2.1` and `_Max 2.8` stores **2.1**.

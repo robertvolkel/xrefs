@@ -7,47 +7,63 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 # Code review of `feat/param-decision-log`, 21 July 2026 — 16 findings
 
 Max-effort review, 6 independent finder agents + verification, over the whole branch
-(Decision #277 decision-log work + Decision #278 Layer 1 + Mapping Health). The three
-blockers are being fixed now; **everything below the blockers is open.**
+(Decision #277 decision-log work + Decision #278 Layer 1 + Mapping Health). **The three
+blockers are FIXED (Decision #279), along with a fourth defect found while verifying
+them; everything below the blockers is still open.**
 
-**Read this first — a measurement that corrects the Decision #278 write-up.** The
-historical unmapped-param slug has been writing un-vetted, **un-normalized** values
-into real scoring slots since long before Layer 1, and it is live today. Measured over
-150 of 429 source files (190,763 products, 834,785 genuinely-unmapped values, with the
-2,033 active DB overrides merged):
+**Read this first — the measurement below SUPERSEDES an earlier one.** The earlier
+figures (55 scoring ids / 10,227 occurrences) were estimated from the *source files*.
+They have been replaced by a direct measurement of the **live database** — 106,000
+products, 24.3% of the corpus — which re-derived every value in a scoring slot from its
+own string and compared it against what was stored. Measure the artifact, not the input.
 
-| path | distinct scoring ids hit | occurrences |
+| | count | meaning |
 | --- | --- | --- |
-| **pre-existing** (historical ASCII slug) — **live** | **55** | **10,227** |
-| new with Decision #278 (Unicode/gaia fallback) | 10 | 131 |
+| values in a scoring slot holding the WRONG number | **6,958 (1.43%)** across 45 ids | scoring is wrong — **FIXED, Decision #279** |
+| values whose DISPLAY disagrees with the scored number | **505 (0.10%)** across 30 ids | scoring is right, the on-screen spec is wrong — **STILL OPEN, see below** |
 
-Worst: **`rds_on` ← `RDS(on)` / `漏源导通电阻 RDS(ON)(Ω)`, 352×** — the weight-9 `lte`
-rule. Bare `extractNumeric`, no `applyUnitPrefix`, so `5.8 mΩ` stores **5.8 not
-0.0058**: 1,000× wrong on the highest-weighted MOSFET rule. Also `tj_max` (519×),
-`vf` (192×), `configuration` (4,868×), `vz`, `zzk`, `tc`, `psrr`, `tolerance`,
-`polarity`, `dcr`. ⚠️ Decision #278's docblock claim "raw ids are not in any logic
-table so scoring is untouched" is **FALSE** — 434 scoring attributeIds exist and 55 are
-reachable by a slug. Remaining 279 files still to measure.
+Worst case `rds_on` (weight 9, `lte`) held `"80mΩ@10V"` as **80**, not 0.08 — 1,777×
+in the sample. Demonstrated end-to-end: against a source at 100 mΩ a genuinely *better*
+80 mΩ candidate scored `fail` with a hard failure; it now passes, rated better.
 
-## Blockers (in progress)
+## Blockers — FIXED (Decision #279)
 
-1. **A raw key can occupy a real scoring slot** — guard `storeRawValue` against a
-   generated `RESERVED_ATTRIBUTE_IDS` set shared by the `.ts` and `.mjs` copies.
-   Second-order: once a raw key holds the slot, a properly-mapped value arriving later
-   in the same file is demoted — **column order decides which value wins.**
-2. **The rescue still deletes data** — `keepLosingValue` compares the loser's RAW value
-   against the winner's NORMALIZED stored value. `parseGaiaValue` reduces `"<8.0 mΩ"`
-   to `"8.0"`, so a loser reading `"8.0"` is judged identical and dropped. Fix: compare
-   loser-raw against winner-**raw**.
-3. **Bulk undo can deactivate mappings with no recoverable log** —
-   `param-decisions/undo/route.ts` does the `.update()` and `recordParamDecisions()` as
-   two writes with no rollback and returns `success: true` regardless. A retry reports
-   "already inactive". Append-only ⇒ unrepairable. Fix: compensating re-activation.
+1. ~~A raw key can occupy a real scoring slot~~ — `storeRawValue` now escapes any of the
+   434 reserved scoring attributeIds to `raw_<id>`, and rescued values go through
+   `applyUnitPrefix`. Guard sits below BOTH colliding routes (Unicode key for ASCII
+   names; historical ASCII slug for Chinese ones).
+2. ~~The rescue still deletes data~~ — compares loser-raw against winner-**raw** via
+   `rawByAttributeId`.
+3. ~~Bulk undo can deactivate mappings with no recoverable log~~ — compensating
+   rollback; reverses the earlier "the undo itself stands" contract.
+4. ~~(found while verifying) SI prefixes in the wrong case were ignored~~ — `"4010 PF"`
+   stored 4010 instead of 4.01e-9. Whole-token rule; `N`/`M` deliberately excluded.
+
+### Still open from this cluster
+
+- **(P1) The 505 display/scoring mismatches.** A part whose numeric value is correct at
+  50 mA displays as **"50 A"**: ingest stripped the prefix from the value string but
+  took `unit` from the dictionary. Scoring is unaffected, so this is a presentation
+  bug — but the spec a human reads is wrong by 1000×. Worst ids: `pd` (179),
+  `load_regulation` (63), `ic_max` (36), `vdropout` (36), `line_regulation` (31).
+- **(P2) A loser whose VALUE matches the winner but whose LABEL differs is dropped**
+  (`…-Min` vs nominal, both `"40 V"`). That is Decision #278's stated design, not a
+  regression, but the label carries information the value does not.
+- **(P2) The reserved-id guard demotes ~56,000 corpus-wide values** out of scoring
+  slots, some of which were correct by luck (`"Channel type" = "N"`). The remediation
+  path already exists — they were already in the Triage queue — but mapping them
+  properly is real work and it is now the thing standing between those parts and being
+  scored on those attributes.
+- **(P3) Semantically wrong mappings Layer 1 exposed** (power → `color`, current →
+  `supply_voltage`, resistance → `contact_rating`, supply voltage → `vrwm`, temperature
+  coefficient → `tolerance`). Need engineering judgement.
 
 ## Open — correctness
 
-- **(P1) `dictionaries/batch/undo/route.ts:46` uses the RLS-subject cookie client.** An
-  RLS-filtered UPDATE returns `{data: [], error: null}`, so the route reports a
+- ~~**(P1) `dictionaries/batch/undo/route.ts:46` uses the RLS-subject cookie client.**~~
+  FIXED in Decision #279 (now `createServiceClient()`, pinned by a behavioural suite
+  that models the cookie client's real signature). An
+  RLS-filtered UPDATE returns `{data: [], error: null}`, so the route reported a
   successful undo that changed nothing, and no cache invalidation fires. Sibling route
   already uses `createServiceClient()`. See [[silent-update-under-rls]].
 - **(P1) The CI type-error ratchet fails open.** `check-baselines.mjs:43`
