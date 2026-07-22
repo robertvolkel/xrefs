@@ -1,3 +1,36 @@
+# ⏭️ NEXT ACTION — the Atlas parameter-scale fix is CODE-COMPLETE but NOT APPLIED
+
+**Read this first if you are picking up work on `feat/param-decision-log`.**
+
+The code is done, verified and committed (`63bc29c`). **The database has NOT been touched.**
+All 153,993 corrections exist only as code — `atlas_products` still holds the old wrong-scale
+numbers (Siliup/SP40N25TQ `rds_on` is still stored as 80, not 0.08). Nothing a user sees has
+changed yet.
+
+**Order of operations:**
+
+1. `npm run atlas:backfill:dry` — dry run. The mapping pass over 429 files takes ~1 minute.
+2. **Read what it plans to change before writing anything.** The four gates that must all be
+   zero: keys added / keys removed / display strings changed / numbers lost. Compare VALUES,
+   not just key names — a key-level diff is blind to a value replaced in place, which is how
+   the 600 V → 630 V substitution went unseen the first time.
+3. **Take a snapshot first.** Unlike the batch-ingest flow (`atlas_products_snapshots`, 30-day
+   window) the backfill has NO snapshot and NO revert path. It is *reproducible* — it re-maps
+   from the immutable source files, so a bad run is fixed by fixing the code and re-running —
+   but the only values those files cannot regenerate are the LLM-extracted ones (~628 per
+   40,000 products). `mergeAtlasParameters` preserves those, verified on AK/SR820.
+4. `npm run atlas:backfill` — the real run. ⚠️ Wrap in `caffeinate -i` so the machine does not
+   sleep mid-run (see the atlas-backfill-operational-gotchas memory).
+5. Re-run the scoring spot-check: the 80 mΩ candidate should now pass, rated better, against a
+   100 mΩ source.
+6. Then decide on merging the 34 commits to `main`.
+
+**Context:** Decision #280 and the post-merge review that follows it in `docs/DECISIONS.md`.
+The review is the important half — it found a bug the fix itself introduced (gauss read as
+giga-second, 229 values) and explains why four green gates did not catch it.
+
+---
+
 # Backlog
 
 Known gaps, incomplete features, and inconsistencies found during project audit (Feb 2026).
