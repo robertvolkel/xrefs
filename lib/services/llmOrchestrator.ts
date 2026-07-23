@@ -12,6 +12,8 @@ import { observeAndLogGrounding, extractUserMpnCandidates } from './grounding/gr
 import { ChatGroundingContext, buildVerifiedSetFromContext } from './grounding/observeGrounding';
 import { applyGroundingGate, isGroundingGateEnabled } from './grounding/groundingGate';
 import { buildComparisonTable, ComparisonTable, ComparisonPartInput } from './comparisonTable';
+import { summarizeFamilyKnowledge } from './familyKnowledge';
+import { routeIntentWithClassifier } from './intentRouter';
 import { getProfileForManufacturer } from './manufacturerProfileService';
 import { resolveManufacturerAlias } from './manufacturerAliasResolver';
 import { resolveDiscoveryScope, listManufacturersForScope } from './atlasManufacturerDiscovery';
@@ -1991,6 +1993,26 @@ export async function chat(
   // when the actual quote set is just RS Components + element14).
   if (currentSourceAttributes) {
     contextBlocks.push(summarizeSourcePart(currentSourceAttributes));
+  }
+  // ── Track A: grounded family-engineering knowledge (chat redesign, Phase 1) ──
+  // When the turn concerns a component family, prepend that family's rulebook — which
+  // specs matter, how they're compared, and WHY (the logic tables' engineeringReason) —
+  // so the model reasons from OUR encoded engineering knowledge instead of training-data
+  // memory. INPUT-only + additive; the block ends with a grounding-floor note (it licenses
+  // explaining which specs matter, NOT inventing a part number / target value). Routed
+  // deterministically (intentRouter), with a bounded classifier fallback only on a
+  // family-bundle intent whose family didn't resolve deterministically. Prepended (unshift)
+  // so any on-screen snapshot stays closest to the user's text. DARK by default — enabled
+  // only via FAMILY_KNOWLEDGE_ENABLED once observe-logging has measured the leak rate.
+  if (process.env.FAMILY_KNOWLEDGE_ENABLED === '1' && userText) {
+    const route = await routeIntentWithClassifier(
+      userText,
+      text => classifyPartTypeFamily(client, text, userId),
+    );
+    if (route.familyId) {
+      const familyBlock = summarizeFamilyKnowledge(route.familyId);
+      if (familyBlock) contextBlocks.unshift(familyBlock);
+    }
   }
   if (contextBlocks.length > 0) {
     const lastMsg = anthropicMessages[anthropicMessages.length - 1];
