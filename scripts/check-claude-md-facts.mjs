@@ -64,6 +64,13 @@ console.log(`baseline (${baseRef}): ${size(before)}, ${baseline.size} hard facts
 console.log(`current CLAUDE.md:    ${size(readFileSync('CLAUDE.md', 'utf8'))}`);
 console.log(`docs corpus searched: CLAUDE.md + docs/*.md`);
 
+// Shelf-1 size budget (docs/KNOWLEDGE_DOCS_STRATEGY.md). Warning only — never fails —
+// so a growing always-loaded file is visible before it re-saturates.
+const CLAUDE_BUDGET_KB = 125;
+const claudeKB = Buffer.byteLength(readFileSync('CLAUDE.md', 'utf8')) / 1024;
+if (claudeKB > CLAUDE_BUDGET_KB)
+  console.log(`\n⚠️  CLAUDE.md is ${claudeKB.toFixed(1)}KB, over the ${CLAUDE_BUDGET_KB}KB Shelf-1 budget — demote detail to a topic doc or decision archive (warning only).`);
+
 if (lost.length === 0) {
   console.log(`\n✅ all ${baseline.size} facts still reachable — nothing was lost, only moved.`);
   process.exit(0);
