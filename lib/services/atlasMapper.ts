@@ -2638,13 +2638,13 @@ export function extractNumericWithPrefix(value: string): { numericValue?: number
   if (rangeMatch) return { numericValue: parseFloat(rangeMatch[1]) };
 
   // ± prefix: "±10V" or "+/-10V"
-  const pmMatch = trimmed.match(/^[±]\s*(\d+\.?\d*)\s*([a-zA-ZµΩ°%/√]*)/);
+  const pmMatch = trimmed.match(/^[±]\s*(\d+\.?\d*)\s*([a-zA-ZµμΩ°%/√]*)/);
   if (pmMatch) {
     const num = parseFloat(pmMatch[1]);
     const unit = pmMatch[2]?.trim() || undefined;
     return { numericValue: num, parsedUnit: unit };
   }
-  const altPmMatch = trimmed.match(/^\+\/-\s*(\d+\.?\d*)\s*([a-zA-ZµΩ°%/√]*)/);
+  const altPmMatch = trimmed.match(/^\+\/-\s*(\d+\.?\d*)\s*([a-zA-ZµμΩ°%/√]*)/);
   if (altPmMatch) {
     const num = parseFloat(altPmMatch[1]);
     const unit = altPmMatch[2]?.trim() || undefined;
@@ -2652,7 +2652,7 @@ export function extractNumericWithPrefix(value: string): { numericValue?: number
   }
 
   // Comparison prefix: "≤150ns", "<100", ">50mA" — number + unit
-  const cmpMatch = trimmed.match(/^[≤≥<>=]\s*([+-]?\d+\.?\d*)\s*([a-zA-ZµΩ°%/√]*)/);
+  const cmpMatch = trimmed.match(/^[≤≥<>=]\s*([+-]?\d+\.?\d*)\s*([a-zA-ZµμΩ°%/√]*)/);
   if (cmpMatch) {
     const num = parseFloat(cmpMatch[1]);
     const unit = cmpMatch[2]?.trim() || undefined;
@@ -2661,7 +2661,7 @@ export function extractNumericWithPrefix(value: string): { numericValue?: number
 
   // Standard: leading number + optional unit suffix
   // Matches "400kHz", "5.8 mΩ", "8.3 mm", "100mA", and "8" (no unit)
-  const stdMatch = trimmed.match(/^([+-]?\d+\.?\d*)\s*([a-zA-ZµΩ°%/√]*)/);
+  const stdMatch = trimmed.match(/^([+-]?\d+\.?\d*)\s*([a-zA-ZµμΩ°%/√]*)/);
   if (stdMatch && stdMatch[1] !== '') {
     const num = parseFloat(stdMatch[1]);
     const unit = stdMatch[2]?.trim() || undefined;

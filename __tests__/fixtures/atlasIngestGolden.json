@@ -916,7 +916,7 @@
       },
       "input_leakage_current_max": {
         "value": "10 μA",
-        "numericValue": 10
+        "numericValue": 0.00001
       },
       "input_low_voltage": {
         "value": "0.8",
@@ -1224,7 +1224,7 @@
       },
       "supply_current_typical": {
         "value": "30 μA",
-        "numericValue": 30
+        "numericValue": 0.00003
       },
       "supply_current_typical_10": {
         "value": "315 mA",
@@ -1251,11 +1251,11 @@
       },
       "supply_current_typical_2": {
         "value": "200 μA",
-        "numericValue": 200
+        "numericValue": 0.0002
       },
       "supply_current_typical_3": {
         "value": "450 μA",
-        "numericValue": 450
+        "numericValue": 0.00045
       },
       "supply_current_typical_4": {
         "value": "9 mA",

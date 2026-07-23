@@ -41,43 +41,50 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
-# Greek mu (U+03BC) is dropped by the unit parser — 8,259 values MIS-STORED (P1)
+# ✅ FIXED — Greek mu (U+03BC) is now read by the Atlas unit parser (22 July 2026)
 
-**Confirmed live against the database, 22 July 2026.** `extractNumericWithPrefix`'s unit
-character class accepts the MICRO SIGN (U+00B5) but **not** GREEK SMALL LETTER MU (U+03BC).
-Verified by execution: `extractNumericWithPrefix("800μA")` returns `{ numericValue: 800 }` with
-**no `parsedUnit` at all**, while `"800µA"` and `"800uA"` both parse. So it stores 800 amps, not
-800 microamps — a factor of a million, the same class of error #280 fixed for mΩ.
-`applyUnitPrefix` has a `startsWith('μ')` branch that is **unreachable**: the handler was
-written, the regex upstream strips its input.
+`extractNumericWithPrefix`'s unit character class accepted the MICRO SIGN (U+00B5) but not GREEK
+SMALL LETTER MU (U+03BC), so `"800μA"` parsed to `{ numericValue: 800 }` with no unit and stored
+800 amps for 800 microamps. Fixed on branch `fix/greek-mu-unit-parser`: Greek mu added to the 8
+character classes (4 in each mapper copy) AND to the shared rescue allowlist (`applyUnitPrefix`
+already handled both spellings; the allowlist did not — widening the regex alone would have parsed
+the unit and then declined to scale it).
 
-⚠️ **Three different numbers have been attached to this item; only one is the work.** Measure the
-thing you are going to fix, not the thing that is easy to count:
+Measured over all 429 source files, before vs after: **keys added 0 / removed 0 / display strings
+changed 0 / numbers lost 0**, with **11,223 numbers corrected**. Backfill applied to the database
+22 July 2026 (see Decision #280's applied-figures section). Corrections landed mostly in `工作电流`
+supply currents (μA→A) and Sunlord `inductance` (2,737 values that were stored as *nanohenries*
+because the dictionary's unit won while the μ was invisible — now correct microhenries).
 
-| Measurement | Count |
-| --- | --- |
-| Source values *containing* Greek mu (what the old entry counted) | 36,554 |
-| Source values where mu is the unit right after the number | 29,786 |
-| **Stored values with a Greek-mu unit that are ACTUALLY mis-scaled** | **8,259** |
-| Stored values with a Greek-mu unit already scaled correctly | 1,058 |
+**The overcounting numbers on record were all wrong; the real figure is the mis-stored one.**
+For the record: 36,554 source values *contain* mu, 29,786 have mu as the unit, but only **8,259**
+were actually mis-scaled in the DB (plus ~2,955 more that a dictionary had coarsely mis-scaled and
+are now corrected via the value's own prefix — 11,223 total). Source-occurrence counts overcount
+badly; measure the stored, mis-scaled value.
 
-The "overstated 2.6×, real figure 14,057" note in Decision #280's review was ALSO wrong — it is
-neither 36,554 nor 14,057. Source-side occurrence counts overcount badly: many never reach a
-numeric slot, and the same value repeats across products.
+**The bare `μ` case was handled by NOT scaling it.** 92 bare-`μ` and 34 `μm` entries changed zero
+values, because neither is a prefix+atom pair the allowlist admits. Blanket-scaling an unqualified
+`μ` is the shape of assumption that had `Gs` read as giga-seconds; the allowlist's conservatism
+held exactly there.
 
-**It lands in real scoring slots:** `inductance` 1,242 (a 10 μH part stored as 10 H),
-`maximum_reverse_leakage` 456, `maximum_dc_reverse_current` 406, `ir_leakage` 343,
-`dc_reverse_current` 214, `vgs_th` 90.
+## Follow-up — SIBLING unit parsers with the SAME Greek-mu gap (P2)
 
-⚠️ **Not purely mechanical — there is a bare `μ` case.** 154 source values use `μ` alone as the
-unit (e.g. plating thickness `"6μ"`). Blanket-scaling an unqualified `μ` is the same shape of
-assumption that had `Gs` read as giga-seconds. Decide that case explicitly and pin it in a test.
+Found while reviewing the fix above. The Atlas ingest/mapper parser is fixed; these are DIFFERENT
+parsers with the identical U+03BC-not-U+00B5 gap. None is exercised by the Atlas backfill, all are
+pre-existing, and the fix above does not worsen them — but each is a latent bug of the same kind:
 
-⚠️ Deliberately NOT folded into #280: `extractNumericWithPrefix` is SHARED, so widening the class
-changes the dictionary-MAPPED paths too — a much larger blast radius than #280's
-rescued-path-only scope. Do it as its own change, re-running #280's corpus gates (**keys added /
-removed / display strings changed / numbers lost must stay 0**) plus a DB-vs-backup diff, and read
-the value diff token by token.
+- **`matchingEngine.ts:203` `applyPrefix`** — `case 'u': case 'µ':` has no `μ`. Only fires as a
+  string FALLBACK when a param has no stored `numericValue`; the backfill sets `numericValue`, so
+  scored Atlas data is unaffected. Still worth closing for parts that arrive without a numeric.
+- **`recommendationFilter.ts:152,155`** — prefix map + `[pnuµmkKMG]` regex, no `μ`. Parses
+  user-typed filter values ("100µF"); a user typing Greek mu would mis-filter.
+- **`digikeyMapper.ts:386,395`** — `[a-zA-ZµΩ°%]` + `startsWith('µ')`, no `μ`. Digikey data
+  generally uses the micro sign, so low real incidence, but the gap is identical.
+
+⚠️ Two runtime paths ALREADY consume the now-fixed `extractNumericWithPrefix`
+(`searchConstraints.ts`, `mappingHealthCore.ts`) — both improved by the fix, both covered by the
+passing suite. So the fix's reach is wider than the backfill; the runtime improvement ships on
+merge, not on the DB write.
 
 ---
 
