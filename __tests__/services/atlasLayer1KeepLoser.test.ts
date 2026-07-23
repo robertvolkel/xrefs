@@ -172,20 +172,14 @@ describe('mapAtlasModel — the loser survives', () => {
     expect(new Set(res.parameters.map(p => p.parameterId)).size).toBe(res.parameters.length);
   });
 
-  it('rescued values are NOT pushed into Triage as unmapped', () => {
-    // These params ARE mapped — they just lost a slot. Surfacing them as gaps
-    // would bury the genuine ones (there are ~196k of these corpus-wide).
-    const res = mapAtlasModel(
-      mosfet([
-        { name: 'RDS(on)(mΩ Max.) 10V', value: '4.3' },
-        { name: 'RDS(on) @10VMax (mΩ)', value: '6.0' },
-      ]),
-      'TestMfr',
-    );
-    // mapAtlasModel surfaces gaps via warnings; a rescued value must not appear
-    // there as an unmapped param.
-    expect(res.warnings.join(' ')).not.toContain('RDS(on) @10VMax (mΩ)');
-  });
+  // NOTE: there is deliberately no "rescued values are NOT pushed into Triage"
+  // test on THIS copy. mapAtlasModel has no Triage surface — it returns
+  // `warnings` (which it never pushes param names to) and no `unmappedParams` at
+  // all. A test here could only assert `warnings.join(' ').not.toContain(name)`,
+  // which is vacuously true forever. The Triage-flooding guard belongs on the
+  // .mjs `mapModel` copy, which actually populates `unmappedParams` — see
+  // 'rescued values are NOT pushed into unmappedParams (Triage)' below. The
+  // loser-survives guarantee for THIS copy is covered by the Good-Ark test above.
 
   /**
    * The gaia DEDUP branch, distinct from the preferredSuffix branch above.
@@ -284,9 +278,13 @@ describe('mapModel (LIVE ingest path) — the loser survives', () => {
       'test.json',
     );
     const names = res.unmappedParams.map(u => u.paramName);
-    // Exactly one of the two spellings may be genuinely unmapped; neither may
-    // appear as a *rescued* entry. Assert no duplicate flooding.
-    expect(new Set(names).size).toBe(names.length);
+    // Both spellings map to rds_on (one wins, the other is RESCUED). A rescued
+    // value must never be surfaced as an unmapped param — doing so floods Triage
+    // with ~196k already-mapped params. The old assertion only checked for
+    // duplicate names, so pushing the loser under its (unique) name passed;
+    // assert the losing spelling is ABSENT outright.
+    expect(names).not.toContain('RDS(on) @10VMax (mΩ)');
+    expect(names).not.toContain('RDS(on)(mΩ Max.) 10V');
   });
 });
 
@@ -360,6 +358,21 @@ describe('parity — mapModel (.mjs) and mapAtlasModel (.ts) rescue the same val
     const tsValues = new Set(ts.parameters.map(p => String(p.value)));
 
     expect([...tsValues].sort()).toEqual([...mjsValues].sort());
+  });
+
+  it.each(cases)('$name — the same set of KEYS is written by both', ({ params }) => {
+    const mjs = mapModel(mosfet(params), 'TestMfr', 'test.json');
+    const ts = mapAtlasModel(mosfet(params), 'TestMfr');
+
+    // Comparing VALUES alone is blind to a divergence that keeps every value but
+    // stores it under a DIFFERENT key — e.g. one copy NFC-normalizing a Chinese
+    // name and the other not, or different suffix numbering. Production writes
+    // these as distinct JSONB keys, so the two copies drifting on keys is a real
+    // fault the value-parity above cannot see.
+    const mjsKeys = Object.keys(mjs.parameters);
+    const tsKeys = ts.parameters.map(p => p.parameterId);
+
+    expect([...tsKeys].sort()).toEqual([...mjsKeys].sort());
   });
 
   it.each(cases)('$name — no input value is lost by either copy', ({ params }) => {

@@ -73,7 +73,9 @@ function seed(overrides: Array<Record<string, unknown>>) {
 const rows = () => mock.rows('atlas_dictionary_overrides');
 const appended = () => mock.rows('atlas_param_decisions');
 const undo = (overrideIds: string[]) =>
-  invokeRoute<{ success: boolean; undone?: number; error?: string }>(POST, { body: { overrideIds } });
+  // The route reports the count as `reverted` (NOT `undone` — that field belongs
+  // to param-decisions/undo). Typing it wrong let the count go unasserted.
+  invokeRoute<{ success: boolean; reverted?: number; error?: string }>(POST, { body: { overrideIds } });
 
 const ACTIVE = (id: string, param: string) => ({
   id,
@@ -92,6 +94,10 @@ describe('undoing a Batch Accept', () => {
 
     expect(res.status).toBe(200);
     expect(res.json.success).toBe(true);
+    // The REPORTED count must equal reality — one override was undone. Without
+    // this, the route could flip the right rows but tell the user the wrong
+    // number (what the UI shows) and no test would notice.
+    expect(res.json.reverted).toBe(1);
     // The row really changed. Under the RLS-subject client this stays true
     // while the response still says success — the exact bug.
     expect(rows().find((r) => r.id === 'ov-1')!.is_active).toBe(false);

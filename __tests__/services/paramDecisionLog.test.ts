@@ -44,6 +44,15 @@ const LOG_STUB = globalThis.LOG_STUB;
 const ROOT = path.join(__dirname, '..', '..');
 const read = (rel: string) => readFileSync(path.join(ROOT, rel), 'utf-8');
 
+/** Strip comments so a guard for a real CALL can't be satisfied by a mention in
+ *  a doc block or a `// recordParamDecisions(...)` line. Block comments (incl.
+ *  JSDoc) go first; line comments go except inside a `://` URL. */
+function stripComments(src: string): string {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
+
 /** Isolate one exported handler so a guard about the DELETE path can't be
  *  satisfied by a line that happens to sit in PATCH. */
 function handlerBody(src: string, name: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'): string {
@@ -97,7 +106,11 @@ describe('decision log: every decision-writing route calls the helper', () => {
 
   it.each(DECISION_ROUTES)('$file records decisions ($why)', ({ file }) => {
     const src = read(file);
-    expect(src).toMatch(/recordParamDecisions?\s*\(/);
+    // Match the real CALL against comment-stripped source: a whole-file regex
+    // passes when the call survives only in the module doc block, so deleting
+    // the call but keeping the comment left this guard green (the bug it exists
+    // to prevent). The import check is fine on raw src (imports aren't comments).
+    expect(stripComments(src)).toMatch(/recordParamDecisions?\s*\(/);
     expect(src).toMatch(/from '@\/lib\/services\/paramDecisionLog'/);
   });
 
