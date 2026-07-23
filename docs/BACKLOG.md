@@ -104,13 +104,15 @@ rollback). What remains from the 15:
   dimensions where `"2.02 Max"` read `M` as mega and stored **2,020,000** for a 2 mm part. Tiny,
   but the `Max` case is absurd enough to break a `fit` rule. Ride it along with the Greek-mu
   change (same function); it does not merit its own cycle.
-- **(P2) Finding 12 — seven test assertions cannot fail.** #280 fixed one of its own (an
-  exclusion-list test that iterated the list it was testing, so deleting an entry still passed).
-  The rest stand: the 114 unit-prefix tests target `atlasMapper.ts`, **the copy with no runtime
-  callers**; a `warnings` assertion on a field with zero push sites; an `expect(0).toBe(0)`; a
-  suite declaring `undone` where the route returns `reverted`; a registry test comparing an
-  expression to a copy of itself; and 9 parity cases that all sit on ONE B5 fixture, so they never
-  reach the L2/shared dicts where real divergences live.
+- **(P2) Finding 12 — test assertions that cannot fail. MOSTLY FIXED 22 July 2026** (branch
+  `fix/tests-that-cannot-fail`, see "Tests that cannot fail — FIXED" below). The vacuous
+  assertions are closed and mutation-proven: the value-only parity (now compares KEYS), the
+  zero-push `warnings` assertion, the six-route comment-matching guard, and the `undone`/`reverted`
+  count. `expect(0).toBe(0)` and the "registry compares an expression to a copy of itself" were
+  searched for and are **not present** (already fixed/mis-described, like Finding 13). Still open,
+  structural, folded into the one-shared-`.mjs` cleanup: the 114 unit-prefix tests target
+  `atlasMapper.ts` (**no runtime callers**), `MAX_LOSER_SUFFIX` on the live `.mjs` is asserted by
+  nothing, and the 9 parity cases all sit on ONE B5 fixture so they never reach the L2/shared dicts.
 - **(P2) Finding 14 was withdrawn with the uppercase-prefix work** (parked, not shipped). If it is
   revived, pin the 5 measured tokens explicitly rather than generating 18 combinations.
 - **Finding 13 is WRONG and needs no work** — it claimed the anchored regex drops `约0.9W`
@@ -377,27 +379,47 @@ in the sample. Demonstrated end-to-end: against a source at 100 mΩ a genuinely 
   fire, and `param-decisions/undo/route.ts:11` justifies leaving it untouched on the
   premise that "the panel it serves is still mounted".
 
-## Open — tests that cannot fail
+## Tests that cannot fail — FIXED 22 July 2026 (branch `fix/tests-that-cannot-fail`)
 
 ⚠️ These matter more than usual: they are the stated mechanisms for rules documented in
-`CLAUDE.md`. See [[green-test-must-fail-on-broken-code]].
+`CLAUDE.md`. See [[green-test-must-fail-on-broken-code]]. **Every fix below was mutation-proven:
+the code the test claims to protect was broken, the test was shown to go RED, then reverted.**
 
-- **The parity block compares VALUES, never KEYS**
-  (`atlasLayer1KeepLoser.test.ts:359`). Drop `.normalize('NFC')` from the `.mjs`
-  `rawIdForParam`, or change its suffix loop start — every value still survives, parity
-  passes, and production writes NFC and NFD spellings as two distinct JSONB keys. All 7
-  unit tests also pass because they import from `atlasMapper.ts`, **the copy with zero
-  runtime callers**. `MAX_LOSER_SUFFIX` in the live `.mjs` is asserted by nothing.
-- **Both "rescued values are NOT pushed into Triage" tests are vacuous** (`:175`, `:277`)
-  — they assert `not.toContain` against `mapAtlasModel`'s `warnings`, which the function
-  never writes to. Add `unmappedParams.push` inside `keepLosingValue` and both stay green
-  while ~196k values flood the queue.
-- **The six-route `recordParamDecision` guard matches comments**
-  (`paramDecisionLog.test.ts:98`) — regex over the whole file when the suite already
-  defines `handlerBody()` for exactly this and uses it four times elsewhere. Delete the
-  real call, keep the doc comment, guard stays green.
-- **`atlasIngestMapper.test.ts:244` "accounts for every source parameter" asserts only
-  `seen.size > 0`** — make `mapModel` drop all but one parameter and it passes.
+- ✅ **Parity now compares KEYS too** (`atlasLayer1KeepLoser.test.ts`) — a new `it.each`
+  '…the same set of KEYS is written by both' sits beside the value-parity block. Proven:
+  shifting the `.mjs` `storeRawValue` suffix start 2→3 keeps VALUE parity green (values
+  unchanged) but turns KEY parity red on the three-way-collision case — the exact key-only
+  divergence the old test was blind to.
+- ✅ **The two "rescued values NOT pushed into Triage" tests** — `:175` on `mapAtlasModel` was
+  vacuous (that copy has **zero** `warnings.push` sites and no `unmappedParams` surface at all),
+  so it was replaced with a comment explaining why the guard lives on the `.mjs` copy. `:277` on
+  `mapModel` was strengthened from a no-duplicates check to `expect(names).not.toContain(<losing
+  spelling>)`. Proven: a `unmappedParams.push` at the `keepLosingValue` call site turns `:277`
+  red, while the old `Set.size === length` stayed green for a single unique loser.
+- ✅ **Six-route `recordParamDecisions` guard** (`paramDecisionLog.test.ts`) — now matches the
+  call against **comment-stripped** source via a new `stripComments()` helper. Proven:
+  commenting out the real call in `batch/undo/route.ts` (leaving the mention) turns the fixed
+  guard red, while the old whole-file regex still matched the comment.
+- ✅ **`dictionaryBatchUndoRoute.test.ts`** — now asserts `res.json.reverted` equals the real
+  count (and the helper's response type was corrected from the misnamed `undone?` to
+  `reverted?`). Proven: a route returning a constant wrong count is caught.
+
+### Still open (out of scope for the vacuous-assertion pass)
+
+- **`atlasIngestMapper.test.ts:244` "accounts for every source parameter" (`seen.size > 0`) is
+  weak but REDUNDANT.** Mutation-verified: dropping params in the main mapping loop turns the
+  **golden** test (`… maps exactly as recorded`, which pins `parameters` AND `unmappedParams`)
+  red — so silent param loss is already caught. A non-redundant, snapshot-INDEPENDENT partition
+  guard ("every source param is mapped, unmapped, or skipped") needs either a `skippedParams`
+  return field on `mapModel` or duplicating the mapper's skip logic in the test — neither cheap.
+  Fold into the "one shared `.mjs`" cleanup below.
+- **The Layer-1 unit tests import the TS copy (no runtime callers), and the parity cases are all
+  B5 MOSFET fixtures.** `MAX_LOSER_SUFFIX` in the live `.mjs` is asserted by nothing, and the
+  parity cases never exercise the L2/shared dicts. Structural — belongs with the one-shared-`.mjs`
+  cleanup (a single importable copy would let every unit test run against the live path).
+- **`expect(0).toBe(0)` and the "registry compares an expression to a copy of itself"** claims
+  from the older Finding-12 prose are **NOT present** in the current tree (searched exhaustively);
+  already fixed or mis-described, like Finding 13.
 - **`npm test` is intermittently non-deterministic** — a jest worker SIGSEGV'd in
   `recommendationBucket.test.ts` during review (passes in isolation). CI runs bare
   `npm test`, so expect an occasional unrelated red.
