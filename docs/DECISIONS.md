@@ -9336,6 +9336,24 @@ removed **0**, display strings changed **0**, numbers lost **0**, junk-token con
 **153,993 numbers corrected**, **50,521** in scoring slots, across **69,639 products**. The
 count fell by exactly 229 from #280's figure — the gauss values, a clean cross-check.
 
+### Follow-up applied — Greek mu (U+03BC), same day
+
+A sibling bug of the same shape shipped hours later on branch `fix/greek-mu-unit-parser`:
+`extractNumericWithPrefix` accepted the MICRO SIGN (U+00B5) but not GREEK SMALL LETTER MU (U+03BC),
+so `"800μA"` stored 800 amps. Fix = Greek mu into the 8 character classes (4 per mapper copy) AND
+into the shared rescue allowlist (`applyUnitPrefix` already handled both; the allowlist did not —
+widening the regex alone would parse the unit then decline to scale it).
+
+Backfill applied 22 July 2026: `Scanned 437093 / Changed 7439 / Errors 0` — matching the dry-run
+prediction exactly (Sunlord left reverted after the rehearsal to keep the number checkable).
+Verified five ways: DB-vs-backup **7,419** differing (= prediction; the 20 fewer than 7,439 are the
+null-vs-NaN churn); second dry run **43** still-changing (the identical null-vs-NaN set, so no mu
+value stuck); **1,730** corrected values re-read by an independent SI parser with **0**
+disagreements; and the real engine taking a 1.8 µH inductor from **FAIL to PASS** (88%→97%) against
+the Sunlord part that had been stored as 1.8 nH. 11,223 numbers corrected; gates all 0. Sibling
+parsers with the same latent gap (`matchingEngine.applyPrefix`, `recommendationFilter`,
+`digikeyMapper`) are logged in BACKLOG — none exercised by the backfill.
+
 ### Applied to the database — July 22, 2026
 
 `Scanned 437093 / Changed 52997 / Unchanged 363825 / Missing 20271 / Errors 0`. Siliup/SP40N25TQ
