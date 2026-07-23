@@ -35,8 +35,18 @@
     "So: any change to `prefixes` or `atoms` MUST be followed by enumerating every generated token",
     "that ACTUALLY OCCURS in data/atlas/*.json, with counts, and reading the list. That audit is",
     "pinned as a test (atlasRescueUnits.test.ts, 'every allowlisted token that occurs in the",
-    "corpus is accounted for'). Adding an atom widens the cross by 9 tokens; adding a prefix",
-    "widens it by 11. Neither is a one-line change."
+    "corpus is accounted for'). Adding an atom widens the cross by 10 tokens; adding a prefix",
+    "widens it by 11. Neither is a one-line change.",
+    "",
+    "SCOPE -- this allowlist governs the RESCUED path only (storeRawValue -> rescueNumericValue).",
+    "The dict-MAPPED path scales via applyUnitPrefix's first-letter rule, which scales ANY unit",
+    "starting p/n/u/µ/μ/m/k/K/M/G/T -- including a BARE 'µ'/'μ' or 'µm'/'μm', and the",
+    "value's parsed unit OVERRIDES the dict's declared unit. That is intentional and predates the",
+    "Greek-μ change (the micro sign always behaved this way): a mapped attribute carries a",
+    "human-vetted dict mapping, so the looser rule is acceptable there -- the allowlist exists for",
+    "the UN-vetted rescued keys. Measured 22 Jul 2026: bare-μ 92 / μm 34 stored values, 0",
+    "changed by adding Greek μ. If a mapped bare-μ value with a NON-micro dict unit ever appears",
+    "it will scale ×1e-6; re-audit if that surfaces."
   ],
   "_prefixComment": [
     "Stored as EXPONENTS, not multipliers, so a negative power can DIVIDE instead of multiply:",
