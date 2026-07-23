@@ -9,6 +9,8 @@ import { logicTableRegistry, getLogicTable } from '../logicTables';
 import { getSelectionQuestions } from './selectionQuestions';
 import { GuidedAnswerMap } from './guidedSelection';
 import { observeAndLogGrounding, extractUserMpnCandidates } from './grounding/groundingLogger';
+import { observeAndLogSpecValues } from './grounding/specValueLogger';
+import { knownValuesFromAttributes, knownValuesFromUserText } from './grounding/specValueDetector';
 import { ChatGroundingContext, buildVerifiedSetFromContext } from './grounding/observeGrounding';
 import { applyGroundingGate, isGroundingGateEnabled } from './grounding/groundingGate';
 import { buildComparisonTable, ComparisonTable, ComparisonPartInput } from './comparisonTable';
@@ -2219,6 +2221,22 @@ export async function chat(
   // Observe-only: log what a gate WOULD catch in the RAW draft, decoupled from
   // enforcement (plan §"Measurement"). Never alters `result`.
   observeAndLogGrounding(message, groundingCtx, { surface: 'chat', userId: userId ?? null, model: MODEL });
+
+  // Observe-only (spec-value sibling): the MPN detector is blind to value+unit tokens, which is
+  // exactly the surface Track A's family-knowledge material widens. Log would-be spec-value
+  // fabrications — numbers the prose states that don't trace to the turn's grounded attributes
+  // (source part + any looked-up parts), treating the user's own stated specs as grounded. Dark
+  // until spec_value_observations exists; never alters `result`.
+  const knownSpecValues = knownValuesFromAttributes([
+    currentSourceAttributes?.parameters,
+    ...Object.values(toolData.attributes).map((a) => a?.parameters),
+  ]);
+  for (const m of messages) {
+    if (m.role === 'user' && typeof m.content === 'string') {
+      knownSpecValues.push(...knownValuesFromUserText(m.content));
+    }
+  }
+  observeAndLogSpecValues(message, knownSpecValues, { surface: 'chat', userId: userId ?? null, model: MODEL });
 
   // Backstop gate (step 5): only when explicitly enabled. Acts on HIGH-confidence
   // unverified parts in the prose; recovers via regenerate-once → deterministic safe
