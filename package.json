@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "prebuild": "npm run selection:check",
+    "prebuild": "npm run selection:check && (npm run docs:check || true)",
     "build": "next build",
     "verify:fixes": "node --env-file=.env.local --import tsx scripts/verify-fixes.ts --label current",
     "providers:characterize": "node --env-file=.env.local --import tsx scripts/providers-characterize.ts",
