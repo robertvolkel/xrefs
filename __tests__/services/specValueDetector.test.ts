@@ -5,6 +5,7 @@ import {
   knownValuesFromUserText,
   type KnownSpecValue,
 } from '@/lib/services/grounding/specValueDetector';
+import { extractNumericValue } from '@/lib/services/digikeyMapper';
 
 /**
  * Mutation-grade tests. The riskiest surfaces are (a) the token regex — it must find real
@@ -96,5 +97,54 @@ describe('known-value builders', () => {
   it("treats the user's own stated spec as grounded (assistant echo is not a leak)", () => {
     const userKnown = knownValuesFromUserText('I need a 25 V capacitor');
     expect(detectUngroundedSpecValues('here is a 25 V option', userKnown)).toHaveLength(0);
+  });
+});
+
+describe('Fix B — prefixed known units ground a bare token (numeric path, not just display)', () => {
+  // Grounds the fixtures in the REAL emitted attribute shape: Digikey stores a base-SI
+  // numericValue with the DISPLAY unit still prefixed ('µF', 'mA') — exactly what
+  // digikeyParamMap + extractNumericValue produce. The discriminating cases below have
+  // display strings that DON'T match (so the string fallback can't save them), only the
+  // numeric+unit path can — which was unreachable before the prefix strip.
+
+  it("grounds '0.1 A' against a known '100 mA' (base-SI numeric match; displays differ)", () => {
+    const known = knownValuesFromAttributes([
+      [{ numericValue: extractNumericValue('100 mA').numericValue, unit: 'mA', value: '100 mA' }],
+    ]);
+    // BUG: known unitKey 'ma' never equals token unit 'a' → false 'ungrounded' finding.
+    expect(detectUngroundedSpecValues('this part is rated 0.1 A', known)).toHaveLength(0);
+  });
+
+  it("grounds an ASCII 'uF' echo against a known micro-sign 'µF' (same value, different display)", () => {
+    const known = knownValuesFromAttributes([
+      [{ numericValue: extractNumericValue('10 µF').numericValue, unit: 'µF', value: '10 µF' }],
+    ]);
+    expect(detectUngroundedSpecValues('use the 10 uF part', known)).toHaveLength(0);
+  });
+
+  it("grounds a 'kHz' known value against a bare-Hz token at the same magnitude", () => {
+    const known = knownValuesFromAttributes([
+      [{ numericValue: extractNumericValue('100 kHz').numericValue, unit: 'kHz', value: '100 kHz' }],
+    ]);
+    // 100 kHz = 100000 Hz; the assistant writing "100000 Hz" must ground.
+    expect(detectUngroundedSpecValues('runs at 100000 Hz', known)).toHaveLength(0);
+  });
+
+  it('still REQUIRES unit agreement after the strip — a known 10 µF does NOT ground a prose 10 µH', () => {
+    const known = knownValuesFromAttributes([
+      [{ numericValue: extractNumericValue('10 µF').numericValue, unit: 'µF', value: '10 µF' }],
+    ]);
+    const f = detectUngroundedSpecValues('needs a 10 uH inductor', known);
+    expect(f).toHaveLength(1); // farad vs henry stay distinct even once both are prefix-stripped
+    expect(f[0].unit).toBe('h');
+  });
+
+  it("does NOT mangle a bare 'F'/'s'/'ppm' known unit (no spurious strip)", () => {
+    // '5 F' (supercap, no prefix): first char is not a prefix → key stays 'f'.
+    const farad = knownValuesFromAttributes([[{ numericValue: 5, unit: 'F', value: '5 F' }]]);
+    expect(detectUngroundedSpecValues('a 5 F supercap', farad)).toHaveLength(0);
+    // 'ppm' leads with prefix char 'p' but remainder 'pm' is not a unit → key stays 'ppm'.
+    const ppm = knownValuesFromAttributes([[{ numericValue: 50, unit: 'ppm', value: '50 ppm' }]]);
+    expect(detectUngroundedSpecValues('drift of 50 ppm', ppm)).toHaveLength(0);
   });
 });

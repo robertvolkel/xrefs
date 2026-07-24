@@ -44,6 +44,32 @@ function normalizeUnit(unit: string): string {
   return u;
 }
 
+/** The bare (prefix-free) electronics units this detector understands, as normalized keys.
+ *  A known-side unit is only prefix-stripped when its remainder lands in THIS set — so "F"/"s"
+ *  (no prefix) and "ppm"/"bps" (prefix-char lead, non-unit remainder) are never mangled. */
+const BARE_UNITS = new Set(['v', 'a', 'w', 'ohm', 'f', 'h', 'hz', 's', 'c', 'db', 'ppm', 'bps', 'sps']);
+
+/** SI-prefix chars AFTER lowercasing (so 'M'→'m', 'K'→'k', 'G'→'g', 'T'→'t' fold in). Used only to
+ *  decide whether to strip a leading prefix off a known unit — magnitude is already in baseSI. */
+const LOWER_PREFIX_CHARS = new Set(['p', 'n', 'u', 'µ', 'μ', 'm', 'k', 'g', 't']);
+
+/**
+ * A part attribute's `unit` carries its SI prefix baked in ("µF", "MHz", "mΩ"), but the token side
+ * separates the prefix out (SPEC_TOKEN captures {prefix, unit} apart), so `tok.unit` is always bare
+ * ("f", "hz", "ohm"). Comparing the raw known unit to the token unit therefore NEVER matched for any
+ * prefixed unit — capacitance/inductance/frequency grounding was silently unreachable, inflating the
+ * observed fabrication count. Strip a leading SI prefix from the known unit so both sides are bare —
+ * but ONLY when the remainder is a real bare unit (the BARE_UNITS gate), so "F"/"s"/"ppm" are safe.
+ */
+function bareUnitKey(unit: string): string {
+  const n = normalizeUnit(unit);
+  if (n.length > 1 && LOWER_PREFIX_CHARS.has(n[0])) {
+    const rest = normalizeUnit(n.slice(1));
+    if (BARE_UNITS.has(rest)) return rest;
+  }
+  return n;
+}
+
 // A value + optional space + optional single-char SI prefix + a known electronics unit, OR a bare
 // percentage. The leading (?<![\w.]) stops it firing inside an MPN/identifier ("LM317T" → "317T").
 // Prefix chars and unit are captured separately so "4.7kΩ" → {4.7, k, Ω}. Multi-char units (Hz)
@@ -119,7 +145,9 @@ export function knownValuesFromAttributes(
       const display = typeof p.value === 'string' ? normDisplay(p.value) : '';
       out.push({
         baseSI: typeof p.numericValue === 'number' ? p.numericValue : null,
-        unitKey: p.unit ? normalizeUnit(p.unit) : null,
+        // Prefix-stripped so a base-SI numericValue compares against a bare token unit
+        // ("µF" known vs "f" token). See bareUnitKey.
+        unitKey: p.unit ? bareUnitKey(p.unit) : null,
         display,
       });
     }
