@@ -3,6 +3,7 @@ import {
   renderChoiceQuestion,
   renderValuesQuestion,
   renderDisambiguationQuestion,
+  renderConflictQuestion,
   isSystemGuidedQuestion,
   detectAmbiguity,
   resolvePartTypeFamily,
@@ -23,6 +24,9 @@ describe('fixed question wording + recognizer (the in-progress marker)', () => {
     expect(isSystemGuidedQuestion(renderChoiceQuestion('Output Type'))).toBe(true);
     expect(isSystemGuidedQuestion(renderDisambiguationQuestion())).toBe(true);
     expect(isSystemGuidedQuestion(renderValuesQuestion(['R25', 'B-Value', 'Package']))).toBe(true);
+    // The wrong-choice clarify question must ALSO round-trip, or its answer turn wouldn't be
+    // recognized as a continuation and the flow would restart.
+    expect(isSystemGuidedQuestion(renderConflictQuestion('Dielectric / Temperature Characteristic', 'ZZ9Q'))).toBe(true);
   });
   it('choice question lowercases the spec and is one sentence', () => {
     expect(renderChoiceQuestion('Output Type')).toBe('Which output type do you need?');
@@ -389,5 +393,31 @@ describe('decideGuidedTurn — review-fix regressions', () => {
     expect(out?.kind).toBe('ask');                 // system asks C4's next spec, not abandoned to the LLM
     // Recovery classifies the flow ENTRY, not the spec answer "comparator".
     expect(classifiedWith).toBe('I need a doohickey for my board');
+  });
+});
+
+describe('wrong-choice clarify (SELECTION_VALIDATION_ENABLED)', () => {
+  // MLCC (family 12) pins directly via resolvePartTypeFamily('MLCC'); its dielectric rule has a
+  // closed option set, so a bogus value is a definite wrong choice.
+  const badDielectric = async (): Promise<GuidedAnswerMap> => ({ dielectric: { value: 'ZZ9Q' } });
+
+  afterEach(() => { delete process.env.SELECTION_VALIDATION_ENABLED; });
+
+  it('flag ON: a bogus categorical value → clarify question with the REAL options', async () => {
+    process.env.SELECTION_VALIDATION_ENABLED = '1';
+    const out = await decideGuidedTurn([u('MLCC')], badDielectric);
+    expect(out?.kind).toBe('ask');
+    if (out?.kind === 'ask') {
+      expect(out.message.startsWith('"ZZ9Q" isn\'t')).toBe(true);
+      expect(isSystemGuidedQuestion(out.message)).toBe(true); // answer turn is a continuation
+      expect(out.choices?.map(c => c.id)).toContain('C0G');    // real options offered
+    }
+  });
+
+  it('flag OFF: the SAME bogus value is NOT intercepted (proceeds to the normal step)', async () => {
+    delete process.env.SELECTION_VALIDATION_ENABLED;
+    const out = await decideGuidedTurn([u('MLCC')], badDielectric);
+    // Whatever the flow does next, it must NOT be the conflict clarify.
+    if (out?.kind === 'ask') expect(out.message.startsWith('"ZZ9Q" isn\'t')).toBe(false);
   });
 });

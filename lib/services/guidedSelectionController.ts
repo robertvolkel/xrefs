@@ -2,6 +2,7 @@ import type { OrchestratorMessage, SearchConstraint, ChoiceOption } from '../typ
 import { resolveFamilyFromText, resolveFamilyMatch, getLogicTable } from '../logicTables';
 import { getSelectionQuestions } from './selectionQuestions';
 import { nextGuidedStep, GuidedAnswerMap } from './guidedSelection';
+import { firstValueConflict } from './selectionValidation';
 import { buildGreenfieldQuery } from './searchConstraints';
 import { looksLikeMpn, mentionsMpn } from './searchSummary';
 
@@ -43,6 +44,14 @@ export function renderDisambiguationQuestion(): string {
   return `Which type do you need?`;
 }
 
+/** Wrong-CHOICE clarify question — the user named a categorical value that doesn't exist for
+ *  this spec. System-authored (never model-phrased) and must stay matchable by CONFLICT_Q_RE so
+ *  the answer turn is recognized as a guided continuation. The real options ride along as buttons. */
+export function renderConflictQuestion(label: string, stated: string): string {
+  const clean = label.replace(/\s*\([^)]*\)\s*$/, '').trim().toLowerCase();
+  return `"${stated}" isn't a ${clean} I recognize. Which ${clean} do you need?`;
+}
+
 /** Typed-value batch question. Must stay matchable by VALUES_Q_RE below. */
 export function renderValuesQuestion(labels: string[]): string {
   const list = joinWithAnd(labels);
@@ -68,6 +77,7 @@ function joinWithAnd(items: string[]): string {
 const CHOICE_Q_RE = /^Which .+ do you need\?$/;
 const VALUES_Q_RE = /^What .+ are you targeting\?/;
 const NARROW_Q_RE = /^That gives \d+ parts — more than is useful\. Which .+ do you need\?/;
+const CONFLICT_Q_RE = /isn't a .+ I recognize\. Which .+ do you need\?$/;
 
 /** True when `text` is one of the fixed questions this controller emits — the signal
  *  that we are mid-guided-selection (no message metadata channel exists). The narrowing
@@ -75,7 +85,7 @@ const NARROW_Q_RE = /^That gives \d+ parts — more than is useful\. Which .+ do
  *  is answering us and the turn after it has to be recognized as a continuation. */
 export function isSystemGuidedQuestion(text: string): boolean {
   const t = (text ?? '').trim();
-  return CHOICE_Q_RE.test(t) || VALUES_Q_RE.test(t) || NARROW_Q_RE.test(t);
+  return CHOICE_Q_RE.test(t) || VALUES_Q_RE.test(t) || NARROW_Q_RE.test(t) || CONFLICT_Q_RE.test(t);
 }
 
 /** A SPEC question (a per-attribute choice/values question), as opposed to the
@@ -416,6 +426,24 @@ export async function decideGuidedTurn(
 
   const { familyId, partType } = pinned;
   const answered = await parse(familyId);
+
+  // Wrong-CHOICE clarify (Track B): if the user stated a categorical value that isn't a real
+  // option for this family (a bogus dielectric / output type), step in with the real options
+  // BEFORE searching on the bad value — rather than silently returning a poor result set. Pure +
+  // fail-open (consults valueAliases so a valid synonym like NP0≡C0G is never flagged). Emitted
+  // as a normal `ask` with a CONFLICT_Q_RE-matchable message so the answer is a continuation.
+  // DARK by default until SELECTION_VALIDATION_ENABLED is flipped after the guided E-rows re-run.
+  if (process.env.SELECTION_VALIDATION_ENABLED === '1') {
+    const conflict = firstValueConflict(familyId, answered);
+    if (conflict) {
+      return {
+        kind: 'ask',
+        message: renderConflictQuestion(conflict.label, conflict.stated),
+        choices: conflict.options.map(o => ({ id: o, label: o })),
+      };
+    }
+  }
+
   const step = nextGuidedStep(familyId, answered);
   if (!step) return null;
 

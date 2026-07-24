@@ -113,6 +113,24 @@ const COUNT_WORD_DIGIT: Record<string, string> = {
   octal: '8', '8': 'octal',
 };
 
+/** Are two categorical values equivalent for matching — normalized-equal, or bridged across
+ *  the count-word ↔ digit vocabulary ("Dual" ≡ "2")? The single predicate the guided
+ *  wrong-choice validator shares with this module, so "what counts as the same value" can't
+ *  drift between the fetch/scoring path and the validator. Alias-group equivalence
+ *  (per-rule `valueAliases`) is layered on top by the caller — this covers only the
+ *  family-agnostic vocabulary. */
+export function categoricalEquivalent(a: string, b: string): boolean {
+  const an = norm(a);
+  const bn = norm(b);
+  if (!an || !bn) return false;
+  if (an === bn) return true;
+  const aAlt = COUNT_WORD_DIGIT[an];
+  if (aAlt && norm(aAlt) === bn) return true;
+  const bAlt = COUNT_WORD_DIGIT[bn];
+  if (bAlt && norm(bAlt) === an) return true;
+  return false;
+}
+
 /** Adopt the catalog's OWN wording for a categorical code, learned from the candidate
  *  pool, so a user's terse value ("0805") byte-matches the catalog's verbose value
  *  ("0805 (2012 Metric)") in the identity comparison. Also bridges count-word ↔ digit
