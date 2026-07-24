@@ -147,6 +147,21 @@ describe('Fix B — prefixed known units ground a bare token (numeric path, not 
     const ppm = knownValuesFromAttributes([[{ numericValue: 50, unit: 'ppm', value: '50 ppm' }]]);
     expect(detectUngroundedSpecValues('drift of 50 ppm', ppm)).toHaveLength(0);
   });
+
+  it("does NOT fold gauss (Gs) onto seconds — a fabricated '5 s' stays flagged (dangerous direction)", () => {
+    // 'Gs' reads as G(iga)+s but is gauss, a DISTINCT quantity. Stripping it to 's' would let a
+    // known 5 Gs falsely ground a fabricated '5 s' delay claim, hiding a real leak in the metric.
+    const gauss = knownValuesFromAttributes([[{ numericValue: 5, unit: 'Gs', value: '5 Gs' }]]);
+    const f = detectUngroundedSpecValues('the delay is 5 s', gauss);
+    expect(f).toHaveLength(1); // fails if the AMBIGUOUS_WHOLE_UNITS gate is removed
+    expect(f[0].unit).toBe('s');
+  });
+
+  it('STILL grounds a legitimate millisecond attribute against a seconds token (time strip preserved)', () => {
+    // Regression guard for the gauss fix: real prefixed-seconds must keep grounding. 5 ms = 0.005 s.
+    const ms = knownValuesFromAttributes([[{ numericValue: 0.005, unit: 'ms', value: '5 ms' }]]);
+    expect(detectUngroundedSpecValues('settles in 0.005 s', ms)).toHaveLength(0);
+  });
 });
 
 describe('Fix C — word-form units (volts/amps/watts/…) are recognized and normalized', () => {

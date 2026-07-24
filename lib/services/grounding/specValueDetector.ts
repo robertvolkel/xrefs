@@ -61,6 +61,15 @@ const BARE_UNITS = new Set(['v', 'a', 'w', 'ohm', 'f', 'h', 'hz', 's', 'c', 'db'
  *  decide whether to strip a leading prefix off a known unit — magnitude is already in baseSI. */
 const LOWER_PREFIX_CHARS = new Set(['p', 'n', 'u', 'µ', 'μ', 'm', 'k', 'g', 't']);
 
+/** Whole units that coincidentally read as "SI-prefix + bare unit" but are a DISTINCT physical
+ *  quantity — stripping them folds a real value onto the wrong unit, a FALSE 'grounded' that would
+ *  HIDE a fabrication in the metric (the dangerous direction). 'gs' = gauss (NOT giga-seconds);
+ *  confirmed present in the Atlas corpus (see Decision #280). Left as an accepted observe-only
+ *  limitation: siemens ('s' after lowercasing) and millicoulomb ('mc'→celsius) are genuinely
+ *  indistinguishable from milliseconds / a temperature without a unit ontology, and denying them
+ *  would also kill legitimate ms/ns/µs time grounding — so only the unambiguous 'gs' is blocked. */
+const AMBIGUOUS_WHOLE_UNITS = new Set(['gs']);
+
 /**
  * A part attribute's `unit` carries its SI prefix baked in ("µF", "MHz", "mΩ"), but the token side
  * separates the prefix out (SPEC_TOKEN captures {prefix, unit} apart), so `tok.unit` is always bare
@@ -71,7 +80,7 @@ const LOWER_PREFIX_CHARS = new Set(['p', 'n', 'u', 'µ', 'μ', 'm', 'k', 'g', 't
  */
 function bareUnitKey(unit: string): string {
   const n = normalizeUnit(unit);
-  if (n.length > 1 && LOWER_PREFIX_CHARS.has(n[0])) {
+  if (n.length > 1 && !AMBIGUOUS_WHOLE_UNITS.has(n) && LOWER_PREFIX_CHARS.has(n[0])) {
     const rest = normalizeUnit(n.slice(1));
     if (BARE_UNITS.has(rest)) return rest;
   }

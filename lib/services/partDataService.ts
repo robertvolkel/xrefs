@@ -736,9 +736,9 @@ export async function searchParts(
   // Merge in priority order: Digikey → Atlas → Parts.io
   const seenMpns = new Set<string>();
   const mergedMatches = [];
-  // Scorable candidate attributes keyed by lowercased MPN, accumulated across
-  // sources in the same priority order (Digikey wins on key collision). Used by
-  // the logic-vetting pass below; empty when no source supplied attrs.
+  // Scorable candidate attributes keyed by keyOf (bare MPN, or MPN+canonical-maker when
+  // per-MFR cards are on), accumulated across sources in priority order (Digikey wins on key
+  // collision). Used by the logic-vetting pass below; empty when no source supplied attrs.
   const candidateAttrsByMpn = new Map<string, PartAttributes>();
   // Set by the vetting block when the pool came back too big and a spec can actually split it.
   let searchResultNarrowing: NarrowingSuggestion | undefined;
