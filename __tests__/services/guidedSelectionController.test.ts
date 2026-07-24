@@ -396,6 +396,27 @@ describe('decideGuidedTurn — review-fix regressions', () => {
   });
 });
 
+describe('design-advice questions defer to the answer path (not guided part-collection)', () => {
+  // A "what matters / what to look for / how to choose" question is a request for GUIDANCE about
+  // a part type — it must reach the family-knowledge reasoning, NOT get interrogated for specs.
+  // Regression: "choosing"/"selecting" are selection-intent words, so without advice-detection
+  // these were grabbed by the guided flow.
+  it.each([
+    'What matters most when choosing a MOSFET to switch 20 volts at 5 amps?',
+    'What should I look for in an op amp?',
+    'What to consider when selecting an LDO?',
+    'How do I choose a capacitor?',
+    'What factors matter for a diode?',
+  ])('defers: %s', async (q) => {
+    expect(await decideGuidedTurn([u(q)], noAnswers)).toBeNull();
+  });
+
+  it('regression: a declarative sourcing need STILL guides', async () => {
+    const out = await decideGuidedTurn([u('I need a MOSFET')], noAnswers);
+    expect(out?.kind).toBe('ask'); // guided part-collection still owns real sourcing requests
+  });
+});
+
 describe('wrong-choice clarify (SELECTION_VALIDATION_ENABLED)', () => {
   // MLCC (family 12) pins directly via resolvePartTypeFamily('MLCC'); its dielectric rule has a
   // closed option set, so a bogus value is a definite wrong choice.

@@ -263,7 +263,12 @@ export function resolvePartTypeFamily(text: string): string | null {
 // verb carries its real suffix set. Suffix groups stay precise to avoid false friends
 // ("needle" ⊄ need, "designate" ⊄ design).
 const INTENT_RE = /\b(need(?:s|ed|ing)?|want(?:s|ed|ing)?|look(?:ing|s)?|find(?:s|ing)?|recommend(?:s|ed|ing|ation)?|suggest(?:s|ed|ing|ion)?|pick(?:s|ed|ing)?|choos(?:e|es|ing)|select(?:s|ed|ing|ion)?|sourc(?:e|es|ed|ing)|requir(?:e|es|ed|ing|ement|ements)?|build(?:s|ing)?|design(?:s|ed|ing)?|get me|show me|help me|after an?)\b/i;
-const THEORY_RE = /\b(difference|differ|versus|vs\b|what is|what's|whats|how (do|does|to)|why|explain|tell me about|compare|pros|cons|when (should|do)|which is better)\b/i;
+// Includes design-ADVICE / criteria questions ("what matters", "what to look for", "how to
+// choose") — a request for GUIDANCE about a part type, not a request to be given parts. These
+// must defer to the answer path (where the family-knowledge reasoning lives), NOT enter guided
+// part-collection. Without this, "What matters most when choosing a MOSFET…" tripped the
+// selection-intent word "choosing" and got interrogated for specs instead of answered.
+const THEORY_RE = /\b(difference|differ|versus|vs\b|what is|what's|whats|how (do|does|to)|why|explain|tell me about|compare|pros|cons|when (should|do)|which is better|what matters|what to look|what should i look|what to consider|what should i consider|what factors|which factors|what makes a good|what should i know)\b/i;
 
 export function hasSelectionIntent(text: string): boolean {
   return INTENT_RE.test(text);
