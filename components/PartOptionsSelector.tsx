@@ -1,12 +1,17 @@
 'use client';
-import { useMemo } from 'react';
-import { Card, CardActionArea, CardContent, Typography, Stack, Chip, Tooltip, Box } from '@mui/material';
+import { useMemo, useState } from 'react';
+import { Card, CardActionArea, CardContent, Typography, Stack, Chip, Tooltip, Box, Button } from '@mui/material';
 import { PartSummary } from '@/lib/types';
 
 interface PartOptionsSelectorProps {
   parts: PartSummary[];
   onSelect: (part: PartSummary) => void;
 }
+
+/** Cap the rendered cards so a broad result set (which can be 50) never explodes the chat and
+ *  buries the follow-up. Best-fit-first ordering is done upstream, so the top slice is the most
+ *  relevant; the rest are one click away via "Show all N". Display-only. */
+const CARD_CAP = 12;
 
 /** For each part with a colliding description, return up to 3 parametric
  *  values that distinguish it from its siblings (params present on this part
@@ -47,11 +52,14 @@ function buildDistinguishingParams(parts: PartSummary[]): Map<string, Array<{ na
 
 export default function PartOptionsSelector({ parts, onSelect }: PartOptionsSelectorProps) {
   const distinguishing = useMemo(() => buildDistinguishingParams(parts), [parts]);
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? parts : parts.slice(0, CARD_CAP);
+  const hiddenCount = parts.length - shown.length;
   return (
     <Stack spacing={1} sx={{ mt: 1, maxWidth: 480 }}>
-      {parts.map((part) => (
+      {shown.map((part) => (
         <Card
-          key={part.mpn}
+          key={`${part.mpn}::${part.manufacturer}`}
           variant="outlined"
           sx={{
             bgcolor: 'background.default',
@@ -142,6 +150,16 @@ export default function PartOptionsSelector({ parts, onSelect }: PartOptionsSele
           </CardActionArea>
         </Card>
       ))}
+      {parts.length > CARD_CAP && (
+        <Button
+          size="small"
+          variant="text"
+          onClick={() => setExpanded((v) => !v)}
+          sx={{ alignSelf: 'flex-start', textTransform: 'none', color: 'text.secondary' }}
+        >
+          {expanded ? 'Show fewer' : `Show all ${parts.length} (${hiddenCount} more)`}
+        </Button>
+      )}
     </Stack>
   );
 }
