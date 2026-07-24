@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction, ChoiceOption, SearchConstraint, deriveRecommendationBucket, deriveRecommendationCategories, RecommendationCategory } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
-import { looksLikeMpn, mentionsMpn, buildSearchSummary } from './searchSummary';
+import { looksLikeMpn, mentionsMpn, buildSearchSummary, describeSearchConstraints } from './searchSummary';
 import { decideGuidedTurn, renderNarrowingQuestion } from './guidedSelectionController';
 import { sanitizeChoiceOptions } from './choiceGuard';
 import { buildGreenfieldQuery } from './searchConstraints';
@@ -1961,7 +1961,15 @@ export async function chat(
         ]),
       };
     }
-    return { message: buildSearchSummary(result), searchResult: result };
+    // REFLECT-BACK (Track B, dark): prepend a deterministic echo of the specs the system parsed,
+    // so a mis-extraction is visible instead of silently driving a wrong-looking result. Grounded
+    // — every token comes from the tracked constraints, not model prose. DARK by default.
+    const summary = buildSearchSummary(result);
+    if (process.env.REFLECT_BACK_ENABLED === '1') {
+      const reflect = describeSearchConstraints(guidedTurn.partType, guidedTurn.constraints, guidedTurn.familyId);
+      if (reflect) return { message: `${reflect}\n\n${summary}`, searchResult: result };
+    }
+    return { message: summary, searchResult: result };
   }
 
   // Collect structured data from tool calls

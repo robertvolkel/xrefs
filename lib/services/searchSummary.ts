@@ -1,4 +1,5 @@
-import type { SearchResult } from '../types';
+import type { SearchResult, SearchConstraint } from '../types';
+import { getLogicTable } from '../logicTables';
 
 /**
  * Lightweight heuristic: does the query look like a part number (MPN) vs a description?
@@ -79,6 +80,42 @@ export function mentionsMpn(text: string): boolean {
  *
  * MPN-lookup searches do NOT use this — they keep the LLM confirmation message.
  */
+const BOUND_OP: Record<string, string> = { min: '≥ ', max: '≤ ' };
+
+/** Human label for a constraint's attribute: the family rule's attributeName (parenthetical
+ *  stripped) when resolvable, else the raw term prettified. */
+function constraintLabel(attribute: string, familyId?: string): string {
+  if (familyId) {
+    const rule = getLogicTable(familyId)?.rules.find(r => r.attributeId === attribute);
+    if (rule) return rule.attributeName.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  }
+  return attribute.replace(/_/g, ' ').trim();
+}
+
+/**
+ * REFLECT-BACK: a one-line, deterministic echo of the specs the system parsed from the user, so
+ * a mis-extraction is visible and correctable instead of silently driving a grounded-LOOKING but
+ * wrong result. Grounded by construction — every token comes from a `SearchConstraint` the system
+ * built from the user's own answers, never from model prose. Returns '' when there are no
+ * constraints (an un-vetted keyword search reflects nothing). `bound` renders as ≥ / ≤; an exact
+ * or categorical value renders bare. Chat-redesign Phase 1 Track B.
+ */
+export function describeSearchConstraints(
+  partType: string,
+  constraints: SearchConstraint[] | undefined,
+  familyId?: string,
+): string {
+  if (!constraints || constraints.length === 0) return '';
+  const parts = constraints.map(c => {
+    const label = constraintLabel(c.attribute, familyId).toLowerCase();
+    const op = c.bound ? (BOUND_OP[c.bound] ?? '') : '';
+    const unit = c.unit ? ` ${c.unit}` : '';
+    return `${label} ${op}${c.value}${unit}`.trim();
+  });
+  const type = (partType ?? '').trim().toLowerCase() || 'parts';
+  return `Searching ${type} with: ${parts.join(', ')}.`;
+}
+
 export function buildSearchSummary(searchResult: SearchResult): string {
   const matches = searchResult.matches ?? [];
   const n = matches.length;
