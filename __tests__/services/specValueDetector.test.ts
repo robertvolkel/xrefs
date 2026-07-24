@@ -148,3 +148,36 @@ describe('Fix B — prefixed known units ground a bare token (numeric path, not 
     expect(detectUngroundedSpecValues('drift of 50 ppm', ppm)).toHaveLength(0);
   });
 });
+
+describe('Fix C — word-form units (volts/amps/watts/…) are recognized and normalized', () => {
+  it('extracts word-form units and normalizes them to the symbol key', () => {
+    const byUnit = extractSpecTokens(
+      '50 volts, 2 amps, 5 amperes, 3 watts, 10 farads, 4 henries, 16 hertz',
+    ).map((t) => t.unit);
+    // BUG: the symbol-only SPEC_TOKEN found none of these.
+    expect(byUnit).toEqual(['v', 'a', 'a', 'w', 'f', 'h', 'hz']);
+  });
+
+  it("word-form echo: flagged when ungrounded, grounded once the user stated '50 V'", () => {
+    const msg = 'so pick a part rated 50 volts';
+    // Extracted at all? On broken (symbol-only) SPEC_TOKEN there's no token → no finding, so
+    // asserting a finding against an EMPTY known set is what makes this fail on broken code.
+    expect(detectUngroundedSpecValues(msg, [])).toHaveLength(1);
+    // And normalizeUnit maps volts→v, so it grounds against the user's "50 V".
+    const userKnown = knownValuesFromUserText('I need a 50 V rail');
+    expect(detectUngroundedSpecValues(msg, userKnown)).toHaveLength(0);
+  });
+
+  it("flags a word-form spec that is NOT grounded (still catches a real leak)", () => {
+    const known: KnownSpecValue[] = [{ baseSI: 50, unitKey: 'v', display: '50v' }];
+    const f = detectUngroundedSpecValues('aim for 12 volts', known);
+    expect(f).toHaveLength(1);
+    expect(f[0].unit).toBe('v');
+    expect(f[0].reason).toBe('value-unit-unverified');
+  });
+
+  it('does NOT fire on ordinary words that merely start like a unit', () => {
+    // "5 apples", "5 hens", "5 wide" must not read as amps/henries/watts.
+    expect(extractSpecTokens('5 apples, 5 hens, 5 wide, 5 seconds ago')).toHaveLength(0);
+  });
+});

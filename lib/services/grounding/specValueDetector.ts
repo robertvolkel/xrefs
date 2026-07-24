@@ -41,6 +41,14 @@ function normalizeUnit(unit: string): string {
   const u = unit.trim().toLowerCase();
   if (u === 'ω' || u === 'ohm' || u === 'ohms') return 'ohm';
   if (u === '℃' || u === '°c' || u === 'c') return 'c';
+  // Word-forms → the symbol key, so "50 volts" grounds against a known "50 V" (and the
+  // assistant echoing a user's word-form spec isn't false-flagged). See SPEC_TOKEN.
+  if (u === 'volt' || u === 'volts') return 'v';
+  if (u === 'amp' || u === 'amps' || u === 'ampere' || u === 'amperes') return 'a';
+  if (u === 'watt' || u === 'watts') return 'w';
+  if (u === 'farad' || u === 'farads') return 'f';
+  if (u === 'henry' || u === 'henries' || u === 'henrys') return 'h';
+  if (u === 'hertz') return 'hz';
   return u;
 }
 
@@ -73,9 +81,11 @@ function bareUnitKey(unit: string): string {
 // A value + optional space + optional single-char SI prefix + a known electronics unit, OR a bare
 // percentage. The leading (?<![\w.]) stops it firing inside an MPN/identifier ("LM317T" → "317T").
 // Prefix chars and unit are captured separately so "4.7kΩ" → {4.7, k, Ω}. Multi-char units (Hz)
-// still work because the single-char prefix is matched first.
+// still work because the single-char prefix is matched first. Word-form units (volts/amps/…) come
+// first in the alternation so they win over the single-letter symbols; the trailing (?![\w])
+// boundary keeps them from firing on ordinary words ("5 apples", "5 hens").
 const SPEC_TOKEN =
-  /(?<![\w.])(\d+(?:\.\d+)?)\s?([pnuµμmkKMGT])?(V|A|W|Ω|ohms?|F|H|Hz|s|°C|℃|dB|ppm|bps|sps)(?![\w])|(?<![\w.])(\d+(?:\.\d+)?)\s?(%)/gi;
+  /(?<![\w.])(\d+(?:\.\d+)?)\s?([pnuµμmkKMGT])?(volts?|amperes?|amps?|watts?|farads?|henr(?:ies|ys?)|hertz|ohms?|V|A|W|Ω|F|H|Hz|s|°C|℃|dB|ppm|bps|sps)(?![\w])|(?<![\w.])(\d+(?:\.\d+)?)\s?(%)/gi;
 
 export interface ParsedSpecToken {
   /** As written, e.g. "50 V", "4.7kΩ", "90%". */
