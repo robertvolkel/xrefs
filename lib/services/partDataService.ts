@@ -725,6 +725,14 @@ export async function searchParts(
   // MPN + canonical-MFR when per-MFR cards are on.
   const slugOf = (mfrLower: string): string | null | undefined => aliasByMfr.get(mfrLower)?.slug;
 
+  // Candidate identity for the merge AND the vetting block below: bare MPN (legacy) or
+  // MPN + canonical-maker when per-MFR cards are on — the SAME key the merge dedup uses. This
+  // keeps a shared standard MPN from two makers as two distinct candidates all the way through
+  // scoring, annotation and reordering, so one card can't be dropped nor scored with the OTHER
+  // maker's attributes. Byte-identical to bare-MPN keying when perMfrCards is off.
+  const keyOf = (p: { mpn: string; manufacturer?: string | null }): string =>
+    computeSearchDedupKey(p.mpn, p.manufacturer, perMfrCards, slugOf);
+
   // Merge in priority order: Digikey → Atlas → Parts.io
   const seenMpns = new Set<string>();
   const mergedMatches = [];
@@ -741,7 +749,8 @@ export async function searchParts(
     sourcesContributed.push(searches[i].source);
     const { result, attrsByMpn } = settledResult.value;
     if (attrsByMpn) {
-      for (const [k, v] of attrsByMpn) {
+      for (const v of attrsByMpn.values()) {
+        const k = keyOf(v.part);
         if (!candidateAttrsByMpn.has(k)) candidateAttrsByMpn.set(k, v);
       }
     }
@@ -786,7 +795,7 @@ export async function searchParts(
       // unfiltered majority's logic table.
       const scorable: PartAttributes[] = [];
       for (const m of mergedMatches) {
-        const a = candidateAttrsByMpn.get(m.mpn.toLowerCase());
+        const a = candidateAttrsByMpn.get(keyOf(m));
         if (a) scorable.push(a);
       }
       const synthetic = scorable.length > 0
@@ -797,7 +806,7 @@ export async function searchParts(
         const recs = findReplacements(logicTable, synthetic.source, scorable);
           const penaltyByMpn = new Map<string, number>();
           for (const a of scorable) {
-            penaltyByMpn.set(a.part.mpn.toLowerCase(), computeOverSpecPenalty(logicTable, synthetic.source, a));
+            penaltyByMpn.set(keyOf(a.part), computeOverSpecPenalty(logicTable, synthetic.source, a));
           }
           // How many of the user's CONSTRAINED specs a candidate actually CONFIRMS (the rule
           // for that attr passed on a REAL value — not a missing-data "review"). A part whose
@@ -840,8 +849,8 @@ export async function searchParts(
               if (hasRealValue) read++;
               if (d.ruleResult === 'pass' && hasRealValue) n++;
             }
-            readByMpn.set(rec.part.mpn.toLowerCase(), read);
-            confirmedByMpn.set(rec.part.mpn.toLowerCase(), n);
+            readByMpn.set(keyOf(rec.part), read);
+            confirmedByMpn.set(keyOf(rec.part), n);
           }
           // A spec the ENGINE cannot compare (`application_review` / `operational`) scores a flat
           // 50% for every candidate, so a stated "hFE 200-400" left the 110-gain part, the
@@ -850,10 +859,10 @@ export async function searchParts(
           // stated BANDS itself — search-only, engine untouched. A part outside a band the user
           // explicitly stated is a mismatch against what they asked for, so it counts as one.
           const statedBands = parseStatedBands(constraints, logicTable);
-          const attrsByMpnLower = new Map(scorable.map(a => [a.part.mpn.toLowerCase(), a]));
+          const attrsByMpnLower = new Map(scorable.map(a => [keyOf(a.part), a]));
           const bandRuleIndex = new Map(logicTable.rules.map(r => [r.attributeId, r]));
           const effectiveFails = (rec: XrefRecommendation): number => {
-            const attrs = attrsByMpnLower.get(rec.part.mpn.toLowerCase());
+            const attrs = attrsByMpnLower.get(keyOf(rec.part));
             const bandFails = attrs ? countStatedBandViolations(statedBands, logicTable, attrs, bandRuleIndex) : 0;
             return countRealMismatches(rec) + bandFails;
           };
@@ -862,27 +871,27 @@ export async function searchParts(
           // closest fit (least over-spec) → match %. Self-contained (greenfield has no certified
           // buckets / composite scores, so the shared sort's later keys don't apply).
           const statusRank = (s?: string) => (!s || s === 'Active' ? 0 : 1);
-          const failsByMpn = new Map(recs.map(r => [r.part.mpn.toLowerCase(), effectiveFails(r)]));
-          const failsOf = (r: XrefRecommendation) => failsByMpn.get(r.part.mpn.toLowerCase()) ?? 0;
+          const failsByMpn = new Map(recs.map(r => [keyOf(r.part), effectiveFails(r)]));
+          const failsOf = (r: XrefRecommendation) => failsByMpn.get(keyOf(r.part)) ?? 0;
           recs.sort((a, b) => {
             const fd = failsOf(a) - failsOf(b);
             if (fd !== 0) return fd;
             const sd = statusRank(a.part.status) - statusRank(b.part.status);
             if (sd !== 0) return sd;
-            const cd = (confirmedByMpn.get(b.part.mpn.toLowerCase()) ?? 0) - (confirmedByMpn.get(a.part.mpn.toLowerCase()) ?? 0);
+            const cd = (confirmedByMpn.get(keyOf(b.part)) ?? 0) - (confirmedByMpn.get(keyOf(a.part)) ?? 0);
             if (cd !== 0) return cd;
-            const pd = (penaltyByMpn.get(a.part.mpn.toLowerCase()) ?? 0) - (penaltyByMpn.get(b.part.mpn.toLowerCase()) ?? 0);
+            const pd = (penaltyByMpn.get(keyOf(a.part)) ?? 0) - (penaltyByMpn.get(keyOf(b.part)) ?? 0);
             if (pd !== 0) return pd;
             return b.matchPercentage - a.matchPercentage;
           });
 
           // Annotate the matching cards + rebuild mergedMatches in rec order,
           // appending any unscorable matches (no attrs) after, original order.
-          const summaryByMpn = new Map(mergedMatches.map(m => [m.mpn.toLowerCase(), m]));
+          const summaryByMpn = new Map(mergedMatches.map(m => [keyOf(m), m]));
           const reordered: typeof mergedMatches = [];
           const placed = new Set<string>();
           for (const rec of recs) {
-            const key = rec.part.mpn.toLowerCase();
+            const key = keyOf(rec.part);
             const summary = summaryByMpn.get(key);
             if (!summary || placed.has(key)) continue;
             const fails = failsOf(rec);
@@ -908,7 +917,7 @@ export async function searchParts(
             placed.add(key);
           }
           for (const m of mergedMatches) {
-            if (!placed.has(m.mpn.toLowerCase())) reordered.push(m);
+            if (!placed.has(keyOf(m))) reordered.push(m);
           }
           mergedMatches.length = 0;
           mergedMatches.push(...reordered);
