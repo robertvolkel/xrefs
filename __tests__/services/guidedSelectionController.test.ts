@@ -441,4 +441,38 @@ describe('wrong-choice clarify (SELECTION_VALIDATION_ENABLED)', () => {
     // Whatever the flow does next, it must NOT be the conflict clarify.
     if (out?.kind === 'ask') expect(out.message.startsWith('"ZZ9Q" isn\'t')).toBe(false);
   });
+
+  // The REALISTIC path: the spec extractor DROPS an unrecognized categorical value, so it never
+  // reaches the validator and the flow would re-ask the identical question. The controller must
+  // detect the repeat and acknowledge the bad answer instead. (This is the bug the founder hit:
+  // "Z99" → the same dielectric question verbatim.)
+  const droppedByExtractor = async (): Promise<GuidedAnswerMap> => ({});
+  const reAskConvo = [
+    u('So...I need an MLCC capacitor'),
+    a('Which dielectric / temperature characteristic do you need?'),
+    u('Z99'),
+  ];
+
+  it('flag ON: a dropped unrecognized answer → acknowledges, does NOT bare-repeat', async () => {
+    process.env.SELECTION_VALIDATION_ENABLED = '1';
+    const out = await decideGuidedTurn(reAskConvo, droppedByExtractor);
+    expect(out?.kind).toBe('ask');
+    if (out?.kind === 'ask') {
+      expect(out.message.startsWith('"Z99" isn\'t')).toBe(true);
+      expect(out.message).not.toBe('Which dielectric / temperature characteristic do you need?');
+      expect(out.choices?.map(c => c.id)).toContain('C0G');
+    }
+  });
+
+  it('flag ON: the FIRST ask of a spec is the plain question (no false acknowledgment)', async () => {
+    process.env.SELECTION_VALIDATION_ENABLED = '1';
+    const out = await decideGuidedTurn([u('I need an MLCC capacitor')], droppedByExtractor);
+    if (out?.kind === 'ask') expect(out.message.startsWith('"')).toBe(false);
+  });
+
+  it('flag OFF: a dropped answer falls back to the bare re-ask (feature is dark)', async () => {
+    delete process.env.SELECTION_VALIDATION_ENABLED;
+    const out = await decideGuidedTurn(reAskConvo, droppedByExtractor);
+    if (out?.kind === 'ask') expect(out.message.startsWith('"Z99" isn\'t')).toBe(false);
+  });
 });

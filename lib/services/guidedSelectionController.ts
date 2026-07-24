@@ -453,11 +453,21 @@ export async function decideGuidedTurn(
   if (!step) return null;
 
   if (step.type === 'ask_choice') {
-    return {
-      kind: 'ask',
-      message: renderChoiceQuestion(step.attr.label),
-      choices: (step.attr.options ?? []).map(o => ({ id: o, label: o })),
-    };
+    const choices = (step.attr.options ?? []).map(o => ({ id: o, label: o }));
+    // Don't rudely re-ask the SAME choice question. If we already asked about THIS spec last
+    // turn (plainly or via a conflict) and the user answered yet the spec is STILL unanswered,
+    // their answer wasn't a recognized option — the extractor drops an unrecognized categorical
+    // value, so it never reaches the wrong-choice validator above. Acknowledge it here instead.
+    // (Detected by the cleaned spec label appearing in the prior question, which both
+    // renderChoiceQuestion and renderConflictQuestion carry, so repeated bad answers keep getting
+    // acknowledged rather than falling back to a bare repeat.) Gated with the validator flag.
+    const cleanLabel = step.attr.label.replace(/\s*\([^)]*\)\s*$/, '').trim();
+    const askedThisSpecBefore =
+      inProgress && !!lastAssistant && lastAssistant.content.toLowerCase().includes(cleanLabel.toLowerCase());
+    if (process.env.SELECTION_VALIDATION_ENABLED === '1' && askedThisSpecBefore && userText) {
+      return { kind: 'ask', message: renderConflictQuestion(step.attr.label, userText), choices };
+    }
+    return { kind: 'ask', message: renderChoiceQuestion(step.attr.label), choices };
   }
   if (step.type === 'ask_values') {
     return { kind: 'ask', message: renderValuesQuestion(step.attrs.map(a => a.label)) };
