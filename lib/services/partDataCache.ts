@@ -189,7 +189,7 @@ export const RECS_CACHE_SCHEMA_VERSION = 'v21';
  *  so naming a part returns that part rather than a sample-kit/variant box that Digikey floated ahead
  *  of it. A v15 row cached under an MPN lookup carries the pre-fix order — served stale, it reads
  *  exactly like the fix never shipped (the wrong row still wins matches[0]). */
-export const SEARCH_CACHE_SCHEMA_VERSION = 'v16';
+export const SEARCH_CACHE_SCHEMA_VERSION = 'v17';
 
 /** Not-found sentinel: 24 hours */
 export const TTL_NOT_FOUND_MS = 24 * 60 * 60 * 1000;

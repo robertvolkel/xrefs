@@ -430,6 +430,30 @@ function deserializeBasePayload(s: SerializableBasePayload): BasePayload | null 
  * Exported so the ordering can be unit-tested directly (see multiSourceSearch.test.ts) rather than
  * mocking the whole cache + Digikey + Atlas + alias I/O of `searchParts` just to assert an order.
  */
+/**
+ * The search merge dedup key. Legacy behavior (perMfrCards=false) collapses purely by MPN, so
+ * the first source (Digikey) wins and alternate makers of a standard MPN are dropped. With
+ * perMfrCards=true the key is MPN + canonical manufacturer, so genuinely different makers of the
+ * same standard number (LM317T from TI vs a Chinese maker) each survive, while true same-maker
+ * cross-source duplicates still collapse because they resolve to the SAME canonical slug
+ * ("onsemi" ≡ "ON Semiconductor"). `slugOf` receives an already-lowercased maker string and
+ * returns the canonical slug, or null/undefined when the alias index misses (then the raw maker
+ * string is used, so distinct spellings of an unknown maker stay separate — fail-safe toward
+ * showing more, never fewer). Pure + exported for unit testing.
+ */
+export function computeSearchDedupKey(
+  mpn: string,
+  manufacturer: string | undefined | null,
+  perMfrCards: boolean,
+  slugOf: (mfrLower: string) => string | null | undefined,
+): string {
+  const mpnLower = mpn.toLowerCase();
+  if (!perMfrCards) return mpnLower;
+  const mfrLower = manufacturer?.toLowerCase() ?? '';
+  const slug = slugOf(mfrLower);
+  return `${mpnLower}::${slug || mfrLower}`;
+}
+
 export function orderSearchCandidates<T extends { mpn: string; status?: string }>(
   matches: T[],
   query: string,
@@ -491,12 +515,18 @@ export async function searchParts(
         .join(',')}|${[...(options?.answeredSpecIds ?? [])].sort().join(',')}`
     : '';
 
+  // Per-manufacturer cards (Track B, dark): when ON, the merge dedups by MPN + canonical
+  // manufacturer so different makers of a shared standard MPN (LM317T, 1N4148) each get a card;
+  // OFF = the legacy MPN-only dedup (byte-identical). The flag is in the cache key so a flip
+  // never serves a result computed under the other dedup.
+  const perMfrCards = process.env.PER_MFR_CARDS_ENABLED === '1';
+
   // ── Search cache: L1 in-memory ──
   // MFR hint participates in the cache key so "1.5KE10" and "1.5KE10 from
   // Galaxy" don't poison each other's results. SEARCH_CACHE_SCHEMA_VERSION
   // is a prefix so old-shape entries are unreachable when merge semantics
   // change (bump it in partDataCache.ts, not here).
-  const cacheKey = `${SEARCH_CACHE_SCHEMA_VERSION}__${trimmed.toLowerCase()}__${currency ?? 'USD'}__${options?.skipFindchips ? '1' : '0'}__${mfrHint?.toLowerCase() ?? ''}__${vettingKey}`;
+  const cacheKey = `${SEARCH_CACHE_SCHEMA_VERSION}__${trimmed.toLowerCase()}__${currency ?? 'USD'}__${options?.skipFindchips ? '1' : '0'}__${mfrHint?.toLowerCase() ?? ''}__${vettingKey}__${perMfrCards ? 'pm1' : 'pm0'}`;
   const cached = searchCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < SEARCH_CACHE_TTL) {
     if (!shouldBypassSearchCache(cached.data)) {
@@ -666,6 +696,35 @@ export async function searchParts(
     return c.includes(mfrHintLower) || mfrHintLower.includes(c);
   };
 
+  // Resolve canonical manufacturer identity (slug + origin source) ONCE, before dedup, for every
+  // candidate maker across all sources. Two consumers:
+  //   (1) per-MFR dedup — the canonical SLUG lets "onsemi" ≡ "ON Semiconductor" collapse while two
+  //       genuinely different makers of the same standard MPN stay distinct;
+  //   (2) mfrOrigin (Decision #161) — the "Chinese only" filter keys off identity, not the
+  //       `dataSource` tag, so a Chinese maker's part arriving via Digikey (3PEAK) still reads CN.
+  // Cheap: the alias resolver is an in-memory index after a 5-min-cached load (~2ms for a full
+  // result set); it caches with the search result. Failures fall open (slug null / origin unknown).
+  const aliasByMfr = new Map<string, { slug: string | null; source: 'atlas' | 'western' | 'unknown' }>();
+  {
+    const candidateMfrs = new Set<string>();
+    for (const s of settled) {
+      if (s.status !== 'fulfilled') continue;
+      for (const p of s.value.result.matches ?? []) if (p.manufacturer) candidateMfrs.add(p.manufacturer);
+    }
+    await Promise.all([...candidateMfrs].map(async mfr => {
+      try {
+        const alias = await resolveManufacturerAlias(mfr);
+        aliasByMfr.set(mfr.toLowerCase(), { slug: alias?.slug ?? null, source: alias?.source ?? 'unknown' });
+      } catch {
+        aliasByMfr.set(mfr.toLowerCase(), { slug: null, source: 'unknown' });
+      }
+    }));
+  }
+
+  // Dedup key (extracted to computeSearchDedupKey for unit testing): MPN-only (legacy) OR
+  // MPN + canonical-MFR when per-MFR cards are on.
+  const slugOf = (mfrLower: string): string | null | undefined => aliasByMfr.get(mfrLower)?.slug;
+
   // Merge in priority order: Digikey → Atlas → Parts.io
   const seenMpns = new Set<string>();
   const mergedMatches = [];
@@ -689,7 +748,7 @@ export async function searchParts(
     const matches = result.matches ?? [];
     for (const part of matches) {
       if (!matchesMfrHint(part.manufacturer)) continue;
-      const key = part.mpn.toLowerCase();
+      const key = computeSearchDedupKey(part.mpn, part.manufacturer, perMfrCards, slugOf);
       if (!seenMpns.has(key) && mergedMatches.length < SEARCH_RESULT_CAP) {
         seenMpns.add(key);
         mergedMatches.push(part);
@@ -700,32 +759,16 @@ export async function searchParts(
   // Order the merged pool for display and matches[0] selection: EXACT-MPN match first (so naming a
   // part returns that part, not a sample-kit/variant box Digikey floated ahead of it), then
   // Active-first. The merge above already runs in source priority order (Digikey/western → Atlas →
-  // parts.io) and Array.sort is stable, so that order is preserved within each rank group. See
-  // orderSearchCandidates for the full rationale. Stable, mutates in place.
+  // parts.io) and Array.sort is stable, so that order is preserved within each rank group — so
+  // even with per-MFR cards for a shared standard MPN, the Digikey/western maker's card stays
+  // first. See orderSearchCandidates for the full rationale. Stable, mutates in place.
   orderSearchCandidates(mergedMatches, trimmed);
 
-  // Resolve canonical manufacturer origin per unique MFR (mirrors getRecommendations,
-  // Decision #161) so the search-result "Chinese only" filter keys off identity, not the
-  // `dataSource` tag — a Chinese maker's part can arrive via Digikey (3PEAK, GOODWORK) and
-  // must still read as Chinese. Belt-and-suspenders: a row sourced FROM Atlas is Chinese even
-  // if the alias index misses the name. Cheap: the alias resolver is an in-memory index after
-  // a 5-min-cached load (~2ms for a full result set), so this adds no meaningful latency, and
-  // it caches with the search result. Failures leave mfrOrigin undefined (filter falls open).
-  {
-    const uniqueMfrs = [...new Set(mergedMatches.map(m => m.manufacturer).filter(Boolean))];
-    const originByMfr = new Map<string, 'atlas' | 'western' | 'unknown'>();
-    await Promise.all(uniqueMfrs.map(async mfr => {
-      try {
-        const alias = await resolveManufacturerAlias(mfr);
-        originByMfr.set(mfr.toLowerCase(), alias?.source ?? 'unknown');
-      } catch {
-        originByMfr.set(mfr.toLowerCase(), 'unknown');
-      }
-    }));
-    for (const m of mergedMatches) {
-      const resolved = originByMfr.get(m.manufacturer?.toLowerCase() ?? '');
-      m.mfrOrigin = m.dataSource === 'atlas' ? 'atlas' : (resolved ?? 'unknown');
-    }
+  // Apply canonical origin (Decision #161) from the pre-resolved map. A row sourced FROM Atlas is
+  // Chinese even if the alias index missed the name.
+  for (const m of mergedMatches) {
+    const src = aliasByMfr.get(m.manufacturer?.toLowerCase() ?? '')?.source ?? 'unknown';
+    m.mfrOrigin = m.dataSource === 'atlas' ? 'atlas' : src;
   }
 
   // ── Logic-vetted descriptive search ──
