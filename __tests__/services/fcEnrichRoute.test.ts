@@ -70,6 +70,14 @@ jest.mock('../../lib/services/findchipsClient', () => ({
   getFindchipsResultsBatch: (..._args: unknown[]) => batchMock(),
 }));
 
+// Alias resolver is server-only (Supabase); stub it. Default: no alias (raw-name match
+// only), which keeps the exact-spelling cases identical to the maker-only behavior. One
+// test overrides it to prove the `variants` coverage path.
+const aliasMock = jest.fn(async (_name: string): Promise<unknown> => null);
+jest.mock('../../lib/services/manufacturerAliasResolver', () => ({
+  resolveManufacturerAlias: (name: string) => aliasMock(name),
+}));
+
 import { POST } from '@/app/api/fc/enrich/route';
 
 interface EnrichResponse {
@@ -84,7 +92,11 @@ const digikeyQuote = (quotes: Array<{ supplier: string; productUrl?: string }>) 
   quotes.find(q => q.supplier.toLowerCase().includes('digikey') || q.supplier.toLowerCase().includes('digi-key'));
 
 describe('POST /api/fc/enrich — maker scoping', () => {
-  beforeEach(() => batchMock.mockClear());
+  beforeEach(() => {
+    batchMock.mockClear();
+    aliasMock.mockReset();
+    aliasMock.mockImplementation(async () => null);
+  });
 
   it('with a maker map, an ST card gets ONLY ST distributors and ST buy links (not the cheapest cross-maker offer)', async () => {
     const { status, json } = await invokeRoute<EnrichResponse>(POST, {
@@ -115,6 +127,23 @@ describe('POST /api/fc/enrich — maker scoping', () => {
       body: { mpns: ['LM317T'], makers: { lm317t: 'HGSEMI' } },
     });
     expect(json.data!.results.lm317t.quotes).toHaveLength(0);
+  });
+
+  it('an alias variant lets a differently-spelled card maker ("ST") match its own offers', async () => {
+    // Raw "ST" normalizes to "st" and would match nothing; the alias resolver supplies
+    // "STMicroelectronics" as a variant, so the ST card resolves to ST's 3 distributors.
+    aliasMock.mockImplementation(async (name: string) =>
+      name === 'ST'
+        ? { canonical: 'STMicroelectronics', slug: 'st', source: 'western', variants: ['ST', 'STMicroelectronics'] }
+        : null,
+    );
+    const { json } = await invokeRoute<EnrichResponse>(POST, {
+      body: { mpns: ['LM317T'], makers: { lm317t: 'ST' } },
+    });
+    const quotes = json.data!.results.lm317t.quotes;
+    expect(quotes).toHaveLength(3);
+    for (const q of quotes) expect(q.productUrl).toContain('STMicroelectronics');
+    expect(aliasMock).toHaveBeenCalledWith('ST');
   });
 
   it('WITHOUT a maker map, behavior is unchanged — all 4 distributors, DigiKey picks the cross-maker best (Rochester)', async () => {

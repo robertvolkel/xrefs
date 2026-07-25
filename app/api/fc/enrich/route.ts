@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 import { isFindchipsConfigured, getFindchipsResultsBatch, hasFindchipsBudget } from '@/lib/services/findchipsClient';
 import { mapFCToQuotes, mapFCLifecycle, mapFCCompliance, filterFcResultsByMaker } from '@/lib/services/findchipsMapper';
+import { resolveManufacturerAlias } from '@/lib/services/manufacturerAliasResolver';
 import type { SupplierQuote, LifecycleInfo, ComplianceData } from '@/lib/types';
 
 interface FCEnrichResult {
@@ -66,12 +67,22 @@ export async function POST(request: NextRequest) {
       ? (makersRaw as Record<string, unknown>)
       : undefined;
 
-    const fcResults = await getFindchipsResultsBatch(mpns, user?.id, chineseMpns ? { chineseMpns } : undefined);
+    // Resolve alias `variants` for the DISTINCT makers so filterFcResultsByMaker can
+    // match a card whose stored spelling differs from FindChips beyond a suffix strip
+    // ("ST" vs "STMicroelectronics", onsemi's forms). resolveManufacturerAlias is
+    // L1(5-min)+L2(6-month) cached — effectively an in-memory lookup — and runs in
+    // parallel with the FindChips batch, so it adds no meaningful latency.
+    const [fcResults, variantsByMaker] = await Promise.all([
+      getFindchipsResultsBatch(mpns, user?.id, chineseMpns ? { chineseMpns } : undefined),
+      resolveVariantsForMakers(makers),
+    ]);
+
     const results: Record<string, FCEnrichResult> = {};
 
     for (const [mpnLower, distResults] of fcResults) {
       const maker = makers ? makers[mpnLower] : undefined;
-      const scoped = filterFcResultsByMaker(distResults, typeof maker === 'string' ? maker : null);
+      const variants = typeof maker === 'string' ? variantsByMaker.get(maker) : undefined;
+      const scoped = filterFcResultsByMaker(distResults, typeof maker === 'string' ? maker : null, variants);
       results[mpnLower] = {
         quotes: mapFCToQuotes(scoped, mpnLower),
         lifecycle: mapFCLifecycle(scoped),
@@ -83,4 +94,30 @@ export async function POST(request: NextRequest) {
   } catch {
     return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
   }
+}
+
+/**
+ * Resolve alias `variants` for each DISTINCT maker string in the request, concurrently.
+ * Returns a map (original maker string → variant spellings). A resolver miss or failure
+ * yields no entry — filterFcResultsByMaker then matches on the raw maker only (still safe,
+ * just narrower). Deduping to distinct makers keeps this to a handful of warm-cache reads.
+ */
+async function resolveVariantsForMakers(
+  makers: Record<string, unknown> | undefined,
+): Promise<Map<string, readonly string[]>> {
+  const out = new Map<string, readonly string[]>();
+  if (!makers) return out;
+  const distinct = [...new Set(
+    Object.values(makers).filter((v): v is string => typeof v === 'string' && v.trim().length > 0),
+  )];
+  if (distinct.length === 0) return out;
+  await Promise.all(distinct.map(async (mk) => {
+    try {
+      const alias = await resolveManufacturerAlias(mk);
+      if (alias?.variants?.length) out.set(mk, alias.variants);
+    } catch {
+      // resolver failure → no variants for this maker (raw-name match still applies)
+    }
+  }));
+  return out;
 }

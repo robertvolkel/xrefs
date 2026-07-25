@@ -1078,13 +1078,23 @@ async function enrichWithFindchips(attrs: PartAttributes, userId?: string): Prom
     //       Atlas-source card) and the click-flow Commercial tab disagree
     //       whenever parts.io shadows an Atlas-listed MPN.
     let isAtlas = attrs.part.mfrOrigin === 'atlas' || attrs.dataSource === 'atlas';
-    if (!isAtlas && attrs.part.manufacturer) {
+    // Resolve the maker's alias ONCE and reuse it for two things: the Atlas source
+    // selection below, AND the `variants` fed to filterFcResultsByMaker — so a card
+    // whose stored spelling differs from FindChips beyond a suffix strip (e.g. "ST" vs
+    // "STMicroelectronics", onsemi's several forms) still matches its own offers instead
+    // of showing nothing. Source selection is unchanged: resolving when already-Atlas
+    // never flips isAtlas back, and a non-Atlas match leaves it false as before.
+    let makerVariants: readonly string[] | undefined;
+    if (attrs.part.manufacturer) {
       try {
         const alias = await resolveManufacturerAlias(attrs.part.manufacturer);
-        if (alias?.source === 'atlas') isAtlas = true;
+        if (alias) {
+          if (alias.source === 'atlas') isAtlas = true;
+          makerVariants = alias.variants;
+        }
       } catch {
-        // resolver failure → fall through to fc-with-oems-fallback (server-side
-        // fallback still kicks in for FC-empty/obsolete cases).
+        // resolver failure → no variants, and fall through to fc-with-oems-fallback
+        // (server-side fallback still kicks in for FC-empty/obsolete cases).
       }
     }
     const source = isAtlas ? 'parallel-both' : 'fc-with-oems-fallback';
@@ -1099,7 +1109,7 @@ async function enrichWithFindchips(attrs: PartAttributes, userId?: string): Prom
     // unconfigured, but the guard at the top already returned in that case.
     if (providersEnrichEnabled()) {
       const provider = commercialProvider();
-      const commercial = provider ? await provider.getCommercial(attrs.part.mpn, { source, userId, manufacturer: attrs.part.manufacturer }) : null;
+      const commercial = provider ? await provider.getCommercial(attrs.part.mpn, { source, userId, manufacturer: attrs.part.manufacturer, variants: makerVariants }) : null;
       if (!commercial) return attrs;
       return {
         ...attrs,
@@ -1117,8 +1127,9 @@ async function enrichWithFindchips(attrs: PartAttributes, userId?: string): Prom
 
     // Keep only offers confidently made by THIS part's maker, so quotes / prices / buy-links and
     // lifecycle / compliance describe attrs.part.manufacturer's part — not another company's part
-    // that merely shares the MPN string. See filterFcResultsByMaker.
-    const scoped = filterFcResultsByMaker(results, attrs.part.manufacturer);
+    // that merely shares the MPN string. `makerVariants` (alias spellings) widens the match so a
+    // differently-spelled-but-same-maker offer still counts. See filterFcResultsByMaker.
+    const scoped = filterFcResultsByMaker(results, attrs.part.manufacturer, makerVariants);
     const quotes = mapFCToQuotes(scoped, attrs.part.mpn);
     const lifecycle = mapFCLifecycle(scoped);
     const compliance = mapFCCompliance(scoped);

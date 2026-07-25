@@ -181,7 +181,7 @@ export type CommercialSource = 'parallel-both' | 'fc-with-oems-fallback';
 
 export interface CommercialProvider extends DataSourceProvider {
   readonly kind: 'commercial';
-  getCommercial(mpn: string, opts: { source: CommercialSource; userId?: string; manufacturer?: string | null }): Promise<CommercialData | null>;
+  getCommercial(mpn: string, opts: { source: CommercialSource; userId?: string; manufacturer?: string | null; variants?: readonly string[] }): Promise<CommercialData | null>;
   /** `maker` scopes the count to that manufacturer (a shared MPN mixes makers). Omit for the total. */
   getDistributorCount(mpn: string, maker?: string | null): Promise<number | undefined>;
 }

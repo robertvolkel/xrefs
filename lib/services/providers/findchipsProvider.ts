@@ -42,7 +42,7 @@ export const findchipsProvider: CommercialProvider = {
   isConfigured: isFindchipsConfigured,
 
   // Mirrors enrichWithFindchips fetch+map. `source` is resolved by the orchestrator.
-  async getCommercial(mpn: string, opts: { source: CommercialSource; userId?: string; manufacturer?: string | null }): Promise<CommercialData | null> {
+  async getCommercial(mpn: string, opts: { source: CommercialSource; userId?: string; manufacturer?: string | null; variants?: readonly string[] }): Promise<CommercialData | null> {
     if (!isFindchipsConfigured() || !hasFindchipsBudget()) return null;
 
     try {
@@ -50,8 +50,10 @@ export const findchipsProvider: CommercialProvider = {
       if (!results || results.length === 0) return null;
 
       // Mirror the inline enrichWithFindchips path: keep only this maker's offers so a shared MPN
-      // doesn't attribute another company's price/buy-link to this part.
-      const scoped = filterFcResultsByMaker(results, opts.manufacturer);
+      // doesn't attribute another company's price/buy-link to this part. `variants` (alias
+      // spellings, resolved by the orchestrator) widens the match; the provider never resolves
+      // identity itself (Decision #275).
+      const scoped = filterFcResultsByMaker(results, opts.manufacturer, opts.variants);
       const quotes = mapFCToQuotes(scoped, mpn);
       const lifecycle = mapFCLifecycle(scoped);
       const compliance = mapFCCompliance(scoped);
