@@ -47,7 +47,7 @@ import { providersAttrsEnabled, providersEnrichEnabled, providersSearchEnabled, 
 import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSuggestedMpn, MouserProduct } from './mouserClient';
 import { mapMouserLifecycle } from './mouserMapper';
 import { isFindchipsConfigured, getFindchipsResults, getFindchipsResultsBatch, hasFindchipsBudget, getCachedDistributorCounts } from './findchipsClient';
-import { mapFCToQuotes, mapFCLifecycle, mapFCCompliance } from './findchipsMapper';
+import { mapFCToQuotes, mapFCLifecycle, mapFCCompliance, filterFcResultsByMaker } from './findchipsMapper';
 import { getCachedResponse, setCachedResponse, TTL_SEARCH_MS, TTL_RECOMMENDATIONS_MS, RECS_CACHE_SCHEMA_VERSION, SEARCH_CACHE_SCHEMA_VERSION } from './partDataCache';
 import { createHash } from 'crypto';
 import { fetchManufacturerCrossRefs } from './manufacturerCrossRefService';
@@ -1091,7 +1091,7 @@ async function enrichWithFindchips(attrs: PartAttributes, userId?: string): Prom
     // unconfigured, but the guard at the top already returned in that case.
     if (providersEnrichEnabled()) {
       const provider = commercialProvider();
-      const commercial = provider ? await provider.getCommercial(attrs.part.mpn, { source, userId }) : null;
+      const commercial = provider ? await provider.getCommercial(attrs.part.mpn, { source, userId, manufacturer: attrs.part.manufacturer }) : null;
       if (!commercial) return attrs;
       return {
         ...attrs,
@@ -1107,9 +1107,13 @@ async function enrichWithFindchips(attrs: PartAttributes, userId?: string): Prom
     const results = await getFindchipsResults(attrs.part.mpn, userId, { source });
     if (!results || results.length === 0) return attrs;
 
-    const quotes = mapFCToQuotes(results, attrs.part.mpn);
-    const lifecycle = mapFCLifecycle(results);
-    const compliance = mapFCCompliance(results);
+    // Keep only offers confidently made by THIS part's maker, so quotes / prices / buy-links and
+    // lifecycle / compliance describe attrs.part.manufacturer's part — not another company's part
+    // that merely shares the MPN string. See filterFcResultsByMaker.
+    const scoped = filterFcResultsByMaker(results, attrs.part.manufacturer);
+    const quotes = mapFCToQuotes(scoped, attrs.part.mpn);
+    const lifecycle = mapFCLifecycle(scoped);
+    const compliance = mapFCCompliance(scoped);
 
     const lifecycleInfos: LifecycleInfo[] = [];
     if (lifecycle) lifecycleInfos.push(lifecycle);
@@ -1163,9 +1167,10 @@ async function enrichCandidatesWithFindchips(recs: XrefRecommendation[], userId?
     const distResults = fcResults.get(rec.part.mpn.toLowerCase());
     if (!distResults || distResults.length === 0) return rec;
 
-    const quotes = mapFCToQuotes(distResults, rec.part.mpn);
-    const lifecycle = mapFCLifecycle(distResults);
-    const compliance = mapFCCompliance(distResults);
+    const scoped = filterFcResultsByMaker(distResults, rec.part.manufacturer);
+    const quotes = mapFCToQuotes(scoped, rec.part.mpn);
+    const lifecycle = mapFCLifecycle(scoped);
+    const compliance = mapFCCompliance(scoped);
 
     return {
       ...rec,

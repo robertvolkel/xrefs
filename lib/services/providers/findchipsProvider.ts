@@ -17,7 +17,7 @@ import {
   getFindchipsResults,
   getCachedDistributorCounts,
 } from '../findchipsClient';
-import { mapFCToQuotes, mapFCLifecycle, mapFCCompliance } from '../findchipsMapper';
+import { mapFCToQuotes, mapFCLifecycle, mapFCCompliance, filterFcResultsByMaker } from '../findchipsMapper';
 import { reportServiceFailure } from '../serviceStatusTracker';
 import type { LifecycleInfo, ComplianceData } from '../../types';
 import type { CommercialProvider, ProviderCapabilities, CommercialData, CommercialSource } from './types';
@@ -42,16 +42,19 @@ export const findchipsProvider: CommercialProvider = {
   isConfigured: isFindchipsConfigured,
 
   // Mirrors enrichWithFindchips fetch+map. `source` is resolved by the orchestrator.
-  async getCommercial(mpn: string, opts: { source: CommercialSource; userId?: string }): Promise<CommercialData | null> {
+  async getCommercial(mpn: string, opts: { source: CommercialSource; userId?: string; manufacturer?: string | null }): Promise<CommercialData | null> {
     if (!isFindchipsConfigured() || !hasFindchipsBudget()) return null;
 
     try {
       const results = await getFindchipsResults(mpn, opts.userId, { source: opts.source });
       if (!results || results.length === 0) return null;
 
-      const quotes = mapFCToQuotes(results, mpn);
-      const lifecycle = mapFCLifecycle(results);
-      const compliance = mapFCCompliance(results);
+      // Mirror the inline enrichWithFindchips path: keep only this maker's offers so a shared MPN
+      // doesn't attribute another company's price/buy-link to this part.
+      const scoped = filterFcResultsByMaker(results, opts.manufacturer);
+      const quotes = mapFCToQuotes(scoped, mpn);
+      const lifecycle = mapFCLifecycle(scoped);
+      const compliance = mapFCCompliance(scoped);
 
       const lifecycleInfos: LifecycleInfo[] = lifecycle ? [lifecycle] : [];
       const complianceEntries: ComplianceData[] = compliance ? [compliance] : [];
