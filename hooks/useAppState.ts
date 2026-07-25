@@ -507,6 +507,16 @@ export function useAppState() {
       const chineseMpns = sortedRecs
         .filter(r => r.part.mfrOrigin === 'atlas')
         .map(r => r.part.mpn.toLowerCase());
+      // Per-MPN maker map so /fc/enrich attributes each card's price/buy-link to the
+      // card's OWN manufacturer, not to whichever maker of the shared MPN wins FindChips'
+      // maker-blind price/stock tiebreak. Recs are deduped by bare MPN upstream, so one
+      // maker per MPN — no key collision. Passed whole to every chunk; the route only
+      // reads the MPNs it received.
+      const makersByMpn: Record<string, string> = {};
+      for (const r of sortedRecs) {
+        const mfr = r.part.manufacturer;
+        if (mfr && mfr.trim()) makersByMpn[r.part.mpn.toLowerCase()] = mfr;
+      }
       const chunks: string[][] = [];
       if (mpns.length > 0) chunks.push(mpns.slice(0, PRIORITY_CHUNK));
       for (let i = PRIORITY_CHUNK; i < mpns.length; i += CHUNK_SIZE) {
@@ -516,7 +526,7 @@ export function useAppState() {
       setState((prev) => ({ ...prev, isEnrichingFC: true }));
 
       const chunkPromises = chunks.map(chunk =>
-        enrichWithFCBatch(chunk, signal, chineseMpns).then((fcData) => {
+        enrichWithFCBatch(chunk, signal, chineseMpns, makersByMpn).then((fcData) => {
           if (signal.aborted || Object.keys(fcData).length === 0) return;
           setState((prev) => {
             // Enrich against the FULL source (allRecommendations), NOT the

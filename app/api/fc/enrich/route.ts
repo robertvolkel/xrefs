@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 import { isFindchipsConfigured, getFindchipsResultsBatch, hasFindchipsBudget } from '@/lib/services/findchipsClient';
-import { mapFCToQuotes, mapFCLifecycle, mapFCCompliance } from '@/lib/services/findchipsMapper';
+import { mapFCToQuotes, mapFCLifecycle, mapFCCompliance, filterFcResultsByMaker } from '@/lib/services/findchipsMapper';
 import type { SupplierQuote, LifecycleInfo, ComplianceData } from '@/lib/types';
 
 interface FCEnrichResult {
@@ -35,6 +35,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const mpns: string[] = body.mpns;
     const chineseMpnsRaw: unknown = body.chineseMpns;
+    const makersRaw: unknown = body.makers;
 
     if (!Array.isArray(mpns) || mpns.length === 0) {
       return NextResponse.json({ success: false, error: 'mpns must be a non-empty array' }, { status: 400 });
@@ -52,14 +53,29 @@ export async function POST(request: NextRequest) {
       ? new Set<string>((chineseMpnsRaw as unknown[]).filter((x): x is string => typeof x === 'string').map(s => s.toLowerCase()))
       : undefined;
 
+    // Optional per-MPN maker map (keyed by lowercase MPN) from the caller. FindChips
+    // indexes by part-number string, so one MPN's results mix every maker that sells it;
+    // without this, a card's price/buy-link can be attributed to the WRONG company that
+    // merely shares the MPN. `filterFcResultsByMaker` keeps only offers confidently made
+    // by the card's maker before quotes/lifecycle/compliance are built. Callers that omit
+    // `makers` (e.g. the search-card distributor-count enrichment) are unaffected — the
+    // filter passes results through untouched when no maker is supplied.
+    // Recs are deduped by bare MPN (partDataService.ts seenMpns merge), so each requested
+    // MPN maps to exactly one maker — the mpnLower response key never collides.
+    const makers = (makersRaw && typeof makersRaw === 'object' && !Array.isArray(makersRaw))
+      ? (makersRaw as Record<string, unknown>)
+      : undefined;
+
     const fcResults = await getFindchipsResultsBatch(mpns, user?.id, chineseMpns ? { chineseMpns } : undefined);
     const results: Record<string, FCEnrichResult> = {};
 
     for (const [mpnLower, distResults] of fcResults) {
+      const maker = makers ? makers[mpnLower] : undefined;
+      const scoped = filterFcResultsByMaker(distResults, typeof maker === 'string' ? maker : null);
       results[mpnLower] = {
-        quotes: mapFCToQuotes(distResults, mpnLower),
-        lifecycle: mapFCLifecycle(distResults),
-        compliance: mapFCCompliance(distResults),
+        quotes: mapFCToQuotes(scoped, mpnLower),
+        lifecycle: mapFCLifecycle(scoped),
+        compliance: mapFCCompliance(scoped),
       };
     }
 
