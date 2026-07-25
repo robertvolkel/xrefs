@@ -957,6 +957,11 @@ export async function searchParts(
       // (no per-maker data) resolve to nothing and get a count from the live gap-fill.
       const payloads = await getCachedDistributorPayloads(mergedMatches.map(m => m.mpn));
       for (const m of mergedMatches) {
+        // A card with no maker gets NO badge — never the maker-blind aggregate total. Otherwise
+        // a card whose maker was momentarily empty (an upstream data hiccup) would show the
+        // shared total (e.g. "40") attributed to that one card, the exact confusion we're
+        // eliminating. resolveDistributorCount would return `count` on an empty maker; skip it.
+        if (!m.manufacturer || !m.manufacturer.trim()) continue;
         const c = resolveDistributorCount(payloads.get(m.mpn.toLowerCase()), m.manufacturer);
         if (typeof c === 'number') m.distributorCount = c;
       }
