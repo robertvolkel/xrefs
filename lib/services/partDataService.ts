@@ -1140,6 +1140,15 @@ async function enrichWithFindchips(attrs: PartAttributes, userId?: string): Prom
 /**
  * Enrich recommendation candidates with FindChips pricing (batch).
  * Concurrent individual API calls (FC has no batch endpoint).
+ *
+ * ⚠️ CURRENTLY UNUSED — this function has NO callers (added in the Mouser→FindChips
+ * migration but never wired in; verified repo-wide). Recommendation-card price/stock
+ * is enriched on the CLIENT via the deferred `/fc/enrich` route
+ * (triggerFCEnrichment → enrichWithFCBatch), which is the path that applies the
+ * maker-aware `filterFcResultsByMaker` scoping for suggestion cards. The scoping call
+ * below therefore does NOT protect any live surface; it is kept only so this helper
+ * stays correct-by-construction if a future connector convergence re-enables it. Do
+ * not assume rec cards are maker-scoped HERE — they are scoped in the route.
  */
 async function enrichCandidatesWithFindchips(recs: XrefRecommendation[], userId?: string): Promise<XrefRecommendation[]> {
   if (recs.length === 0) return recs;
