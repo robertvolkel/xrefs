@@ -948,7 +948,15 @@ export async function searchParts(
     // FC enrichment, so coverage grows naturally over time. MPNs without a
     // cached entry simply get no badge in the UI.
     try {
-      const counts = await getCachedDistributorCounts(mergedMatches.map(m => m.mpn));
+      // Scope each badge to the card's own maker: FindChips counts every distributor
+      // that sells the shared MPN under ANY maker, so a maker-blind badge over-states a
+      // specific card. Legacy cache rows (no per-maker data) are omitted here and get a
+      // per-maker count from the live gap-fill enrichment instead.
+      const makersByMpn: Record<string, string> = {};
+      for (const m of mergedMatches) {
+        if (m.manufacturer && m.manufacturer.trim()) makersByMpn[m.mpn.toLowerCase()] = m.manufacturer;
+      }
+      const counts = await getCachedDistributorCounts(mergedMatches.map(m => m.mpn), makersByMpn);
       for (const m of mergedMatches) {
         const c = counts.get(m.mpn.toLowerCase());
         if (typeof c === 'number') m.distributorCount = c;

@@ -71,10 +71,14 @@ export const findchipsProvider: CommercialProvider = {
     }
   },
 
-  async getDistributorCount(mpn: string): Promise<number | undefined> {
-    const counts = await getCachedDistributorCounts([mpn]);
-    // The map is keyed by LOWERCASED mpn (getCachedDistributorCounts → set(mpnLower)),
-    // so the lookup must lowercase too — matching the original consumer.
+  async getDistributorCount(mpn: string, maker?: string | null): Promise<number | undefined> {
+    // `maker` scopes the count to that manufacturer (a shared MPN mixes makers). The map
+    // is keyed by LOWERCASED mpn (getCachedDistributorCounts → set(mpnLower)), so both the
+    // maker-map key and the lookup lowercase — matching the original consumer.
+    const counts = await getCachedDistributorCounts(
+      [mpn],
+      maker && maker.trim() ? { [mpn.toLowerCase()]: maker } : undefined,
+    );
     return counts.get(mpn.toLowerCase());
   },
 };

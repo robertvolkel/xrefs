@@ -598,7 +598,15 @@ export function useAppState() {
         .filter((p) => p.dataSource === 'atlas')
         .map((p) => p.mpn.toLowerCase());
 
-      enrichWithFCBatch(gapMpns, undefined, chineseMpns)
+      // Scope the count to each card's maker: with a maker map, /fc/enrich returns only
+      // this maker's distributor offers, so data.quotes.length is a per-maker distributor
+      // count — not everyone who sells the shared MPN.
+      const makersByMpn: Record<string, string> = {};
+      for (const p of gapParts) {
+        if (p.manufacturer && p.manufacturer.trim()) makersByMpn[p.mpn.toLowerCase()] = p.manufacturer;
+      }
+
+      enrichWithFCBatch(gapMpns, undefined, chineseMpns, makersByMpn)
         .then((fcData) => {
           if (Object.keys(fcData).length === 0) return;
           const mergeCount = (p: PartSummary): PartSummary => {
