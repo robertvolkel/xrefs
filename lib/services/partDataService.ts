@@ -46,8 +46,9 @@ import { enrichmentProvider, commercialProvider } from './providers/providerRegi
 import { providersAttrsEnabled, providersEnrichEnabled, providersSearchEnabled, providersRecsEnabled } from './providers/flags';
 import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSuggestedMpn, MouserProduct } from './mouserClient';
 import { mapMouserLifecycle } from './mouserMapper';
-import { isFindchipsConfigured, getFindchipsResults, getFindchipsResultsBatch, hasFindchipsBudget, getCachedDistributorCounts } from './findchipsClient';
+import { isFindchipsConfigured, getFindchipsResults, getFindchipsResultsBatch, hasFindchipsBudget, getCachedDistributorPayloads } from './findchipsClient';
 import { mapFCToQuotes, mapFCLifecycle, mapFCCompliance, filterFcResultsByMaker } from './findchipsMapper';
+import { resolveDistributorCount } from './findchipsDistributorCount';
 import { getCachedResponse, setCachedResponse, TTL_SEARCH_MS, TTL_RECOMMENDATIONS_MS, RECS_CACHE_SCHEMA_VERSION, SEARCH_CACHE_SCHEMA_VERSION } from './partDataCache';
 import { createHash } from 'crypto';
 import { fetchManufacturerCrossRefs } from './manufacturerCrossRefService';
@@ -948,17 +949,15 @@ export async function searchParts(
     // FC enrichment, so coverage grows naturally over time. MPNs without a
     // cached entry simply get no badge in the UI.
     try {
-      // Scope each badge to the card's own maker: FindChips counts every distributor
-      // that sells the shared MPN under ANY maker, so a maker-blind badge over-states a
-      // specific card. Legacy cache rows (no per-maker data) are omitted here and get a
-      // per-maker count from the live gap-fill enrichment instead.
-      const makersByMpn: Record<string, string> = {};
+      // Scope each badge to the card's OWN maker. FindChips counts every distributor that
+      // sells the shared MPN under ANY maker, so a maker-blind badge over-states a specific
+      // card. With per-manufacturer cards, several cards share one MPN, so we read the raw
+      // per-MPN payload once and resolve EACH card against its own maker — an MPN-keyed
+      // number map would hand every same-MPN card a single (last-maker) value. Legacy rows
+      // (no per-maker data) resolve to nothing and get a count from the live gap-fill.
+      const payloads = await getCachedDistributorPayloads(mergedMatches.map(m => m.mpn));
       for (const m of mergedMatches) {
-        if (m.manufacturer && m.manufacturer.trim()) makersByMpn[m.mpn.toLowerCase()] = m.manufacturer;
-      }
-      const counts = await getCachedDistributorCounts(mergedMatches.map(m => m.mpn), makersByMpn);
-      for (const m of mergedMatches) {
-        const c = counts.get(m.mpn.toLowerCase());
+        const c = resolveDistributorCount(payloads.get(m.mpn.toLowerCase()), m.manufacturer);
         if (typeof c === 'number') m.distributorCount = c;
       }
     } catch {

@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 import { isFindchipsConfigured, getFindchipsResultsBatch, hasFindchipsBudget } from '@/lib/services/findchipsClient';
 import { mapFCToQuotes, mapFCLifecycle, mapFCCompliance, filterFcResultsByMaker } from '@/lib/services/findchipsMapper';
+import { computePerMakerDistributorCounts, type DistributorCountPayload } from '@/lib/services/findchipsDistributorCount';
 import { resolveManufacturerAlias } from '@/lib/services/manufacturerAliasResolver';
 import type { SupplierQuote, LifecycleInfo, ComplianceData } from '@/lib/types';
 
@@ -18,6 +19,10 @@ interface FCEnrichResult {
   quotes: SupplierQuote[];
   lifecycle: LifecycleInfo | null;
   compliance: ComplianceData | null;
+  // Per-maker distributor breakdown from the UNFILTERED results (independent of the
+  // maker-scoped quotes above). Lets the caller resolve a per-maker count for each of
+  // several cards that share this MPN — the per-manufacturer search-card case.
+  distributorCounts: DistributorCountPayload | null;
 }
 
 export async function POST(request: NextRequest) {
@@ -87,6 +92,8 @@ export async function POST(request: NextRequest) {
         quotes: mapFCToQuotes(scoped, mpnLower),
         lifecycle: mapFCLifecycle(scoped),
         compliance: mapFCCompliance(scoped),
+        // Computed from the UNFILTERED distResults so every maker of this MPN is represented.
+        distributorCounts: computePerMakerDistributorCounts(distResults),
       };
     }
 

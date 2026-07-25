@@ -83,7 +83,12 @@ import { POST } from '@/app/api/fc/enrich/route';
 interface EnrichResponse {
   success: boolean;
   data?: {
-    results: Record<string, { quotes: Array<{ supplier: string; productUrl?: string }>; lifecycle: unknown; compliance: unknown }>;
+    results: Record<string, {
+      quotes: Array<{ supplier: string; productUrl?: string }>;
+      lifecycle: unknown;
+      compliance: unknown;
+      distributorCounts?: { count: number; byMaker?: Record<string, number> } | null;
+    }>;
   };
   error?: string;
 }
@@ -154,6 +159,18 @@ describe('POST /api/fc/enrich — maker scoping', () => {
     expect(quotes).toHaveLength(4);
     // Maker-blind: Rochester wins the price-break tiebreak — the exact bug the filter targets.
     expect(digikeyQuote(quotes)?.productUrl).toContain('Rochester');
+  });
+
+  it('always returns a per-maker distributor breakdown (from the UNFILTERED results) for the search-card count', async () => {
+    // Independent of the maker-scoped quotes: the count breakdown must cover EVERY maker of the
+    // shared MPN, so per-manufacturer search cards can each resolve their own count.
+    const { json } = await invokeRoute<EnrichResponse>(POST, { body: { mpns: ['LM317T'] } });
+    const dc = json.data!.results.lm317t.distributorCounts!;
+    expect(dc.count).toBe(4); // 4 distributors carry the MPN under some maker
+    // ST is at 3 distributors (DigiKey + element14 + RS); Rochester/Goodwork/onsemi/Fairchild/National at 1.
+    expect(dc.byMaker!.stmicroelectronics).toBe(3);
+    expect(dc.byMaker!.rochester).toBe(1);
+    expect(dc.byMaker!.goodwork).toBe(1);
   });
 
   it('a maker map that omits THIS mpn leaves that mpn unfiltered (per-MPN scoping, not all-or-nothing)', async () => {

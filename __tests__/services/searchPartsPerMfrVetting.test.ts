@@ -50,17 +50,23 @@ jest.mock('../../lib/services/overrideMerger', () => {
 
 jest.mock('../../lib/services/findchipsClient', () => {
   const actual = jest.requireActual('../../lib/services/findchipsClient');
-  return { ...actual, getCachedDistributorCounts: jest.fn(async () => new Map()) };
+  return {
+    ...actual,
+    getCachedDistributorCounts: jest.fn(async () => new Map()),
+    getCachedDistributorPayloads: jest.fn(async () => new Map()),
+  };
 });
 
 import { searchParts, looksLikeMpn } from '../../lib/services/partDataService';
 import { keywordSearch, isDigikeyConfigured } from '../../lib/services/digikeyClient';
 import { searchAtlasProducts } from '../../lib/services/atlasClient';
 import { resolveManufacturerAlias } from '../../lib/services/manufacturerAliasResolver';
+import { getCachedDistributorPayloads } from '../../lib/services/findchipsClient';
 
 const kw = keywordSearch as jest.Mock;
 const atlas = searchAtlasProducts as jest.Mock;
 const alias = resolveManufacturerAlias as jest.Mock;
+const distPayloads = getCachedDistributorPayloads as jest.Mock;
 
 /** A raw Digikey keyword response for TI's LM317T, categorized so the real mapper
  *  classifies it into the MOSFET family (B5) with a real Vds parameter. */
@@ -186,6 +192,31 @@ describe('searchParts per-MFR vetting key (Fix A, real-path)', () => {
     // 20 V part would NOT be below spec.
     expect(peak!.specFit).toBe('below_spec');
     expect(ti!.specFit).not.toBe('below_spec');
+  });
+
+  it('flag ON: each same-MPN card gets its OWN maker distributor count, not one shared value', async () => {
+    // Regression for the per-MFR distributor-count collision: the cached row is keyed by MPN
+    // alone, so an MPN-keyed number map hands every same-MPN card the last maker's count. The
+    // fix reads the raw payload once and resolves EACH card against its own maker.
+    process.env.PER_MFR_CARDS_ENABLED = '1';
+    kw.mockResolvedValue(tiDigikeyResponse('100 V'));
+    atlas.mockResolvedValue(peakAtlasReturn(20));
+    // One MPN row, distinct per-maker counts. Buggy (MPN-keyed) code gives both cards the same.
+    distPayloads.mockResolvedValue(
+      new Map([[SHARED_MPN.toLowerCase(), { count: 40, byMaker: { 'texas instruments': 7, '3peak': 2 } }]]),
+    );
+
+    // Distinct query text so this doesn't hit the L1 search cache warmed by the other flag-ON test.
+    const result = await searchParts('n-channel power mosfet 30v', 'USD', undefined, {
+      skipFindchips: true,
+      constraints: [{ attribute: 'drain-source voltage', value: 30, unit: 'V', bound: 'min' }],
+    });
+
+    const lm = result.matches.filter(m => m.mpn.toLowerCase() === SHARED_MPN.toLowerCase());
+    const ti = lm.find(m => m.manufacturer === 'Texas Instruments');
+    const peak = lm.find(m => m.manufacturer === '3PEAK');
+    expect(ti?.distributorCount).toBe(7);
+    expect(peak?.distributorCount).toBe(2);
   });
 
   it('flag OFF: the same two-source shared MPN collapses to ONE card (legacy dedup preserved)', async () => {

@@ -1,5 +1,16 @@
 import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse, PartSummary, ManufacturerCrossReference, DistributorClickEntry, AppFeedbackSubmission, AppFeedbackListItem, AppFeedbackStatusCounts, AppFeedbackStatus, AppFeedbackCategory, AppFeedbackUpdate, AppFeedbackComment, AppFeedbackThread, ReplacementPriorities, ManufacturerProfile, Notification } from './types';
 import type { ServiceWarning, ServiceName, ServiceStatusInfo, AcceptanceCriteria } from './types';
+import type { DistributorCountPayload } from './services/findchipsDistributorCount';
+
+/** One MPN's FindChips enrichment: maker-scoped quotes/lifecycle/compliance, plus a per-maker
+ *  distributor-count breakdown (from the unfiltered results) so a caller can resolve a count
+ *  for each of several cards that share the MPN. */
+export interface FCEnrichEntry {
+  quotes: SupplierQuote[];
+  lifecycle: LifecycleInfo | null;
+  compliance: ComplianceData | null;
+  distributorCounts?: DistributorCountPayload | null;
+}
 
 // Admin types
 export interface AdminUser {
@@ -200,13 +211,13 @@ export async function enrichWithFCBatch(
   signal?: AbortSignal,
   chineseMpns?: string[],
   makers?: Record<string, string>,
-): Promise<Record<string, { quotes: SupplierQuote[]; lifecycle: LifecycleInfo | null; compliance: ComplianceData | null }>> {
+): Promise<Record<string, FCEnrichEntry>> {
   if (mpns.length === 0) return {};
   try {
     const body: { mpns: string[]; chineseMpns?: string[]; makers?: Record<string, string> } = { mpns };
     if (chineseMpns && chineseMpns.length > 0) body.chineseMpns = chineseMpns;
     if (makers && Object.keys(makers).length > 0) body.makers = makers;
-    const result = await fetchApi<{ results: Record<string, { quotes: SupplierQuote[]; lifecycle: LifecycleInfo | null; compliance: ComplianceData | null }> }>(
+    const result = await fetchApi<{ results: Record<string, FCEnrichEntry> }>(
       `${BASE}/fc/enrich`,
       {
         method: 'POST',

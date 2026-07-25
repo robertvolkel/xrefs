@@ -24,6 +24,7 @@ import { applyRecommendationFilter } from '@/lib/services/recommendationFilter';
 import { buildRecsSummary } from '@/lib/services/recommendationSummary';
 import { buildSearchSummary, looksLikeMpn } from '@/lib/services/searchSummary';
 import { buildOptimisticFromRec, buildOptimisticFromSummary } from '@/lib/services/optimisticAttributes';
+import { resolveDistributorCount } from '@/lib/services/findchipsDistributorCount';
 import { formatSupplierName } from '@/lib/constants/suppliers';
 import { QUANTITY_PRESETS } from '@/lib/constants/quantityPresets';
 import { isAutomotiveAecContext } from '@/lib/services/automotiveAecEnforcement';
@@ -598,22 +599,18 @@ export function useAppState() {
         .filter((p) => p.dataSource === 'atlas')
         .map((p) => p.mpn.toLowerCase());
 
-      // Scope the count to each card's maker: with a maker map, /fc/enrich returns only
-      // this maker's distributor offers, so data.quotes.length is a per-maker distributor
-      // count — not everyone who sells the shared MPN.
-      const makersByMpn: Record<string, string> = {};
-      for (const p of gapParts) {
-        if (p.manufacturer && p.manufacturer.trim()) makersByMpn[p.mpn.toLowerCase()] = p.manufacturer;
-      }
-
-      enrichWithFCBatch(gapMpns, undefined, chineseMpns, makersByMpn)
+      // No maker map here: per-manufacturer cards share one MPN, so a maker-filtered
+      // quote count would collide (every same-MPN card gets one value). Instead the route
+      // returns a per-maker distributor breakdown (distributorCounts) computed from the
+      // UNFILTERED results, and we resolve EACH card against its own maker below.
+      enrichWithFCBatch(gapMpns, undefined, chineseMpns)
         .then((fcData) => {
           if (Object.keys(fcData).length === 0) return;
           const mergeCount = (p: PartSummary): PartSummary => {
             if (typeof p.distributorCount === 'number') return p;
             const data = fcData[p.mpn.toLowerCase()];
-            const count = data?.quotes?.length ?? 0;
-            if (count <= 0) return p;
+            const count = resolveDistributorCount(data?.distributorCounts, p.manufacturer);
+            if (typeof count !== 'number' || count <= 0) return p;
             return { ...p, distributorCount: count };
           };
           setState((prev) => {

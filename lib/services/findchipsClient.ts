@@ -505,19 +505,26 @@ export async function getCachedDistributorCounts(
   makersByMpn?: Record<string, string>,
 ): Promise<Map<string, number>> {
   const result = new Map<string, number>();
-  if (mpns.length === 0) return result;
-
-  const rows = await getCachedResponseBatch<DistributorCountPayload>(
-    'findchips',
-    mpns,
-    'fc-distributors',
-  );
-
+  const rows = await getCachedDistributorPayloads(mpns);
   for (const [mpnLower, payload] of rows.entries()) {
     const count = resolveDistributorCount(payload, makersByMpn?.[mpnLower]);
     if (typeof count === 'number') result.set(mpnLower, count);
   }
   return result;
+}
+
+/**
+ * Read raw per-MPN distributor-count PAYLOADS ({count, byMaker}) from L2. Returns a Map of
+ * lowercase MPN → payload. Unlike getCachedDistributorCounts (which collapses to one number
+ * per MPN), this lets a caller resolve a per-maker count for EACH of several cards that share
+ * the same MPN — the per-manufacturer search-card case, where one MPN row backs many maker
+ * cards and an MPN-keyed number map would give them all the same value.
+ */
+export async function getCachedDistributorPayloads(
+  mpns: string[],
+): Promise<Map<string, DistributorCountPayload>> {
+  if (mpns.length === 0) return new Map();
+  return getCachedResponseBatch<DistributorCountPayload>('findchips', mpns, 'fc-distributors');
 }
 
 // ============================================================
