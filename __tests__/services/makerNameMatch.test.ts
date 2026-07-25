@@ -72,6 +72,19 @@ describe('makerMatches — must NOT match (the dangerous direction)', () => {
     expect(makerMatches('HGSEMI', 'HuaGuan Semiconductor')).toBe(false);
   });
 
+  it('does not collapse distinct companies that share a word once generic suffixes are stripped', () => {
+    // Crystal Semiconductor (→ Cirrus Logic) is NOT Micro Crystal AG (Swiss RTC maker). Regression
+    // for the 'micro'/'semiconductor' strips both landing on "crystal". (Found by code review.)
+    expect(makerMatches('Crystal Semiconductor', 'Micro Crystal')).toBe(false);
+    expect(makerMatches('Crystal Semiconductor Corporation', 'Micro Crystal AG')).toBe(false);
+    // Linear Technology (→ Analog Devices) is NOT Linear (Integrated) Systems (discrete JFET maker).
+    // The more dangerous one — Linear Systems second-sources discretes, so MPN overlap is realistic.
+    expect(makerMatches('Linear Technology', 'Linear Systems')).toBe(false);
+    // A real maker must not reduce to a generic COMPONENT word. Stripping 'international' left
+    // "International Rectifier" as bare "rectifier", matching any "…Rectifier" offer. (Reviewer 2.)
+    expect(makerMatches('International Rectifier', 'Rectifier')).toBe(false);
+  });
+
   it('never matches when either side is empty/unknown', () => {
     expect(makerMatches(undefined, 'STMicroelectronics')).toBe(false);
     expect(makerMatches('STMicroelectronics', undefined)).toBe(false);

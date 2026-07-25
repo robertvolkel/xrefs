@@ -78,4 +78,10 @@ describe('maker-aware FindChips filtering', () => {
     // Maker-blind: Rochester wins the price-break tiebreak — the exact bug the fix targets.
     expect(digikey?.productUrl).toContain('Rochester');
   });
+
+  it('a PRESENT maker that normalizes to nothing filters (→ []), it is NOT treated as "unknown"', () => {
+    // "Semiconductor Co Ltd" is all generic-suffix tokens → normalizes to "". It must NOT fall back
+    // to the unfiltered set (which would reintroduce the cross-maker buy link) — it matches nothing.
+    expect(quotesFor('Semiconductor Co Ltd')).toHaveLength(0);
+  });
 });

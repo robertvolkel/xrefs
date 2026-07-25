@@ -33,15 +33,18 @@ export { normalizeDistributorName };
  * THIS maker's part. Conservative by `makerMatches` — an offer we can't confidently attribute is
  * excluded, never mis-attributed.
  *
- * A blank/unknown maker returns the results unchanged (we never over-filter on a maker we don't
- * have — that keeps today's behavior for callers that genuinely lack it, rather than hiding all).
+ * A genuinely ABSENT maker (null/blank) returns the results unchanged — we never over-filter on a
+ * maker we don't have. But a maker that is PRESENT yet normalizes to nothing (e.g. an all-generic
+ * legal name like "Semiconductor Components Industries LLC") is NOT treated as absent: it filters
+ * and matches nothing → [], because falling back to the unfiltered set there would silently
+ * reintroduce the cross-maker buy link. (Code-review finding.)
  */
 export function filterFcResultsByMaker(
   results: FCDistributorResult[],
   cardMaker: string | undefined | null,
   variants?: readonly string[],
 ): FCDistributorResult[] {
-  if (!normalizeMakerName(cardMaker)) return results;
+  if (typeof cardMaker !== 'string' || cardMaker.trim().length === 0) return results;
   const scoped: FCDistributorResult[] = [];
   for (const dist of results) {
     const parts = (dist.parts ?? []).filter((p) => makerMatches(cardMaker, p.manufacturer, variants));

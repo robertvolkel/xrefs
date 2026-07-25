@@ -17,16 +17,29 @@
  */
 
 /** Generic company-name words that carry no identity — stripped before comparison. Whole-token
- *  only (so "Microchip" — a single token — is never touched by the "micro" entry). */
+ *  only (so "Microchip" — a single token — is never touched).
+ *
+ *  ⚠️ Each entry must be a word that is NEVER a maker's distinguishing identity, or it collapses
+ *  distinct companies into a false match (a wrong-maker buy link — the failure this whole module
+ *  exists to prevent). Two were removed after a code review found confirmed collisions:
+ *   - 'micro'   → "Micro Crystal AG" ≡ "Crystal Semiconductor" (both → "crystal"). "Microchip"/
+ *                 "Micron"/"Microsemi" are single fused tokens, so dropping 'micro' costs nothing.
+ *   - 'systems' → "Linear Systems" ≡ "Linear Technology" (both → "linear"). 'systems' is load-bearing
+ *                 identity ("Linear Systems", "Silicon Systems"); same-company "X Systems" still
+ *                 matches because both sides keep the token.
+ *   - 'international'/'intl' → "International Rectifier" collapsed to the bare component word
+ *                 "rectifier", matching any "…Rectifier" offer. It's a maker's leading identity, not
+ *                 a suffix.
+ *  Do NOT re-add any of these, and vet a new entry against real maker names the same way. */
 const SUFFIX_TOKENS = new Set<string>([
   'semiconductor', 'semiconductors', 'semi',
-  'microelectronics', 'microelectronic', 'micro',
+  'microelectronics', 'microelectronic',
   'electronics', 'electronic', 'optoelectronic', 'optoelectronics',
   'corporation', 'corp', 'incorporated', 'inc', 'company', 'co',
   'ltd', 'limited', 'llc', 'gmbh', 'plc', 'ag', 'sa', 'srl', 'bv', 'pte', 'kk',
   'technology', 'technologies', 'tech',
   'components', 'component', 'industries', 'industrial',
-  'international', 'intl', 'group', 'holdings', 'holding', 'systems',
+  'group', 'holdings', 'holding',
 ]);
 
 /** Lowercase, split on any non-letter/non-digit (Unicode-aware, so CJK names survive), drop the
