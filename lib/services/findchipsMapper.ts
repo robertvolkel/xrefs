@@ -9,11 +9,49 @@
 import type { SupplierQuote, PriceBreak, LifecycleInfo, ComplianceData } from '@/lib/types';
 import type { FCDistributorResult, FCPart } from './findchipsClient';
 import { normalizeDistributorName } from './findchipsClient';
+import { makerMatches, normalizeMakerName } from './makerNameMatch';
 
 // Re-exported here for back-compat with any external consumers that imported
 // it from the mapper. Single source of truth lives in findchipsClient.ts so
 // the merge/dedup helper and this mapper share the same canonicalization.
 export { normalizeDistributorName };
+
+// ============================================================
+// MANUFACTURER-AWARE FILTERING
+// ============================================================
+
+/**
+ * Restrict FindChips results to offers that are CONFIDENTLY the given maker's part.
+ *
+ * FindChips indexes by part-number string, so one MPN's results mix every manufacturer that sells
+ * it (LM317T came back with 9 makers under a single distributor). Downstream, `selectBestPart`
+ * chooses each distributor's offer by price/stock alone and hands back its `buyNowUrl` — so an ST
+ * card's "Go Buy" could open an onsemi listing, and its distributor count counts everyone's offers.
+ *
+ * Filtering here (before quotes/lifecycle/compliance are built) makes all of them the card's maker:
+ * a distributor with no matching-maker offer drops out, so the count reflects who actually carries
+ * THIS maker's part. Conservative by `makerMatches` — an offer we can't confidently attribute is
+ * excluded, never mis-attributed.
+ *
+ * A genuinely ABSENT maker (null/blank) returns the results unchanged — we never over-filter on a
+ * maker we don't have. But a maker that is PRESENT yet normalizes to nothing (e.g. an all-generic
+ * legal name like "Semiconductor Components Industries LLC") is NOT treated as absent: it filters
+ * and matches nothing → [], because falling back to the unfiltered set there would silently
+ * reintroduce the cross-maker buy link. (Code-review finding.)
+ */
+export function filterFcResultsByMaker(
+  results: FCDistributorResult[],
+  cardMaker: string | undefined | null,
+  variants?: readonly string[],
+): FCDistributorResult[] {
+  if (typeof cardMaker !== 'string' || cardMaker.trim().length === 0) return results;
+  const scoped: FCDistributorResult[] = [];
+  for (const dist of results) {
+    const parts = (dist.parts ?? []).filter((p) => makerMatches(cardMaker, p.manufacturer, variants));
+    if (parts.length > 0) scoped.push({ ...dist, parts });
+  }
+  return scoped;
+}
 
 // ============================================================
 // BEST PART SELECTION

@@ -18,6 +18,11 @@ import {
   setCachedResponse,
   TTL_LIFECYCLE_MS,
 } from './partDataCache';
+import {
+  computePerMakerDistributorCounts,
+  resolveDistributorCount,
+  type DistributorCountPayload,
+} from './findchipsDistributorCount';
 
 const BASE_URL = 'https://api.findchips.com/v1/fcl-search';
 
@@ -409,17 +414,21 @@ async function getSiteResults(
  * is stable on weeks/months timescale, unlike pricing/stock). Lets the search
  * picker display "N distributors" badges without firing live FC calls.
  * Fire-and-forget; never blocks the caller.
+ *
+ * Stores BOTH the maker-blind total (`count`, for back-compat + the no-maker caller)
+ * and a per-maker breakdown (`byMaker`) so the badge can be scoped to the card's own
+ * maker — a shared MPN otherwise makes an ST card claim every distributor that sells
+ * the onsemi/Rochester version too.
  */
 function persistMergedCount(mpn: string, results: FCDistributorResult[] | null): void {
-  if (!results || results.length === 0) return;
-  const count = results.filter(r => r.parts && r.parts.length > 0).length;
-  if (count === 0) return;
+  const payload = computePerMakerDistributorCounts(results);
+  if (!payload) return;
   setCachedResponse(
     'findchips',
     mpn.toLowerCase(),
     'fc-distributors',
     'lifecycle',
-    { count },
+    payload,
     TTL_LIFECYCLE_MS,
   );
 }
@@ -483,25 +492,39 @@ export async function getFindchipsResults(
  * Used by the search picker to surface "N distributors" badges with zero
  * FindChips API quota cost. Distributor identity is stable on a weeks/months
  * timescale, so the 6-month lifecycle TTL is safe.
+ *
+ * `makersByMpn` (lowercase MPN → the card's manufacturer) scopes the count to that
+ * maker. When a maker is supplied but the cached row predates per-maker counts, or
+ * doesn't list that maker, the MPN is OMITTED (no badge) rather than showing a
+ * maker-blind total — so a card never claims another maker's distributors. Cards
+ * omitted here are picked up by the live gap-fill enrichment, which re-counts
+ * per-maker and re-warms the cache. Omit `makersByMpn` for the maker-blind total.
  */
 export async function getCachedDistributorCounts(
   mpns: string[],
+  makersByMpn?: Record<string, string>,
 ): Promise<Map<string, number>> {
   const result = new Map<string, number>();
-  if (mpns.length === 0) return result;
-
-  const rows = await getCachedResponseBatch<{ count: number }>(
-    'findchips',
-    mpns,
-    'fc-distributors',
-  );
-
+  const rows = await getCachedDistributorPayloads(mpns);
   for (const [mpnLower, payload] of rows.entries()) {
-    if (typeof payload?.count === 'number') {
-      result.set(mpnLower, payload.count);
-    }
+    const count = resolveDistributorCount(payload, makersByMpn?.[mpnLower]);
+    if (typeof count === 'number') result.set(mpnLower, count);
   }
   return result;
+}
+
+/**
+ * Read raw per-MPN distributor-count PAYLOADS ({count, byMaker}) from L2. Returns a Map of
+ * lowercase MPN → payload. Unlike getCachedDistributorCounts (which collapses to one number
+ * per MPN), this lets a caller resolve a per-maker count for EACH of several cards that share
+ * the same MPN — the per-manufacturer search-card case, where one MPN row backs many maker
+ * cards and an MPN-keyed number map would give them all the same value.
+ */
+export async function getCachedDistributorPayloads(
+  mpns: string[],
+): Promise<Map<string, DistributorCountPayload>> {
+  if (mpns.length === 0) return new Map();
+  return getCachedResponseBatch<DistributorCountPayload>('findchips', mpns, 'fc-distributors');
 }
 
 // ============================================================

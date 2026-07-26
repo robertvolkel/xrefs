@@ -46,8 +46,9 @@ import { enrichmentProvider, commercialProvider } from './providers/providerRegi
 import { providersAttrsEnabled, providersEnrichEnabled, providersSearchEnabled, providersRecsEnabled } from './providers/flags';
 import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSuggestedMpn, MouserProduct } from './mouserClient';
 import { mapMouserLifecycle } from './mouserMapper';
-import { isFindchipsConfigured, getFindchipsResults, getFindchipsResultsBatch, hasFindchipsBudget, getCachedDistributorCounts } from './findchipsClient';
-import { mapFCToQuotes, mapFCLifecycle, mapFCCompliance } from './findchipsMapper';
+import { isFindchipsConfigured, getFindchipsResults, getFindchipsResultsBatch, hasFindchipsBudget, getCachedDistributorPayloads } from './findchipsClient';
+import { mapFCToQuotes, mapFCLifecycle, mapFCCompliance, filterFcResultsByMaker } from './findchipsMapper';
+import { resolveCardDistributorCount } from './findchipsDistributorCount';
 import { getCachedResponse, setCachedResponse, TTL_SEARCH_MS, TTL_RECOMMENDATIONS_MS, RECS_CACHE_SCHEMA_VERSION, SEARCH_CACHE_SCHEMA_VERSION } from './partDataCache';
 import { createHash } from 'crypto';
 import { fetchManufacturerCrossRefs } from './manufacturerCrossRefService';
@@ -430,6 +431,30 @@ function deserializeBasePayload(s: SerializableBasePayload): BasePayload | null 
  * Exported so the ordering can be unit-tested directly (see multiSourceSearch.test.ts) rather than
  * mocking the whole cache + Digikey + Atlas + alias I/O of `searchParts` just to assert an order.
  */
+/**
+ * The search merge dedup key. Legacy behavior (perMfrCards=false) collapses purely by MPN, so
+ * the first source (Digikey) wins and alternate makers of a standard MPN are dropped. With
+ * perMfrCards=true the key is MPN + canonical manufacturer, so genuinely different makers of the
+ * same standard number (LM317T from TI vs a Chinese maker) each survive, while true same-maker
+ * cross-source duplicates still collapse because they resolve to the SAME canonical slug
+ * ("onsemi" ≡ "ON Semiconductor"). `slugOf` receives an already-lowercased maker string and
+ * returns the canonical slug, or null/undefined when the alias index misses (then the raw maker
+ * string is used, so distinct spellings of an unknown maker stay separate — fail-safe toward
+ * showing more, never fewer). Pure + exported for unit testing.
+ */
+export function computeSearchDedupKey(
+  mpn: string,
+  manufacturer: string | undefined | null,
+  perMfrCards: boolean,
+  slugOf: (mfrLower: string) => string | null | undefined,
+): string {
+  const mpnLower = mpn.toLowerCase();
+  if (!perMfrCards) return mpnLower;
+  const mfrLower = manufacturer?.toLowerCase() ?? '';
+  const slug = slugOf(mfrLower);
+  return `${mpnLower}::${slug || mfrLower}`;
+}
+
 export function orderSearchCandidates<T extends { mpn: string; status?: string }>(
   matches: T[],
   query: string,
@@ -491,12 +516,18 @@ export async function searchParts(
         .join(',')}|${[...(options?.answeredSpecIds ?? [])].sort().join(',')}`
     : '';
 
+  // Per-manufacturer cards (Track B, dark): when ON, the merge dedups by MPN + canonical
+  // manufacturer so different makers of a shared standard MPN (LM317T, 1N4148) each get a card;
+  // OFF = the legacy MPN-only dedup (byte-identical). The flag is in the cache key so a flip
+  // never serves a result computed under the other dedup.
+  const perMfrCards = process.env.PER_MFR_CARDS_ENABLED === '1';
+
   // ── Search cache: L1 in-memory ──
   // MFR hint participates in the cache key so "1.5KE10" and "1.5KE10 from
   // Galaxy" don't poison each other's results. SEARCH_CACHE_SCHEMA_VERSION
   // is a prefix so old-shape entries are unreachable when merge semantics
   // change (bump it in partDataCache.ts, not here).
-  const cacheKey = `${SEARCH_CACHE_SCHEMA_VERSION}__${trimmed.toLowerCase()}__${currency ?? 'USD'}__${options?.skipFindchips ? '1' : '0'}__${mfrHint?.toLowerCase() ?? ''}__${vettingKey}`;
+  const cacheKey = `${SEARCH_CACHE_SCHEMA_VERSION}__${trimmed.toLowerCase()}__${currency ?? 'USD'}__${options?.skipFindchips ? '1' : '0'}__${mfrHint?.toLowerCase() ?? ''}__${vettingKey}__${perMfrCards ? 'pm1' : 'pm0'}`;
   const cached = searchCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < SEARCH_CACHE_TTL) {
     if (!shouldBypassSearchCache(cached.data)) {
@@ -666,12 +697,59 @@ export async function searchParts(
     return c.includes(mfrHintLower) || mfrHintLower.includes(c);
   };
 
+  // Resolve canonical manufacturer identity (slug + origin source) ONCE, before dedup, for every
+  // candidate maker across all sources. Two consumers:
+  //   (1) per-MFR dedup — the canonical SLUG lets "onsemi" ≡ "ON Semiconductor" collapse while two
+  //       genuinely different makers of the same standard MPN stay distinct;
+  //   (2) mfrOrigin (Decision #161) — the "Chinese only" filter keys off identity, not the
+  //       `dataSource` tag, so a Chinese maker's part arriving via Digikey (3PEAK) still reads CN.
+  // Cheap: the alias resolver is an in-memory index after a 5-min-cached load (~2ms for a full
+  // result set); it caches with the search result. Failures fall open (slug null / origin unknown).
+  const aliasByMfr = new Map<string, { slug: string | null; source: 'atlas' | 'western' | 'unknown' }>();
+  {
+    const candidateMfrs = new Set<string>();
+    for (const s of settled) {
+      if (s.status !== 'fulfilled') continue;
+      for (const p of s.value.result.matches ?? []) if (p.manufacturer) candidateMfrs.add(p.manufacturer);
+      // Also resolve the manufacturers carried on the SCORABLE attrs (attrsByMpn), not just the
+      // match summaries. keyOf() below is applied to attrs.part.manufacturer as well; if a source
+      // spells the maker differently on its attrs than on its summary, an aliasByMfr miss would
+      // make slugOf fall back to the raw string on one side only, diverging the write/read dedup
+      // keys and dropping the candidate from vetting. Resolving both keeps keyOf consistent.
+      if (s.value.attrsByMpn) {
+        for (const v of s.value.attrsByMpn.values()) {
+          if (v.part.manufacturer) candidateMfrs.add(v.part.manufacturer);
+        }
+      }
+    }
+    await Promise.all([...candidateMfrs].map(async mfr => {
+      try {
+        const alias = await resolveManufacturerAlias(mfr);
+        aliasByMfr.set(mfr.toLowerCase(), { slug: alias?.slug ?? null, source: alias?.source ?? 'unknown' });
+      } catch {
+        aliasByMfr.set(mfr.toLowerCase(), { slug: null, source: 'unknown' });
+      }
+    }));
+  }
+
+  // Dedup key (extracted to computeSearchDedupKey for unit testing): MPN-only (legacy) OR
+  // MPN + canonical-MFR when per-MFR cards are on.
+  const slugOf = (mfrLower: string): string | null | undefined => aliasByMfr.get(mfrLower)?.slug;
+
+  // Candidate identity for the merge AND the vetting block below: bare MPN (legacy) or
+  // MPN + canonical-maker when per-MFR cards are on — the SAME key the merge dedup uses. This
+  // keeps a shared standard MPN from two makers as two distinct candidates all the way through
+  // scoring, annotation and reordering, so one card can't be dropped nor scored with the OTHER
+  // maker's attributes. Byte-identical to bare-MPN keying when perMfrCards is off.
+  const keyOf = (p: { mpn: string; manufacturer?: string | null }): string =>
+    computeSearchDedupKey(p.mpn, p.manufacturer, perMfrCards, slugOf);
+
   // Merge in priority order: Digikey → Atlas → Parts.io
   const seenMpns = new Set<string>();
   const mergedMatches = [];
-  // Scorable candidate attributes keyed by lowercased MPN, accumulated across
-  // sources in the same priority order (Digikey wins on key collision). Used by
-  // the logic-vetting pass below; empty when no source supplied attrs.
+  // Scorable candidate attributes keyed by keyOf (bare MPN, or MPN+canonical-maker when
+  // per-MFR cards are on), accumulated across sources in priority order (Digikey wins on key
+  // collision). Used by the logic-vetting pass below; empty when no source supplied attrs.
   const candidateAttrsByMpn = new Map<string, PartAttributes>();
   // Set by the vetting block when the pool came back too big and a spec can actually split it.
   let searchResultNarrowing: NarrowingSuggestion | undefined;
@@ -682,14 +760,15 @@ export async function searchParts(
     sourcesContributed.push(searches[i].source);
     const { result, attrsByMpn } = settledResult.value;
     if (attrsByMpn) {
-      for (const [k, v] of attrsByMpn) {
+      for (const v of attrsByMpn.values()) {
+        const k = keyOf(v.part);
         if (!candidateAttrsByMpn.has(k)) candidateAttrsByMpn.set(k, v);
       }
     }
     const matches = result.matches ?? [];
     for (const part of matches) {
       if (!matchesMfrHint(part.manufacturer)) continue;
-      const key = part.mpn.toLowerCase();
+      const key = computeSearchDedupKey(part.mpn, part.manufacturer, perMfrCards, slugOf);
       if (!seenMpns.has(key) && mergedMatches.length < SEARCH_RESULT_CAP) {
         seenMpns.add(key);
         mergedMatches.push(part);
@@ -700,32 +779,16 @@ export async function searchParts(
   // Order the merged pool for display and matches[0] selection: EXACT-MPN match first (so naming a
   // part returns that part, not a sample-kit/variant box Digikey floated ahead of it), then
   // Active-first. The merge above already runs in source priority order (Digikey/western → Atlas →
-  // parts.io) and Array.sort is stable, so that order is preserved within each rank group. See
-  // orderSearchCandidates for the full rationale. Stable, mutates in place.
+  // parts.io) and Array.sort is stable, so that order is preserved within each rank group — so
+  // even with per-MFR cards for a shared standard MPN, the Digikey/western maker's card stays
+  // first. See orderSearchCandidates for the full rationale. Stable, mutates in place.
   orderSearchCandidates(mergedMatches, trimmed);
 
-  // Resolve canonical manufacturer origin per unique MFR (mirrors getRecommendations,
-  // Decision #161) so the search-result "Chinese only" filter keys off identity, not the
-  // `dataSource` tag — a Chinese maker's part can arrive via Digikey (3PEAK, GOODWORK) and
-  // must still read as Chinese. Belt-and-suspenders: a row sourced FROM Atlas is Chinese even
-  // if the alias index misses the name. Cheap: the alias resolver is an in-memory index after
-  // a 5-min-cached load (~2ms for a full result set), so this adds no meaningful latency, and
-  // it caches with the search result. Failures leave mfrOrigin undefined (filter falls open).
-  {
-    const uniqueMfrs = [...new Set(mergedMatches.map(m => m.manufacturer).filter(Boolean))];
-    const originByMfr = new Map<string, 'atlas' | 'western' | 'unknown'>();
-    await Promise.all(uniqueMfrs.map(async mfr => {
-      try {
-        const alias = await resolveManufacturerAlias(mfr);
-        originByMfr.set(mfr.toLowerCase(), alias?.source ?? 'unknown');
-      } catch {
-        originByMfr.set(mfr.toLowerCase(), 'unknown');
-      }
-    }));
-    for (const m of mergedMatches) {
-      const resolved = originByMfr.get(m.manufacturer?.toLowerCase() ?? '');
-      m.mfrOrigin = m.dataSource === 'atlas' ? 'atlas' : (resolved ?? 'unknown');
-    }
+  // Apply canonical origin (Decision #161) from the pre-resolved map. A row sourced FROM Atlas is
+  // Chinese even if the alias index missed the name.
+  for (const m of mergedMatches) {
+    const src = aliasByMfr.get(m.manufacturer?.toLowerCase() ?? '')?.source ?? 'unknown';
+    m.mfrOrigin = m.dataSource === 'atlas' ? 'atlas' : src;
   }
 
   // ── Logic-vetted descriptive search ──
@@ -743,7 +806,7 @@ export async function searchParts(
       // unfiltered majority's logic table.
       const scorable: PartAttributes[] = [];
       for (const m of mergedMatches) {
-        const a = candidateAttrsByMpn.get(m.mpn.toLowerCase());
+        const a = candidateAttrsByMpn.get(keyOf(m));
         if (a) scorable.push(a);
       }
       const synthetic = scorable.length > 0
@@ -754,7 +817,7 @@ export async function searchParts(
         const recs = findReplacements(logicTable, synthetic.source, scorable);
           const penaltyByMpn = new Map<string, number>();
           for (const a of scorable) {
-            penaltyByMpn.set(a.part.mpn.toLowerCase(), computeOverSpecPenalty(logicTable, synthetic.source, a));
+            penaltyByMpn.set(keyOf(a.part), computeOverSpecPenalty(logicTable, synthetic.source, a));
           }
           // How many of the user's CONSTRAINED specs a candidate actually CONFIRMS (the rule
           // for that attr passed on a REAL value — not a missing-data "review"). A part whose
@@ -797,8 +860,8 @@ export async function searchParts(
               if (hasRealValue) read++;
               if (d.ruleResult === 'pass' && hasRealValue) n++;
             }
-            readByMpn.set(rec.part.mpn.toLowerCase(), read);
-            confirmedByMpn.set(rec.part.mpn.toLowerCase(), n);
+            readByMpn.set(keyOf(rec.part), read);
+            confirmedByMpn.set(keyOf(rec.part), n);
           }
           // A spec the ENGINE cannot compare (`application_review` / `operational`) scores a flat
           // 50% for every candidate, so a stated "hFE 200-400" left the 110-gain part, the
@@ -807,10 +870,10 @@ export async function searchParts(
           // stated BANDS itself — search-only, engine untouched. A part outside a band the user
           // explicitly stated is a mismatch against what they asked for, so it counts as one.
           const statedBands = parseStatedBands(constraints, logicTable);
-          const attrsByMpnLower = new Map(scorable.map(a => [a.part.mpn.toLowerCase(), a]));
+          const attrsByMpnLower = new Map(scorable.map(a => [keyOf(a.part), a]));
           const bandRuleIndex = new Map(logicTable.rules.map(r => [r.attributeId, r]));
           const effectiveFails = (rec: XrefRecommendation): number => {
-            const attrs = attrsByMpnLower.get(rec.part.mpn.toLowerCase());
+            const attrs = attrsByMpnLower.get(keyOf(rec.part));
             const bandFails = attrs ? countStatedBandViolations(statedBands, logicTable, attrs, bandRuleIndex) : 0;
             return countRealMismatches(rec) + bandFails;
           };
@@ -819,27 +882,27 @@ export async function searchParts(
           // closest fit (least over-spec) → match %. Self-contained (greenfield has no certified
           // buckets / composite scores, so the shared sort's later keys don't apply).
           const statusRank = (s?: string) => (!s || s === 'Active' ? 0 : 1);
-          const failsByMpn = new Map(recs.map(r => [r.part.mpn.toLowerCase(), effectiveFails(r)]));
-          const failsOf = (r: XrefRecommendation) => failsByMpn.get(r.part.mpn.toLowerCase()) ?? 0;
+          const failsByMpn = new Map(recs.map(r => [keyOf(r.part), effectiveFails(r)]));
+          const failsOf = (r: XrefRecommendation) => failsByMpn.get(keyOf(r.part)) ?? 0;
           recs.sort((a, b) => {
             const fd = failsOf(a) - failsOf(b);
             if (fd !== 0) return fd;
             const sd = statusRank(a.part.status) - statusRank(b.part.status);
             if (sd !== 0) return sd;
-            const cd = (confirmedByMpn.get(b.part.mpn.toLowerCase()) ?? 0) - (confirmedByMpn.get(a.part.mpn.toLowerCase()) ?? 0);
+            const cd = (confirmedByMpn.get(keyOf(b.part)) ?? 0) - (confirmedByMpn.get(keyOf(a.part)) ?? 0);
             if (cd !== 0) return cd;
-            const pd = (penaltyByMpn.get(a.part.mpn.toLowerCase()) ?? 0) - (penaltyByMpn.get(b.part.mpn.toLowerCase()) ?? 0);
+            const pd = (penaltyByMpn.get(keyOf(a.part)) ?? 0) - (penaltyByMpn.get(keyOf(b.part)) ?? 0);
             if (pd !== 0) return pd;
             return b.matchPercentage - a.matchPercentage;
           });
 
           // Annotate the matching cards + rebuild mergedMatches in rec order,
           // appending any unscorable matches (no attrs) after, original order.
-          const summaryByMpn = new Map(mergedMatches.map(m => [m.mpn.toLowerCase(), m]));
+          const summaryByMpn = new Map(mergedMatches.map(m => [keyOf(m), m]));
           const reordered: typeof mergedMatches = [];
           const placed = new Set<string>();
           for (const rec of recs) {
-            const key = rec.part.mpn.toLowerCase();
+            const key = keyOf(rec.part);
             const summary = summaryByMpn.get(key);
             if (!summary || placed.has(key)) continue;
             const fails = failsOf(rec);
@@ -865,7 +928,7 @@ export async function searchParts(
             placed.add(key);
           }
           for (const m of mergedMatches) {
-            if (!placed.has(m.mpn.toLowerCase())) reordered.push(m);
+            if (!placed.has(keyOf(m))) reordered.push(m);
           }
           mergedMatches.length = 0;
           mergedMatches.push(...reordered);
@@ -896,9 +959,20 @@ export async function searchParts(
     // FC enrichment, so coverage grows naturally over time. MPNs without a
     // cached entry simply get no badge in the UI.
     try {
-      const counts = await getCachedDistributorCounts(mergedMatches.map(m => m.mpn));
+      // Scope each badge to the card's OWN maker. FindChips counts every distributor that
+      // sells the shared MPN under ANY maker, so a maker-blind badge over-states a specific
+      // card. With per-manufacturer cards, several cards share one MPN, so we read the raw
+      // per-MPN payload once and resolve EACH card against its own maker — an MPN-keyed
+      // number map would hand every same-MPN card a single (last-maker) value. Legacy rows
+      // (no per-maker data) resolve to nothing and get a count from the live gap-fill.
+      const payloads = await getCachedDistributorPayloads(mergedMatches.map(m => m.mpn));
       for (const m of mergedMatches) {
-        const c = counts.get(m.mpn.toLowerCase());
+        // resolveCardDistributorCount enforces the shared per-card policy: a blank/absent maker
+        // yields undefined (no badge) — never the maker-blind aggregate total, which would
+        // attribute every maker's distributors to this one card. Same helper the client gap-fill
+        // uses, so the rule can't drift between the two paths. Legacy rows (no per-maker data)
+        // resolve to nothing and get a count from the live gap-fill.
+        const c = resolveCardDistributorCount(payloads.get(m.mpn.toLowerCase()), m.manufacturer);
         if (typeof c === 'number') m.distributorCount = c;
       }
     } catch {
@@ -1018,13 +1092,23 @@ async function enrichWithFindchips(attrs: PartAttributes, userId?: string): Prom
     //       Atlas-source card) and the click-flow Commercial tab disagree
     //       whenever parts.io shadows an Atlas-listed MPN.
     let isAtlas = attrs.part.mfrOrigin === 'atlas' || attrs.dataSource === 'atlas';
-    if (!isAtlas && attrs.part.manufacturer) {
+    // Resolve the maker's alias ONCE and reuse it for two things: the Atlas source
+    // selection below, AND the `variants` fed to filterFcResultsByMaker — so a card
+    // whose stored spelling differs from FindChips beyond a suffix strip (e.g. "ST" vs
+    // "STMicroelectronics", onsemi's several forms) still matches its own offers instead
+    // of showing nothing. Source selection is unchanged: resolving when already-Atlas
+    // never flips isAtlas back, and a non-Atlas match leaves it false as before.
+    let makerVariants: readonly string[] | undefined;
+    if (attrs.part.manufacturer) {
       try {
         const alias = await resolveManufacturerAlias(attrs.part.manufacturer);
-        if (alias?.source === 'atlas') isAtlas = true;
+        if (alias) {
+          if (alias.source === 'atlas') isAtlas = true;
+          makerVariants = alias.variants;
+        }
       } catch {
-        // resolver failure → fall through to fc-with-oems-fallback (server-side
-        // fallback still kicks in for FC-empty/obsolete cases).
+        // resolver failure → no variants, and fall through to fc-with-oems-fallback
+        // (server-side fallback still kicks in for FC-empty/obsolete cases).
       }
     }
     const source = isAtlas ? 'parallel-both' : 'fc-with-oems-fallback';
@@ -1039,7 +1123,7 @@ async function enrichWithFindchips(attrs: PartAttributes, userId?: string): Prom
     // unconfigured, but the guard at the top already returned in that case.
     if (providersEnrichEnabled()) {
       const provider = commercialProvider();
-      const commercial = provider ? await provider.getCommercial(attrs.part.mpn, { source, userId }) : null;
+      const commercial = provider ? await provider.getCommercial(attrs.part.mpn, { source, userId, manufacturer: attrs.part.manufacturer, variants: makerVariants }) : null;
       if (!commercial) return attrs;
       return {
         ...attrs,
@@ -1055,9 +1139,14 @@ async function enrichWithFindchips(attrs: PartAttributes, userId?: string): Prom
     const results = await getFindchipsResults(attrs.part.mpn, userId, { source });
     if (!results || results.length === 0) return attrs;
 
-    const quotes = mapFCToQuotes(results, attrs.part.mpn);
-    const lifecycle = mapFCLifecycle(results);
-    const compliance = mapFCCompliance(results);
+    // Keep only offers confidently made by THIS part's maker, so quotes / prices / buy-links and
+    // lifecycle / compliance describe attrs.part.manufacturer's part — not another company's part
+    // that merely shares the MPN string. `makerVariants` (alias spellings) widens the match so a
+    // differently-spelled-but-same-maker offer still counts. See filterFcResultsByMaker.
+    const scoped = filterFcResultsByMaker(results, attrs.part.manufacturer, makerVariants);
+    const quotes = mapFCToQuotes(scoped, attrs.part.mpn);
+    const lifecycle = mapFCLifecycle(scoped);
+    const compliance = mapFCCompliance(scoped);
 
     const lifecycleInfos: LifecycleInfo[] = [];
     if (lifecycle) lifecycleInfos.push(lifecycle);
@@ -1084,6 +1173,15 @@ async function enrichWithFindchips(attrs: PartAttributes, userId?: string): Prom
 /**
  * Enrich recommendation candidates with FindChips pricing (batch).
  * Concurrent individual API calls (FC has no batch endpoint).
+ *
+ * ⚠️ CURRENTLY UNUSED — this function has NO callers (added in the Mouser→FindChips
+ * migration but never wired in; verified repo-wide). Recommendation-card price/stock
+ * is enriched on the CLIENT via the deferred `/fc/enrich` route
+ * (triggerFCEnrichment → enrichWithFCBatch), which is the path that applies the
+ * maker-aware `filterFcResultsByMaker` scoping for suggestion cards. The scoping call
+ * below therefore does NOT protect any live surface; it is kept only so this helper
+ * stays correct-by-construction if a future connector convergence re-enables it. Do
+ * not assume rec cards are maker-scoped HERE — they are scoped in the route.
  */
 async function enrichCandidatesWithFindchips(recs: XrefRecommendation[], userId?: string): Promise<XrefRecommendation[]> {
   if (recs.length === 0) return recs;
@@ -1111,9 +1209,10 @@ async function enrichCandidatesWithFindchips(recs: XrefRecommendation[], userId?
     const distResults = fcResults.get(rec.part.mpn.toLowerCase());
     if (!distResults || distResults.length === 0) return rec;
 
-    const quotes = mapFCToQuotes(distResults, rec.part.mpn);
-    const lifecycle = mapFCLifecycle(distResults);
-    const compliance = mapFCCompliance(distResults);
+    const scoped = filterFcResultsByMaker(distResults, rec.part.manufacturer);
+    const quotes = mapFCToQuotes(scoped, rec.part.mpn);
+    const lifecycle = mapFCLifecycle(scoped);
+    const compliance = mapFCCompliance(scoped);
 
     return {
       ...rec,

@@ -45,7 +45,7 @@ export { SELECTION_TIERS };
  */
 const NUMERIC_LOGIC_TYPES = new Set(['threshold', 'fit', 'identity_range', 'vref_check']);
 
-function parseOptions(rule: MatchingRule): string[] | undefined {
+export function parseSelectionOptions(rule: MatchingRule): string[] | undefined {
   if (rule.upgradeHierarchy && rule.upgradeHierarchy.length >= 2) return [...rule.upgradeHierarchy];
   if (NUMERIC_LOGIC_TYPES.has(rule.logicType)) return undefined;
   const paren = rule.attributeName.match(/\(([^)]*)\)/);
@@ -58,7 +58,7 @@ function parseOptions(rule: MatchingRule): string[] | undefined {
 function toSelectionAttr(attributeId: string, ruleById: Map<string, MatchingRule>): SelectionAttr | null {
   const rule = ruleById.get(attributeId);
   if (!rule) return null;
-  const options = parseOptions(rule);
+  const options = parseSelectionOptions(rule);
   const attr: SelectionAttr = {
     attributeId,
     label: rule.attributeName,

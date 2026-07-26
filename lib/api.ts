@@ -1,5 +1,16 @@
 import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse, PartSummary, ManufacturerCrossReference, DistributorClickEntry, AppFeedbackSubmission, AppFeedbackListItem, AppFeedbackStatusCounts, AppFeedbackStatus, AppFeedbackCategory, AppFeedbackUpdate, AppFeedbackComment, AppFeedbackThread, ReplacementPriorities, ManufacturerProfile, Notification } from './types';
 import type { ServiceWarning, ServiceName, ServiceStatusInfo, AcceptanceCriteria } from './types';
+import type { DistributorCountPayload } from './services/findchipsDistributorCount';
+
+/** One MPN's FindChips enrichment: maker-scoped quotes/lifecycle/compliance, plus a per-maker
+ *  distributor-count breakdown (from the unfiltered results) so a caller can resolve a count
+ *  for each of several cards that share the MPN. */
+export interface FCEnrichEntry {
+  quotes: SupplierQuote[];
+  lifecycle: LifecycleInfo | null;
+  compliance: ComplianceData | null;
+  distributorCounts?: DistributorCountPayload | null;
+}
 
 // Admin types
 export interface AdminUser {
@@ -191,17 +202,22 @@ export async function getRecommendationsWithContext(
  *  Caller must keep batch size ≤ 50 (server cap). Callers like `triggerFCEnrichment` in
  *  useAppState chunk larger lists and fire this in parallel per chunk for incremental rendering.
  *  Pass an `AbortSignal` to cancel in-flight HTTP when the user navigates away — saves FindChips
- *  rate-limit budget (60 calls/min). AbortError is swallowed (treated as empty result). */
+ *  rate-limit budget (60 calls/min). AbortError is swallowed (treated as empty result).
+ *  `makers` maps lowercase-MPN → the card's manufacturer; the server keeps only offers
+ *  confidently made by that maker so a shared MPN's price/buy-link can't be attributed to the
+ *  wrong company. Omit it (e.g. the distributor-count path) to leave results unfiltered. */
 export async function enrichWithFCBatch(
   mpns: string[],
   signal?: AbortSignal,
   chineseMpns?: string[],
-): Promise<Record<string, { quotes: SupplierQuote[]; lifecycle: LifecycleInfo | null; compliance: ComplianceData | null }>> {
+  makers?: Record<string, string>,
+): Promise<Record<string, FCEnrichEntry>> {
   if (mpns.length === 0) return {};
   try {
-    const body: { mpns: string[]; chineseMpns?: string[] } = { mpns };
+    const body: { mpns: string[]; chineseMpns?: string[]; makers?: Record<string, string> } = { mpns };
     if (chineseMpns && chineseMpns.length > 0) body.chineseMpns = chineseMpns;
-    const result = await fetchApi<{ results: Record<string, { quotes: SupplierQuote[]; lifecycle: LifecycleInfo | null; compliance: ComplianceData | null }> }>(
+    if (makers && Object.keys(makers).length > 0) body.makers = makers;
+    const result = await fetchApi<{ results: Record<string, FCEnrichEntry> }>(
       `${BASE}/fc/enrich`,
       {
         method: 'POST',

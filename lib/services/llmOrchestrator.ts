@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction, ChoiceOption, SearchConstraint, deriveRecommendationBucket, deriveRecommendationCategories, RecommendationCategory } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
-import { looksLikeMpn, mentionsMpn, buildSearchSummary } from './searchSummary';
+import { looksLikeMpn, mentionsMpn, buildSearchSummary, describeSearchConstraints } from './searchSummary';
 import { decideGuidedTurn, renderNarrowingQuestion } from './guidedSelectionController';
 import { sanitizeChoiceOptions } from './choiceGuard';
 import { buildGreenfieldQuery } from './searchConstraints';
@@ -9,9 +9,13 @@ import { logicTableRegistry, getLogicTable } from '../logicTables';
 import { getSelectionQuestions } from './selectionQuestions';
 import { GuidedAnswerMap } from './guidedSelection';
 import { observeAndLogGrounding, extractUserMpnCandidates } from './grounding/groundingLogger';
+import { observeAndLogSpecValues } from './grounding/specValueLogger';
+import { knownValuesFromAttributes, knownValuesFromUserText } from './grounding/specValueDetector';
 import { ChatGroundingContext, buildVerifiedSetFromContext } from './grounding/observeGrounding';
 import { applyGroundingGate, isGroundingGateEnabled } from './grounding/groundingGate';
 import { buildComparisonTable, ComparisonTable, ComparisonPartInput } from './comparisonTable';
+import { summarizeFamilyKnowledge } from './familyKnowledge';
+import { routeIntentWithClassifier } from './intentRouter';
 import { getProfileForManufacturer } from './manufacturerProfileService';
 import { resolveManufacturerAlias } from './manufacturerAliasResolver';
 import { resolveDiscoveryScope, listManufacturersForScope } from './atlasManufacturerDiscovery';
@@ -1957,7 +1961,15 @@ export async function chat(
         ]),
       };
     }
-    return { message: buildSearchSummary(result), searchResult: result };
+    // REFLECT-BACK (Track B, dark): prepend a deterministic echo of the specs the system parsed,
+    // so a mis-extraction is visible instead of silently driving a wrong-looking result. Grounded
+    // — every token comes from the tracked constraints, not model prose. DARK by default.
+    const summary = buildSearchSummary(result);
+    if (process.env.REFLECT_BACK_ENABLED === '1') {
+      const reflect = describeSearchConstraints(guidedTurn.partType, guidedTurn.constraints, guidedTurn.familyId);
+      if (reflect) return { message: `${reflect}\n\n${summary}`, searchResult: result };
+    }
+    return { message: summary, searchResult: result };
   }
 
   // Collect structured data from tool calls
@@ -1991,6 +2003,26 @@ export async function chat(
   // when the actual quote set is just RS Components + element14).
   if (currentSourceAttributes) {
     contextBlocks.push(summarizeSourcePart(currentSourceAttributes));
+  }
+  // ── Track A: grounded family-engineering knowledge (chat redesign, Phase 1) ──
+  // When the turn concerns a component family, prepend that family's rulebook — which
+  // specs matter, how they're compared, and WHY (the logic tables' engineeringReason) —
+  // so the model reasons from OUR encoded engineering knowledge instead of training-data
+  // memory. INPUT-only + additive; the block ends with a grounding-floor note (it licenses
+  // explaining which specs matter, NOT inventing a part number / target value). Routed
+  // deterministically (intentRouter), with a bounded classifier fallback only on a
+  // family-bundle intent whose family didn't resolve deterministically. Prepended (unshift)
+  // so any on-screen snapshot stays closest to the user's text. DARK by default — enabled
+  // only via FAMILY_KNOWLEDGE_ENABLED once observe-logging has measured the leak rate.
+  if (process.env.FAMILY_KNOWLEDGE_ENABLED === '1' && userText) {
+    const route = await routeIntentWithClassifier(
+      userText,
+      text => classifyPartTypeFamily(client, text, userId),
+    );
+    if (route.familyId) {
+      const familyBlock = summarizeFamilyKnowledge(route.familyId);
+      if (familyBlock) contextBlocks.unshift(familyBlock);
+    }
   }
   if (contextBlocks.length > 0) {
     const lastMsg = anthropicMessages[anthropicMessages.length - 1];
@@ -2197,6 +2229,22 @@ export async function chat(
   // Observe-only: log what a gate WOULD catch in the RAW draft, decoupled from
   // enforcement (plan §"Measurement"). Never alters `result`.
   observeAndLogGrounding(message, groundingCtx, { surface: 'chat', userId: userId ?? null, model: MODEL });
+
+  // Observe-only (spec-value sibling): the MPN detector is blind to value+unit tokens, which is
+  // exactly the surface Track A's family-knowledge material widens. Log would-be spec-value
+  // fabrications — numbers the prose states that don't trace to the turn's grounded attributes
+  // (source part + any looked-up parts), treating the user's own stated specs as grounded. Dark
+  // until spec_value_observations exists; never alters `result`.
+  const knownSpecValues = knownValuesFromAttributes([
+    currentSourceAttributes?.parameters,
+    ...Object.values(toolData.attributes).map((a) => a?.parameters),
+  ]);
+  for (const m of messages) {
+    if (m.role === 'user' && typeof m.content === 'string') {
+      knownSpecValues.push(...knownValuesFromUserText(m.content));
+    }
+  }
+  observeAndLogSpecValues(message, knownSpecValues, { surface: 'chat', userId: userId ?? null, model: MODEL });
 
   // Backstop gate (step 5): only when explicitly enabled. Acts on HIGH-confidence
   // unverified parts in the prose; recovers via regenerate-once → deterministic safe

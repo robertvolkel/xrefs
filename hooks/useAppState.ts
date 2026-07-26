@@ -24,6 +24,7 @@ import { applyRecommendationFilter } from '@/lib/services/recommendationFilter';
 import { buildRecsSummary } from '@/lib/services/recommendationSummary';
 import { buildSearchSummary, looksLikeMpn } from '@/lib/services/searchSummary';
 import { buildOptimisticFromRec, buildOptimisticFromSummary } from '@/lib/services/optimisticAttributes';
+import { resolveCardDistributorCount } from '@/lib/services/findchipsDistributorCount';
 import { formatSupplierName } from '@/lib/constants/suppliers';
 import { QUANTITY_PRESETS } from '@/lib/constants/quantityPresets';
 import { isAutomotiveAecContext } from '@/lib/services/automotiveAecEnforcement';
@@ -507,6 +508,16 @@ export function useAppState() {
       const chineseMpns = sortedRecs
         .filter(r => r.part.mfrOrigin === 'atlas')
         .map(r => r.part.mpn.toLowerCase());
+      // Per-MPN maker map so /fc/enrich attributes each card's price/buy-link to the
+      // card's OWN manufacturer, not to whichever maker of the shared MPN wins FindChips'
+      // maker-blind price/stock tiebreak. Recs are deduped by bare MPN upstream, so one
+      // maker per MPN — no key collision. Passed whole to every chunk; the route only
+      // reads the MPNs it received.
+      const makersByMpn: Record<string, string> = {};
+      for (const r of sortedRecs) {
+        const mfr = r.part.manufacturer;
+        if (mfr && mfr.trim()) makersByMpn[r.part.mpn.toLowerCase()] = mfr;
+      }
       const chunks: string[][] = [];
       if (mpns.length > 0) chunks.push(mpns.slice(0, PRIORITY_CHUNK));
       for (let i = PRIORITY_CHUNK; i < mpns.length; i += CHUNK_SIZE) {
@@ -516,7 +527,7 @@ export function useAppState() {
       setState((prev) => ({ ...prev, isEnrichingFC: true }));
 
       const chunkPromises = chunks.map(chunk =>
-        enrichWithFCBatch(chunk, signal, chineseMpns).then((fcData) => {
+        enrichWithFCBatch(chunk, signal, chineseMpns, makersByMpn).then((fcData) => {
           if (signal.aborted || Object.keys(fcData).length === 0) return;
           setState((prev) => {
             // Enrich against the FULL source (allRecommendations), NOT the
@@ -588,14 +599,21 @@ export function useAppState() {
         .filter((p) => p.dataSource === 'atlas')
         .map((p) => p.mpn.toLowerCase());
 
+      // No maker map here: per-manufacturer cards share one MPN, so a maker-filtered
+      // quote count would collide (every same-MPN card gets one value). Instead the route
+      // returns a per-maker distributor breakdown (distributorCounts) computed from the
+      // UNFILTERED results, and we resolve EACH card against its own maker below.
       enrichWithFCBatch(gapMpns, undefined, chineseMpns)
         .then((fcData) => {
           if (Object.keys(fcData).length === 0) return;
           const mergeCount = (p: PartSummary): PartSummary => {
             if (typeof p.distributorCount === 'number') return p;
+            // resolveCardDistributorCount enforces the shared per-card policy: a blank/absent maker
+            // yields undefined (no badge), never the cross-maker aggregate. Same helper the server
+            // badge block uses, so the two paths can't drift.
             const data = fcData[p.mpn.toLowerCase()];
-            const count = data?.quotes?.length ?? 0;
-            if (count <= 0) return p;
+            const count = resolveCardDistributorCount(data?.distributorCounts, p.manufacturer);
+            if (typeof count !== 'number' || count <= 0) return p;
             return { ...p, distributorCount: count };
           };
           setState((prev) => {

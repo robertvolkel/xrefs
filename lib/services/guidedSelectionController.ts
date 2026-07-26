@@ -2,6 +2,7 @@ import type { OrchestratorMessage, SearchConstraint, ChoiceOption } from '../typ
 import { resolveFamilyFromText, resolveFamilyMatch, getLogicTable } from '../logicTables';
 import { getSelectionQuestions } from './selectionQuestions';
 import { nextGuidedStep, GuidedAnswerMap } from './guidedSelection';
+import { firstValueConflict } from './selectionValidation';
 import { buildGreenfieldQuery } from './searchConstraints';
 import { looksLikeMpn, mentionsMpn } from './searchSummary';
 
@@ -43,6 +44,14 @@ export function renderDisambiguationQuestion(): string {
   return `Which type do you need?`;
 }
 
+/** Wrong-CHOICE clarify question — the user named a categorical value that doesn't exist for
+ *  this spec. System-authored (never model-phrased) and must stay matchable by CONFLICT_Q_RE so
+ *  the answer turn is recognized as a guided continuation. The real options ride along as buttons. */
+export function renderConflictQuestion(label: string, stated: string): string {
+  const clean = label.replace(/\s*\([^)]*\)\s*$/, '').trim().toLowerCase();
+  return `"${stated}" isn't a ${clean} I recognize. Which ${clean} do you need?`;
+}
+
 /** Typed-value batch question. Must stay matchable by VALUES_Q_RE below. */
 export function renderValuesQuestion(labels: string[]): string {
   const list = joinWithAnd(labels);
@@ -68,6 +77,7 @@ function joinWithAnd(items: string[]): string {
 const CHOICE_Q_RE = /^Which .+ do you need\?$/;
 const VALUES_Q_RE = /^What .+ are you targeting\?/;
 const NARROW_Q_RE = /^That gives \d+ parts — more than is useful\. Which .+ do you need\?/;
+const CONFLICT_Q_RE = /isn't a .+ I recognize\. Which .+ do you need\?$/;
 
 /** True when `text` is one of the fixed questions this controller emits — the signal
  *  that we are mid-guided-selection (no message metadata channel exists). The narrowing
@@ -75,7 +85,7 @@ const NARROW_Q_RE = /^That gives \d+ parts — more than is useful\. Which .+ do
  *  is answering us and the turn after it has to be recognized as a continuation. */
 export function isSystemGuidedQuestion(text: string): boolean {
   const t = (text ?? '').trim();
-  return CHOICE_Q_RE.test(t) || VALUES_Q_RE.test(t) || NARROW_Q_RE.test(t);
+  return CHOICE_Q_RE.test(t) || VALUES_Q_RE.test(t) || NARROW_Q_RE.test(t) || CONFLICT_Q_RE.test(t);
 }
 
 /** A SPEC question (a per-attribute choice/values question), as opposed to the
@@ -253,7 +263,12 @@ export function resolvePartTypeFamily(text: string): string | null {
 // verb carries its real suffix set. Suffix groups stay precise to avoid false friends
 // ("needle" ⊄ need, "designate" ⊄ design).
 const INTENT_RE = /\b(need(?:s|ed|ing)?|want(?:s|ed|ing)?|look(?:ing|s)?|find(?:s|ing)?|recommend(?:s|ed|ing|ation)?|suggest(?:s|ed|ing|ion)?|pick(?:s|ed|ing)?|choos(?:e|es|ing)|select(?:s|ed|ing|ion)?|sourc(?:e|es|ed|ing)|requir(?:e|es|ed|ing|ement|ements)?|build(?:s|ing)?|design(?:s|ed|ing)?|get me|show me|help me|after an?)\b/i;
-const THEORY_RE = /\b(difference|differ|versus|vs\b|what is|what's|whats|how (do|does|to)|why|explain|tell me about|compare|pros|cons|when (should|do)|which is better)\b/i;
+// Includes design-ADVICE / criteria questions ("what matters", "what to look for", "how to
+// choose") — a request for GUIDANCE about a part type, not a request to be given parts. These
+// must defer to the answer path (where the family-knowledge reasoning lives), NOT enter guided
+// part-collection. Without this, "What matters most when choosing a MOSFET…" tripped the
+// selection-intent word "choosing" and got interrogated for specs instead of answered.
+const THEORY_RE = /\b(difference|differ|versus|vs\b|what is|what's|whats|how (do|does|to)|why|explain|tell me about|compare|pros|cons|when (should|do)|which is better|what matters|what to look|what should i look|what to consider|what should i consider|what factors|which factors|what makes a good|what should i know)\b/i;
 
 export function hasSelectionIntent(text: string): boolean {
   return INTENT_RE.test(text);
@@ -416,15 +431,43 @@ export async function decideGuidedTurn(
 
   const { familyId, partType } = pinned;
   const answered = await parse(familyId);
+
+  // Wrong-CHOICE clarify (Track B): if the user stated a categorical value that isn't a real
+  // option for this family (a bogus dielectric / output type), step in with the real options
+  // BEFORE searching on the bad value — rather than silently returning a poor result set. Pure +
+  // fail-open (consults valueAliases so a valid synonym like NP0≡C0G is never flagged). Emitted
+  // as a normal `ask` with a CONFLICT_Q_RE-matchable message so the answer is a continuation.
+  // DARK by default until SELECTION_VALIDATION_ENABLED is flipped after the guided E-rows re-run.
+  if (process.env.SELECTION_VALIDATION_ENABLED === '1') {
+    const conflict = firstValueConflict(familyId, answered);
+    if (conflict) {
+      return {
+        kind: 'ask',
+        message: renderConflictQuestion(conflict.label, conflict.stated),
+        choices: conflict.options.map(o => ({ id: o, label: o })),
+      };
+    }
+  }
+
   const step = nextGuidedStep(familyId, answered);
   if (!step) return null;
 
   if (step.type === 'ask_choice') {
-    return {
-      kind: 'ask',
-      message: renderChoiceQuestion(step.attr.label),
-      choices: (step.attr.options ?? []).map(o => ({ id: o, label: o })),
-    };
+    const choices = (step.attr.options ?? []).map(o => ({ id: o, label: o }));
+    // Don't rudely re-ask the SAME choice question. If we already asked about THIS spec last
+    // turn (plainly or via a conflict) and the user answered yet the spec is STILL unanswered,
+    // their answer wasn't a recognized option — the extractor drops an unrecognized categorical
+    // value, so it never reaches the wrong-choice validator above. Acknowledge it here instead.
+    // (Detected by the cleaned spec label appearing in the prior question, which both
+    // renderChoiceQuestion and renderConflictQuestion carry, so repeated bad answers keep getting
+    // acknowledged rather than falling back to a bare repeat.) Gated with the validator flag.
+    const cleanLabel = step.attr.label.replace(/\s*\([^)]*\)\s*$/, '').trim();
+    const askedThisSpecBefore =
+      inProgress && !!lastAssistant && lastAssistant.content.toLowerCase().includes(cleanLabel.toLowerCase());
+    if (process.env.SELECTION_VALIDATION_ENABLED === '1' && askedThisSpecBefore && userText) {
+      return { kind: 'ask', message: renderConflictQuestion(step.attr.label, userText), choices };
+    }
+    return { kind: 'ask', message: renderChoiceQuestion(step.attr.label), choices };
   }
   if (step.type === 'ask_values') {
     return { kind: 'ask', message: renderValuesQuestion(step.attrs.map(a => a.label)) };

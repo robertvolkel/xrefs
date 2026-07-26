@@ -3,6 +3,7 @@ import {
   renderChoiceQuestion,
   renderValuesQuestion,
   renderDisambiguationQuestion,
+  renderConflictQuestion,
   isSystemGuidedQuestion,
   detectAmbiguity,
   resolvePartTypeFamily,
@@ -23,6 +24,9 @@ describe('fixed question wording + recognizer (the in-progress marker)', () => {
     expect(isSystemGuidedQuestion(renderChoiceQuestion('Output Type'))).toBe(true);
     expect(isSystemGuidedQuestion(renderDisambiguationQuestion())).toBe(true);
     expect(isSystemGuidedQuestion(renderValuesQuestion(['R25', 'B-Value', 'Package']))).toBe(true);
+    // The wrong-choice clarify question must ALSO round-trip, or its answer turn wouldn't be
+    // recognized as a continuation and the flow would restart.
+    expect(isSystemGuidedQuestion(renderConflictQuestion('Dielectric / Temperature Characteristic', 'ZZ9Q'))).toBe(true);
   });
   it('choice question lowercases the spec and is one sentence', () => {
     expect(renderChoiceQuestion('Output Type')).toBe('Which output type do you need?');
@@ -389,5 +393,86 @@ describe('decideGuidedTurn — review-fix regressions', () => {
     expect(out?.kind).toBe('ask');                 // system asks C4's next spec, not abandoned to the LLM
     // Recovery classifies the flow ENTRY, not the spec answer "comparator".
     expect(classifiedWith).toBe('I need a doohickey for my board');
+  });
+});
+
+describe('design-advice questions defer to the answer path (not guided part-collection)', () => {
+  // A "what matters / what to look for / how to choose" question is a request for GUIDANCE about
+  // a part type — it must reach the family-knowledge reasoning, NOT get interrogated for specs.
+  // Regression: "choosing"/"selecting" are selection-intent words, so without advice-detection
+  // these were grabbed by the guided flow.
+  it.each([
+    'What matters most when choosing a MOSFET to switch 20 volts at 5 amps?',
+    'What should I look for in an op amp?',
+    'What to consider when selecting an LDO?',
+    'How do I choose a capacitor?',
+    'What factors matter for a diode?',
+  ])('defers: %s', async (q) => {
+    expect(await decideGuidedTurn([u(q)], noAnswers)).toBeNull();
+  });
+
+  it('regression: a declarative sourcing need STILL guides', async () => {
+    const out = await decideGuidedTurn([u('I need a MOSFET')], noAnswers);
+    expect(out?.kind).toBe('ask'); // guided part-collection still owns real sourcing requests
+  });
+});
+
+describe('wrong-choice clarify (SELECTION_VALIDATION_ENABLED)', () => {
+  // MLCC (family 12) pins directly via resolvePartTypeFamily('MLCC'); its dielectric rule has a
+  // closed option set, so a bogus value is a definite wrong choice.
+  const badDielectric = async (): Promise<GuidedAnswerMap> => ({ dielectric: { value: 'ZZ9Q' } });
+
+  afterEach(() => { delete process.env.SELECTION_VALIDATION_ENABLED; });
+
+  it('flag ON: a bogus categorical value → clarify question with the REAL options', async () => {
+    process.env.SELECTION_VALIDATION_ENABLED = '1';
+    const out = await decideGuidedTurn([u('MLCC')], badDielectric);
+    expect(out?.kind).toBe('ask');
+    if (out?.kind === 'ask') {
+      expect(out.message.startsWith('"ZZ9Q" isn\'t')).toBe(true);
+      expect(isSystemGuidedQuestion(out.message)).toBe(true); // answer turn is a continuation
+      expect(out.choices?.map(c => c.id)).toContain('C0G');    // real options offered
+    }
+  });
+
+  it('flag OFF: the SAME bogus value is NOT intercepted (proceeds to the normal step)', async () => {
+    delete process.env.SELECTION_VALIDATION_ENABLED;
+    const out = await decideGuidedTurn([u('MLCC')], badDielectric);
+    // Whatever the flow does next, it must NOT be the conflict clarify.
+    if (out?.kind === 'ask') expect(out.message.startsWith('"ZZ9Q" isn\'t')).toBe(false);
+  });
+
+  // The REALISTIC path: the spec extractor DROPS an unrecognized categorical value, so it never
+  // reaches the validator and the flow would re-ask the identical question. The controller must
+  // detect the repeat and acknowledge the bad answer instead. (This is the bug the founder hit:
+  // "Z99" → the same dielectric question verbatim.)
+  const droppedByExtractor = async (): Promise<GuidedAnswerMap> => ({});
+  const reAskConvo = [
+    u('So...I need an MLCC capacitor'),
+    a('Which dielectric / temperature characteristic do you need?'),
+    u('Z99'),
+  ];
+
+  it('flag ON: a dropped unrecognized answer → acknowledges, does NOT bare-repeat', async () => {
+    process.env.SELECTION_VALIDATION_ENABLED = '1';
+    const out = await decideGuidedTurn(reAskConvo, droppedByExtractor);
+    expect(out?.kind).toBe('ask');
+    if (out?.kind === 'ask') {
+      expect(out.message.startsWith('"Z99" isn\'t')).toBe(true);
+      expect(out.message).not.toBe('Which dielectric / temperature characteristic do you need?');
+      expect(out.choices?.map(c => c.id)).toContain('C0G');
+    }
+  });
+
+  it('flag ON: the FIRST ask of a spec is the plain question (no false acknowledgment)', async () => {
+    process.env.SELECTION_VALIDATION_ENABLED = '1';
+    const out = await decideGuidedTurn([u('I need an MLCC capacitor')], droppedByExtractor);
+    if (out?.kind === 'ask') expect(out.message.startsWith('"')).toBe(false);
+  });
+
+  it('flag OFF: a dropped answer falls back to the bare re-ask (feature is dark)', async () => {
+    delete process.env.SELECTION_VALIDATION_ENABLED;
+    const out = await decideGuidedTurn(reAskConvo, droppedByExtractor);
+    if (out?.kind === 'ask') expect(out.message.startsWith('"Z99" isn\'t')).toBe(false);
   });
 });
