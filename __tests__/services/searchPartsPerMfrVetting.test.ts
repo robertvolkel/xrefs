@@ -92,11 +92,13 @@ function tiDigikeyResponse(vds: string) {
 }
 
 /** The Atlas return contract: `{ result, attrsByMpn }`, both keyed by lowercased MPN,
- *  with the attrs carrying 3PEAK's own (lower) Vds. */
-function peakAtlasReturn(vds: number) {
+ *  with the attrs carrying 3PEAK's own (lower) Vds. `attrsMfr` lets a test make the attrs
+ *  spelling differ from the summary spelling (both must still alias-resolve to the same slug)
+ *  to exercise the keyOf/aliasByMfr consistency fix. */
+function peakAtlasReturn(vds: number, attrsMfr: string = '3PEAK') {
   const part = {
     mpn: SHARED_MPN,
-    manufacturer: '3PEAK',
+    manufacturer: attrsMfr,
     description: 'N-Channel MOSFET',
     detailedDescription: '',
     category: 'Transistors',
@@ -217,6 +219,31 @@ describe('searchParts per-MFR vetting key (Fix A, real-path)', () => {
     const peak = lm.find(m => m.manufacturer === '3PEAK');
     expect(ti?.distributorCount).toBe(7);
     expect(peak?.distributorCount).toBe(2);
+  });
+
+  it('flag ON: scores a card even when its attrs maker spelling differs from its summary maker (keyOf/aliasByMfr consistency)', async () => {
+    // Regression for the keyOf/aliasByMfr consistency fix: keyOf() is applied to
+    // attrs.part.manufacturer as well as the summary manufacturer, so aliasByMfr must resolve
+    // BOTH spellings. Here the Atlas summary says "3PEAK" but its attrs say "3PEAK Incorporated"
+    // (both alias-resolve to slug "3peak"). If aliasByMfr is built from summary makers only, the
+    // attrs spelling misses → slugOf falls back to the raw string → the write key
+    // ("lm317t::3peak incorporated") diverges from the read key ("lm317t::3peak") → the 20 V attrs
+    // aren't found for the 3PEAK card → it is scored WITHOUT its own attrs and is NOT below spec.
+    process.env.PER_MFR_CARDS_ENABLED = '1';
+    kw.mockResolvedValue(tiDigikeyResponse('100 V'));
+    atlas.mockResolvedValue(peakAtlasReturn(20, '3PEAK Incorporated'));
+
+    const result = await searchParts('n-channel mosfet 30v switching', 'USD', undefined, {
+      skipFindchips: true,
+      constraints: [{ attribute: 'drain-source voltage', value: 30, unit: 'V', bound: 'min' }],
+    });
+
+    const lm = result.matches.filter(m => m.mpn.toLowerCase() === SHARED_MPN.toLowerCase());
+    const peak = lm.find(m => m.manufacturer === '3PEAK');
+    expect(peak).toBeDefined();
+    // Scored from 3PEAK's OWN 20 V attrs → below spec. The fix (resolving attrs makers into
+    // aliasByMfr) is what makes the two keys agree so the attrs are found.
+    expect(peak!.specFit).toBe('below_spec');
   });
 
   it('flag OFF: the same two-source shared MPN collapses to ONE card (legacy dedup preserved)', async () => {

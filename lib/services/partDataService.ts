@@ -48,7 +48,7 @@ import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSug
 import { mapMouserLifecycle } from './mouserMapper';
 import { isFindchipsConfigured, getFindchipsResults, getFindchipsResultsBatch, hasFindchipsBudget, getCachedDistributorPayloads } from './findchipsClient';
 import { mapFCToQuotes, mapFCLifecycle, mapFCCompliance, filterFcResultsByMaker } from './findchipsMapper';
-import { resolveDistributorCount } from './findchipsDistributorCount';
+import { resolveCardDistributorCount } from './findchipsDistributorCount';
 import { getCachedResponse, setCachedResponse, TTL_SEARCH_MS, TTL_RECOMMENDATIONS_MS, RECS_CACHE_SCHEMA_VERSION, SEARCH_CACHE_SCHEMA_VERSION } from './partDataCache';
 import { createHash } from 'crypto';
 import { fetchManufacturerCrossRefs } from './manufacturerCrossRefService';
@@ -711,6 +711,16 @@ export async function searchParts(
     for (const s of settled) {
       if (s.status !== 'fulfilled') continue;
       for (const p of s.value.result.matches ?? []) if (p.manufacturer) candidateMfrs.add(p.manufacturer);
+      // Also resolve the manufacturers carried on the SCORABLE attrs (attrsByMpn), not just the
+      // match summaries. keyOf() below is applied to attrs.part.manufacturer as well; if a source
+      // spells the maker differently on its attrs than on its summary, an aliasByMfr miss would
+      // make slugOf fall back to the raw string on one side only, diverging the write/read dedup
+      // keys and dropping the candidate from vetting. Resolving both keeps keyOf consistent.
+      if (s.value.attrsByMpn) {
+        for (const v of s.value.attrsByMpn.values()) {
+          if (v.part.manufacturer) candidateMfrs.add(v.part.manufacturer);
+        }
+      }
     }
     await Promise.all([...candidateMfrs].map(async mfr => {
       try {
@@ -957,12 +967,12 @@ export async function searchParts(
       // (no per-maker data) resolve to nothing and get a count from the live gap-fill.
       const payloads = await getCachedDistributorPayloads(mergedMatches.map(m => m.mpn));
       for (const m of mergedMatches) {
-        // A card with no maker gets NO badge — never the maker-blind aggregate total. Otherwise
-        // a card whose maker was momentarily empty (an upstream data hiccup) would show the
-        // shared total (e.g. "40") attributed to that one card, the exact confusion we're
-        // eliminating. resolveDistributorCount would return `count` on an empty maker; skip it.
-        if (!m.manufacturer || !m.manufacturer.trim()) continue;
-        const c = resolveDistributorCount(payloads.get(m.mpn.toLowerCase()), m.manufacturer);
+        // resolveCardDistributorCount enforces the shared per-card policy: a blank/absent maker
+        // yields undefined (no badge) — never the maker-blind aggregate total, which would
+        // attribute every maker's distributors to this one card. Same helper the client gap-fill
+        // uses, so the rule can't drift between the two paths. Legacy rows (no per-maker data)
+        // resolve to nothing and get a count from the live gap-fill.
+        const c = resolveCardDistributorCount(payloads.get(m.mpn.toLowerCase()), m.manufacturer);
         if (typeof c === 'number') m.distributorCount = c;
       }
     } catch {

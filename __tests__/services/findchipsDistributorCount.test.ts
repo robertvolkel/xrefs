@@ -1,6 +1,7 @@
 import {
   computePerMakerDistributorCounts,
   resolveDistributorCount,
+  resolveCardDistributorCount,
   type DistributorCountPayload,
 } from '@/lib/services/findchipsDistributorCount';
 import type { FCDistributorResult } from '@/lib/services/findchipsClient';
@@ -92,5 +93,36 @@ describe('resolveDistributorCount', () => {
   it('returns undefined for a null/absent payload', () => {
     expect(resolveDistributorCount(null, 'STMicroelectronics')).toBeUndefined();
     expect(resolveDistributorCount(undefined, undefined)).toBeUndefined();
+  });
+});
+
+describe('resolveCardDistributorCount (shared per-card policy)', () => {
+  const payload = computePerMakerDistributorCounts(LM317T)!;
+
+  it('with a maker present, returns that maker’s count (same as resolveDistributorCount)', () => {
+    expect(resolveCardDistributorCount(payload, 'STMicroelectronics')).toBe(3);
+    expect(resolveCardDistributorCount(payload, 'onsemi')).toBe(1);
+  });
+
+  it('with a BLANK/absent maker, returns undefined — NEVER the maker-blind total', () => {
+    // THE load-bearing difference from resolveDistributorCount: a card with no maker must not
+    // borrow the cross-maker aggregate. If the blank-maker guard is removed, these return 4 (the
+    // total) — the exact wrong-maker attribution the per-card policy exists to prevent.
+    expect(resolveCardDistributorCount(payload, undefined)).toBeUndefined();
+    expect(resolveCardDistributorCount(payload, null)).toBeUndefined();
+    expect(resolveCardDistributorCount(payload, '')).toBeUndefined();
+    expect(resolveCardDistributorCount(payload, '   ')).toBeUndefined();
+    // Contrast: resolveDistributorCount DOES return the total on a blank maker (for maker-agnostic
+    // callers) — proving the two helpers genuinely differ and this isn't a vacuous pass.
+    expect(resolveDistributorCount(payload, '')).toBe(4);
+  });
+
+  it('with a maker NOT present, returns undefined (fail safe)', () => {
+    expect(resolveCardDistributorCount(payload, 'HGSEMI')).toBeUndefined();
+  });
+
+  it('returns undefined for a null payload regardless of maker', () => {
+    expect(resolveCardDistributorCount(null, 'STMicroelectronics')).toBeUndefined();
+    expect(resolveCardDistributorCount(undefined, 'onsemi')).toBeUndefined();
   });
 });

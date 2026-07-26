@@ -74,3 +74,22 @@ export function resolveDistributorCount(
   }
   return typeof payload.count === 'number' ? payload.count : undefined;
 }
+
+/**
+ * Resolve the count to show on a per-MANUFACTURER search/rec CARD. Identical to
+ * resolveDistributorCount EXCEPT a blank/absent maker yields `undefined` (no badge) instead of the
+ * maker-blind total — a maker-specific card must never display the cross-maker aggregate (that
+ * attributes every maker's distributors to one card, the exact confusion this module eliminates).
+ *
+ * This is the SINGLE home for the search-card policy. Both call sites — the server badge block in
+ * `searchParts` and the client gap-fill in `triggerSearchDistributorEnrichment` — go through it, so
+ * the "blank maker ⇒ no badge" rule cannot drift between them (it previously lived inline on the
+ * server only, and the client path showed the aggregate — the bug this centralization fixes).
+ */
+export function resolveCardDistributorCount(
+  payload: DistributorCountPayload | undefined | null,
+  maker: string | undefined | null,
+): number | undefined {
+  if (typeof maker !== 'string' || maker.trim().length === 0) return undefined;
+  return resolveDistributorCount(payload, maker);
+}

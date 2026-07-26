@@ -24,7 +24,7 @@ import { applyRecommendationFilter } from '@/lib/services/recommendationFilter';
 import { buildRecsSummary } from '@/lib/services/recommendationSummary';
 import { buildSearchSummary, looksLikeMpn } from '@/lib/services/searchSummary';
 import { buildOptimisticFromRec, buildOptimisticFromSummary } from '@/lib/services/optimisticAttributes';
-import { resolveDistributorCount } from '@/lib/services/findchipsDistributorCount';
+import { resolveCardDistributorCount } from '@/lib/services/findchipsDistributorCount';
 import { formatSupplierName } from '@/lib/constants/suppliers';
 import { QUANTITY_PRESETS } from '@/lib/constants/quantityPresets';
 import { isAutomotiveAecContext } from '@/lib/services/automotiveAecEnforcement';
@@ -608,8 +608,11 @@ export function useAppState() {
           if (Object.keys(fcData).length === 0) return;
           const mergeCount = (p: PartSummary): PartSummary => {
             if (typeof p.distributorCount === 'number') return p;
+            // resolveCardDistributorCount enforces the shared per-card policy: a blank/absent maker
+            // yields undefined (no badge), never the cross-maker aggregate. Same helper the server
+            // badge block uses, so the two paths can't drift.
             const data = fcData[p.mpn.toLowerCase()];
-            const count = resolveDistributorCount(data?.distributorCounts, p.manufacturer);
+            const count = resolveCardDistributorCount(data?.distributorCounts, p.manufacturer);
             if (typeof count !== 'number' || count <= 0) return p;
             return { ...p, distributorCount: count };
           };
