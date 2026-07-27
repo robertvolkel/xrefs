@@ -100,6 +100,23 @@ function constraintLabel(attribute: string, familyId?: string): string {
  * constraints (an un-vetted keyword search reflects nothing). `bound` renders as ≥ / ≤; an exact
  * or categorical value renders bare. Chat-redesign Phase 1 Track B.
  */
+/**
+ * A friendly short type name for the reflect-back line. Logic-table family names are
+ * formal and verbose ("MOSFETs — N-Channel & P-Channel"); the echo wants the clean head
+ * ("MOSFETs"). Take the text before an em/en dash and drop a trailing parenthetical,
+ * PRESERVING the family's own casing so acronyms (MOSFETs / ADCs / IGBTs) read correctly
+ * instead of being flattened to lowercase. Dropping the dash tail also removes the
+ * "n-channel & p-channel" clash with a "channel type N-Channel" constraint on the same
+ * line. Regular hyphens (Through-Hole, Op-Amps) are left intact. Falls back to 'parts'.
+ */
+function displayPartType(partType: string | undefined): string {
+  const head = (partType ?? '')
+    .split(/\s*[—–]\s*/)[0]           // "MOSFETs — N-Channel & P-Channel" → "MOSFETs"
+    .replace(/\s*\([^)]*\)\s*$/, '')  // "Linear Voltage Regulators (LDOs)" → "Linear Voltage Regulators"
+    .trim();
+  return head || 'parts';
+}
+
 export function describeSearchConstraints(
   partType: string,
   constraints: SearchConstraint[] | undefined,
@@ -112,8 +129,7 @@ export function describeSearchConstraints(
     const unit = c.unit ? ` ${c.unit}` : '';
     return `${label} ${op}${c.value}${unit}`.trim();
   });
-  const type = (partType ?? '').trim().toLowerCase() || 'parts';
-  return `Searching ${type} with: ${parts.join(', ')}.`;
+  return `Searching ${displayPartType(partType)} with: ${parts.join(', ')}.`;
 }
 
 export function buildSearchSummary(searchResult: SearchResult): string {

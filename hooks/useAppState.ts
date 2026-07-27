@@ -1449,10 +1449,18 @@ export function useAppState() {
         // fabricate, and it overrides the greenfield substitution above.
         const searchFilterLabel = response.searchFilterLabel;
         const filteredCount = searchResult?.matches?.length ?? 0;
+        // Reflect-back echo (REFLECT_BACK_ENABLED): the greenfield branch below rebuilds
+        // the results line from `searchResult` alone, so a constraint echo folded into
+        // response.message would be lost. Re-prepend it here (it's leak-proof — built by
+        // the server from the tracked constraints, not model prose). Absent when the flag
+        // is off, so this is a no-op in production until #2 is enabled. Kept INSIDE the
+        // isGreenfieldSearchPresentation branch so `searchResult` stays narrowed to defined.
         const presentationMessage = searchFilterLabel && searchResult && filteredCount > 0
           ? `Filtered to ${filteredCount} ${filteredCount === 1 ? 'part' : 'parts'} — ${searchFilterLabel}. Click the one you'd like to use.`
           : isGreenfieldSearchPresentation
-          ? buildSearchSummary(searchResult)
+          ? (response.constraintEcho
+              ? `${response.constraintEcho}\n\n${buildSearchSummary(searchResult)}`
+              : buildSearchSummary(searchResult))
           : response.message;
 
         // Track assistant response in conversation history. CRITICAL: for greenfield card

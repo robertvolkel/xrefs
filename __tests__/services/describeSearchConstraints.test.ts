@@ -17,7 +17,30 @@ describe('describeSearchConstraints', () => {
     const out = describeSearchConstraints('N-channel MOSFET', cs);
     expect(out).toContain('≥ 30 V');
     expect(out).toContain('≤ 1.2 mm');
-    expect(out.startsWith('Searching n-channel mosfet with:')).toBe(true);
+    // Type name casing is preserved (a regular hyphen is NOT a split point).
+    expect(out.startsWith('Searching N-channel MOSFET with:')).toBe(true);
+  });
+
+  it('shortens a verbose family name to its clean head, preserving casing', () => {
+    const out = describeSearchConstraints(
+      'MOSFETs — N-Channel & P-Channel',
+      [{ attribute: 'channel type', value: 'N-Channel' }, { attribute: 'drain-source voltage', value: 30, unit: 'V', bound: 'min' }],
+    );
+    expect(out.startsWith('Searching MOSFETs with:')).toBe(true);
+    // The "& P-Channel" dash-tail is dropped, so it can't clash with the N-Channel constraint.
+    expect(out).not.toContain('P-Channel & ');
+    expect(out).not.toContain('n-channel & p-channel');
+    // Acronym casing survives (not flattened to "mosfets").
+    expect(out).not.toContain('mosfets');
+  });
+
+  it('drops a trailing parenthetical from the type name', () => {
+    const out = describeSearchConstraints(
+      'Linear Voltage Regulators (LDOs)',
+      [{ attribute: 'output voltage', value: 3.3, unit: 'V', bound: 'min' }],
+    );
+    expect(out.startsWith('Searching Linear Voltage Regulators with:')).toBe(true);
+    expect(out).not.toContain('(LDOs)');
   });
 
   it('renders an exact/categorical value with NO operator', () => {

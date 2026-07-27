@@ -1967,7 +1967,11 @@ export async function chat(
     const summary = buildSearchSummary(result);
     if (process.env.REFLECT_BACK_ENABLED === '1') {
       const reflect = describeSearchConstraints(guidedTurn.partType, guidedTurn.constraints, guidedTurn.familyId);
-      if (reflect) return { message: `${reflect}\n\n${summary}`, searchResult: result };
+      // Carry the echo BOTH inline (for any message-direct client path) and as its own
+      // `constraintEcho` field. The greenfield-presentation substitution (useAppState,
+      // Decision #242) rebuilds the message from `searchResult` alone and discards the
+      // inline prefix — it re-prepends `constraintEcho` so the echo survives to the screen.
+      if (reflect) return { message: `${reflect}\n\n${summary}`, searchResult: result, constraintEcho: reflect };
     }
     return { message: summary, searchResult: result };
   }

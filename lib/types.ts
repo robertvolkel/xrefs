@@ -979,6 +979,14 @@ export interface OrchestratorResponse {
    *  "show the Chinese ones" then a client-side "hide discontinued" must mean both)
    *  and so "show me all" knows a filter is active and can clear it. */
   searchFilterInput?: import('@/lib/services/searchResultFilter').SearchFilterInput;
+  /** Reflect-back echo (Track B, REFLECT_BACK_ENABLED): a deterministic, leak-proof
+   *  play-back of the constraints the system parsed for a guided/greenfield search
+   *  (e.g. "Searching N-Channel MOSFETs with: drain-source voltage 30 V."). Carried
+   *  as its own field because the client's greenfield-presentation substitution
+   *  (Decision #242) rebuilds the results message from `searchResult` alone and would
+   *  otherwise discard a prefix folded into `message`. Every token comes from the
+   *  tracked constraints (`describeSearchConstraints`), never model prose. */
+  constraintEcho?: string;
 }
 
 // ============================================================
