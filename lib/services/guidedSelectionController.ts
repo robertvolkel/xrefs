@@ -432,6 +432,24 @@ export async function decideGuidedTurn(
   const { familyId, partType } = pinned;
   const answered = await parse(familyId);
 
+  // Spread a stated "any" across the value batch. When the user answered the value batch and
+  // WAIVED at least one spec ("30V, any"), treat every value spec they didn't address as waived
+  // too — "any" answering a Vds/Id/Package batch means "30V, the rest don't matter", NOT "re-ask
+  // me about package one at a time". The trigger is an EXPLICIT waive: a null-valued answer (the
+  // extractor's "user said any/not sure"), OR a bare "any" in the reply as a backstop for when the
+  // extractor drops it. Because it keys off an explicit waive, "10k and 3500K" (two values, nothing
+  // waived) still re-asks the omitted required spec. Reflect-back then shows exactly which specs
+  // the search used, so a too-loose default is visible and correctable rather than silent.
+  const priorWasValueBatch = inProgress && !!lastAssistant && VALUES_Q_RE.test(lastAssistant.content.trim());
+  const userWaivedAny = Object.values(answered).some(ans => ans.value == null) || /\bany\b/i.test(userText);
+  if (priorWasValueBatch && userWaivedAny) {
+    for (const spec of getSelectionQuestions(familyId)?.tier2 ?? []) {
+      if (spec.input === 'value' && !(spec.attributeId in answered)) {
+        answered[spec.attributeId] = { value: null };
+      }
+    }
+  }
+
   // Wrong-CHOICE clarify (Track B): if the user stated a categorical value that isn't a real
   // option for this family (a bogus dielectric / output type), step in with the real options
   // BEFORE searching on the bad value — rather than silently returning a poor result set. Pure +

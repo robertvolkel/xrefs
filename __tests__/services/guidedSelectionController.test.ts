@@ -303,6 +303,39 @@ describe('decideGuidedTurn — turn ownership', () => {
     expect(out?.kind).toBe('ask'); // package_case still missing
     if (out?.kind === 'ask') expect(isSystemGuidedQuestion(out.message)).toBe(true);
   });
+
+  it('CONTINUATION: a stated "any" spreads to the specs the user left unmentioned → searches', async () => {
+    const convo = [
+      u('I need an NTC thermistor'),
+      a(renderValuesQuestion(['Resistance @ 25°C (R25)', 'B-Value (B-Constant)', 'Package / Case'])),
+      u('10k, any'), // R25 given; "any" waives the rest; package never named
+    ];
+    // Extractor recorded R25 + an explicit waive on B-value; package NOT keyed at all.
+    const parse = async (): Promise<GuidedAnswerMap> => ({
+      resistance_r25: { value: 10000, unit: 'ohm' },
+      b_value: { value: null },
+    });
+    const out = await decideGuidedTurn(convo, parse);
+    expect(out?.kind).toBe('search'); // package spread to "any", NOT re-asked one spec at a time
+    if (out?.kind === 'search') {
+      // both waived specs drop out; only the stated value remains a constraint
+      expect(out.constraints.map(c => c.attribute).sort()).toEqual(['resistance_r25']);
+    }
+  });
+
+  it('CONTINUATION: a bare "any" spreads even if the extractor dropped the null (text backstop)', async () => {
+    const convo = [
+      u('I need an NTC thermistor'),
+      a(renderValuesQuestion(['Resistance @ 25°C (R25)', 'B-Value (B-Constant)', 'Package / Case'])),
+      u('10k, any for the rest'),
+    ];
+    // Extractor recorded ONLY R25 (dropped the "any" entirely) — the raw-text backstop must catch it.
+    const parse = async (): Promise<GuidedAnswerMap> => ({
+      resistance_r25: { value: 10000, unit: 'ohm' },
+    });
+    const out = await decideGuidedTurn(convo, parse);
+    expect(out?.kind).toBe('search'); // "any" in the reply spreads to the unmentioned specs
+  });
 });
 
 describe('hasSelectionIntent — inflected verb stems (the trailing-\\b bug, #5)', () => {
