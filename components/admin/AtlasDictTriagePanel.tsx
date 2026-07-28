@@ -50,7 +50,7 @@ const AI_FILTER_PAGE_SIZE = 500;
 // to Triage drops the engineer back where they were (e.g. their Accept pile)
 // instead of the default "synonyms / open / first 50".
 const VIEW_LS_KEY = 'atlas-triage-view-v1';
-type SavedView = { mode?: TriageMode; statusFilter?: StatusFilter; aiVerdict?: TriageFilters['aiVerdict'] };
+type SavedView = { mode?: TriageMode; statusFilter?: StatusFilter; aiVerdict?: TriageFilters['aiVerdict']; highConfidenceOnly?: TriageFilters['highConfidenceOnly'] };
 function readSavedView(): SavedView {
   if (typeof window === 'undefined') return {};
   try { return JSON.parse(window.localStorage.getItem(VIEW_LS_KEY) || '{}') as SavedView; } catch { return {}; }
@@ -93,7 +93,15 @@ export default function AtlasDictTriagePanel() {
   const initialMfrSlug = searchParams.get('mfr');
   const [filters, setFilters] = useState<TriageFilters>(() => {
     const saved = readSavedView();
-    const base: TriageFilters = { ...EMPTY_FILTERS, aiVerdict: saved.aiVerdict ?? EMPTY_FILTERS.aiVerdict };
+    const highConfidenceOnly = saved.highConfidenceOnly ?? EMPTY_FILTERS.highConfidenceOnly;
+    const base: TriageFilters = {
+      ...EMPTY_FILTERS,
+      // High-confidence implies the Accept pile — force the verdict so the
+      // server loads it (and the page-size bump fires) even if a stale saved
+      // aiVerdict disagrees.
+      aiVerdict: highConfidenceOnly ? 'accept' : (saved.aiVerdict ?? EMPTY_FILTERS.aiVerdict),
+      highConfidenceOnly,
+    };
     return initialMfrSlug ? { ...base, mfrSlugs: [initialMfrSlug] } : base;
   });
   // Optimistic delta added to the server's verdictCounts so the "generated so
@@ -166,15 +174,23 @@ export default function AtlasDictTriagePanel() {
   // Status filter — server-side. 'open' (default) shows un-accepted rows;
   // 'accepted' / 'undone' surface the audit trail of past Accepts; 'all'
   // shows the union (useful when an engineer wants the full picture).
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>(() => readSavedView().statusFilter ?? 'open');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(() => {
+    const saved = readSavedView();
+    // High confidence only shows OPEN starrable rows, so a restored high-conf
+    // view must start on 'open' — otherwise a stale/legacy save of high-conf +
+    // a non-open status would rehydrate into a silently-empty list. Mirrors the
+    // filters initializer forcing aiVerdict='accept' for a restored high-conf.
+    if (saved.highConfidenceOnly) return 'open';
+    return saved.statusFilter ?? 'open';
+  });
 
   // Persist the view (mode / status / AI-verdict) so the next visit restores it.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      window.localStorage.setItem(VIEW_LS_KEY, JSON.stringify({ mode, statusFilter, aiVerdict: filters.aiVerdict }));
+      window.localStorage.setItem(VIEW_LS_KEY, JSON.stringify({ mode, statusFilter, aiVerdict: filters.aiVerdict, highConfidenceOnly: filters.highConfidenceOnly }));
     } catch { /* storage disabled — non-fatal */ }
-  }, [mode, statusFilter, filters.aiVerdict]);
+  }, [mode, statusFilter, filters.aiVerdict, filters.highConfidenceOnly]);
 
   // One-time browser→DB backfill of AI suggestions — protects the pre-launch
   // pile (currently localStorage-only) and avoids re-charging to regenerate.
@@ -236,6 +252,20 @@ export default function AtlasDictTriagePanel() {
     setMode(next);
     setFilters(EMPTY_FILTERS);
   }, []);
+  // A ⭐ starrable row is by definition OPEN (not yet accepted/parked), so
+  // "High confidence" only makes sense on the Open status. Keep the two axes
+  // consistent so the filter never lands on a silently-empty non-open view:
+  //   • enabling High confidence snaps status → 'open'
+  //   • picking a non-open status clears High confidence
+  // (mirrors the verdict group clearing High confidence in TriageFilterBar).
+  const handleFiltersChange = useCallback((next: TriageFilters) => {
+    setFilters(next);
+    if (next.highConfidenceOnly) setStatusFilter('open');
+  }, []);
+  const handleStatusChange = useCallback((next: StatusFilter) => {
+    setStatusFilter(next);
+    if (next !== 'open') setFilters((f) => (f.highConfidenceOnly ? { ...f, highConfidenceOnly: false } : f));
+  }, []);
   // Batches affected by recent Accepts that haven't been regenerated yet.
   // Accept no longer auto-regens (each regen spawns a child process and runs
   // 5–15s; sequential per-affected-batch regens made each Accept feel like a
@@ -248,6 +278,9 @@ export default function AtlasDictTriagePanel() {
   // Page size grows when a localStorage-bound client filter (AI verdict) is
   // active — that filter can only be applied to LOADED rows, so we fetch a
   // bigger page up front so the already-narrowed view is usually fully covered.
+  // High confidence always forces aiVerdict='accept' (toggle onChange + initial
+  // seeding + verdict-change clearing all enforce it), so `aiVerdict !== 'all'`
+  // already covers it — no separate highConfidenceOnly term needed.
   const pageSize = filters.aiVerdict !== 'all' ? AI_FILTER_PAGE_SIZE : DEFAULT_PAGE_SIZE;
 
   // Build the server query for a given page. All the heavy filter axes
@@ -271,6 +304,10 @@ export default function AtlasDictTriagePanel() {
     // Server-side AI verdict filter (durable suggestions). 'accept' pulls the
     // whole Accept pile paginated from the server — no load-everything dance.
     if (filters.aiVerdict && filters.aiVerdict !== 'all') params.set('ai_verdict', filters.aiVerdict);
+    // Server-side High-confidence (⭐ starrable) filter — narrows the WHOLE
+    // Accept pile to the star set before pagination, so counts + Load-more are
+    // over the starrable set, not a 500-row window.
+    if (filters.highConfidenceOnly) params.set('high_confidence', '1');
     return params.toString();
   }, [batchFilter, mode, statusFilter, filters, pageSize]);
 
@@ -353,6 +390,7 @@ export default function AtlasDictTriagePanel() {
     hasNote: filters.hasNote,
     flaggedOnly: filters.flaggedOnly,
     aiVerdict: filters.aiVerdict,   // changes pageSize → refetch with bigger page
+    highConfidenceOnly: filters.highConfidenceOnly,   // server-side filter → refetch on toggle
     mode,
     statusFilter,
     batchFilter,
@@ -746,6 +784,7 @@ export default function AtlasDictTriagePanel() {
     [notesByParam],
   );
 
+
   // grandTotal = every classified row in the working (batch-scoped or full)
   // set, across ALL modes/statuses — independent of the active per-axis
   // filters (statusCounts is computed pre-axis-filter server-side). 0 ⇒ the
@@ -761,6 +800,15 @@ export default function AtlasDictTriagePanel() {
   // Rows on the server not yet pulled into the accumulator — drives the
   // table's "Show more" server-fetch affordance.
   const serverRemaining = Math.max(0, viewTotal - accumRows.length);
+  // Toggle badge for "High confidence". When the filter is ON, the server's
+  // totalFiltered IS the true whole-queue starrable count, so show it. When OFF
+  // we don't pay to compute it (needs the whole Accept pile hydrated) → no badge.
+  // KNOWN LIMITATION (review finding #5): if the server's detail read fails it
+  // falls back to returning the full Accept pile, so during that transient
+  // window totalFiltered is the ACCEPT count and this badge overstates. Fixing
+  // it cleanly needs a server "filter-not-applied" signal; not worth it for a
+  // rare hiccup, so left as-is.
+  const highConfidenceBadge = filters.highConfidenceOnly ? viewTotal : undefined;
 
   // ── Simplified-header progress numbers (server-computed statusCounts) ──
   const sc = data?.statusCounts;
@@ -927,18 +975,19 @@ export default function AtlasDictTriagePanel() {
             mfrOptions={data.mfrOptions ?? []}
             familyOptions={data.familyOptions ?? []}
             filters={filters}
-            onChange={setFilters}
+            onChange={handleFiltersChange}
             filteredCount={filteredRows.length}
             totalCount={viewTotal}
             mode={mode}
             onModeChange={handleModeChange}
             triageCounts={data.triageCounts}
             status={statusFilter}
-            onStatusChange={setStatusFilter}
+            onStatusChange={handleStatusChange}
             statusCounts={data.statusCounts}
             noteCount={Object.keys(notesByParam).length}
             flaggedCount={flaggedCount}
             verdictCounts={effectiveVerdictCounts}
+            highConfidenceCount={highConfidenceBadge}
           />
           {/* "Generated so far" counter (headline #1) — lives here, next to the
               Generate control at the top of the table, NOT in the mapped/left/
@@ -1032,6 +1081,7 @@ export default function AtlasDictTriagePanel() {
               notesByParam={notesByParam}
               onNoteChange={onNoteChange}
               aiVerdictFilter={filters.aiVerdict}
+              highConfidenceOnly={filters.highConfidenceOnly}
               serverRemaining={serverRemaining}
               serverTotal={viewTotal}
               onLoadMore={loadMore}

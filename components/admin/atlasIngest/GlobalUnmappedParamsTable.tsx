@@ -289,6 +289,11 @@ interface Props {
    *  applies in orderedRows after the row-fetch but before the stale
    *  partition + visible-count pagination. */
   aiVerdictFilter?: 'all' | 'accept' | 'defer' | 'none';
+  /** When true, narrow to only the ⭐ high-confidence Accept rows (isStarrableRow).
+   *  Applied in orderedRows after the aiVerdictFilter block, over loaded rows —
+   *  the same predicate that draws the star. The panel forces aiVerdictFilter to
+   *  'accept' when this is on, so the Accept pile is what's loaded. */
+  highConfidenceOnly?: boolean;
   /** Server-side pagination (Decision #231). `rows` is the accumulated set of
    *  pages fetched so far; `serverRemaining` is how many MORE rows match the
    *  current filter on the server but haven't been pulled yet; `serverTotal`
@@ -1603,7 +1608,7 @@ const TriageRow = memo(function TriageRow({
   );
 });
 
-export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted, onRowsAccepted, onRowsReverted, onRowFlagged, viewKey, aiVerdictFilter = 'all', serverRemaining = 0, serverTotal, onLoadMore, loadingMore = false, onBatchGenerated, ungeneratedCount = 0, fetchUngenerated }: Props) {
+export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted, onRowsAccepted, onRowsReverted, onRowFlagged, viewKey, aiVerdictFilter = 'all', highConfidenceOnly = false, serverRemaining = 0, serverTotal, onLoadMore, loadingMore = false, onBatchGenerated, ungeneratedCount = 0, fetchUngenerated }: Props) {
   // Stable ref so generateSuggestionsForRows (deps []) can notify the parent
   // without re-creating the callback.
   const onBatchGeneratedRef = useRef(onBatchGenerated);
@@ -1800,6 +1805,18 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         return verdict === aiVerdictFilter;
       });
     }
+    // High-confidence filter: narrow to exactly the ⭐ starred rows using the
+    // same predicate that draws the star (isStarrableRow), so the filtered set
+    // can't drift from the star or the Batch Accept set. In the normal path the
+    // server already applied this over the whole queue (route high_confidence=1
+    // → queryTriage), so this is a no-op. But it is LOAD-BEARING for graceful
+    // degradation: when the server's detail read fails it falls back to
+    // returning the whole Accept pile (fetchAcceptDetailMap → null), and THIS
+    // pass is what narrows the loaded page to the starred rows. It's also the
+    // fallback for a stale client that doesn't send high_confidence=1.
+    if (highConfidenceOnly) {
+      filtered = filtered.filter(isStarrableRow);
+    }
     // Default sort (matchingImpact.score desc) is now applied SERVER-SIDE
     // (queryTriage) so the page slice is in the right order — we no longer
     // re-sort here (re-sorting one page would only reshuffle within the page).
@@ -1826,7 +1843,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       else fresh.push(r);
     }
     return [...stale, ...fresh];
-  }, [rows, states, cardVersionByFamily, schemaVersionByFamily, staleFirstSort, aiVerdictFilter]);
+  }, [rows, states, cardVersionByFamily, schemaVersionByFamily, staleFirstSort, aiVerdictFilter, highConfidenceOnly]);
   const visibleRows = useMemo(() => orderedRows.slice(0, visibleCount), [orderedRows, visibleCount]);
 
   // ── Batch Accept: star high-confidence rows, tick, accept in one click ──

@@ -9,8 +9,23 @@
 
 export type Verdict = 'accept' | 'defer';
 
-/** AI-verdict filter for the Triage view. 'none' = not yet generated. */
-export type AiVerdictFilter = 'all' | 'accept' | 'defer' | 'none';
+/** AI-verdict filter for the Triage view. 'none' = not yet generated. ONE source
+ *  of truth: the type union AND the runtime validation set both derive from this
+ *  array, so adding a value can't leave them out of sync. */
+export const AI_VERDICT_FILTERS = ['all', 'accept', 'defer', 'none'] as const;
+export type AiVerdictFilter = typeof AI_VERDICT_FILTERS[number];
+
+const VALID_AI_VERDICTS: ReadonlySet<string> = new Set(AI_VERDICT_FILTERS);
+
+/** Resolve the effective AI-verdict filter for a Triage query from the raw
+ *  query param. The "High confidence" filter is a strict refinement of the
+ *  Accept pile, so when it's on the verdict is FORCED to 'accept' (defensive
+ *  against a stale/absent ai_verdict param); otherwise an invalid/absent raw
+ *  value falls back to 'all'. Pure — unit-tested in place of a route harness. */
+export function resolveAiVerdict(aiVerdictRaw: string | null, highConfidenceOnly: boolean): AiVerdictFilter {
+  if (highConfidenceOnly) return 'accept';
+  return aiVerdictRaw && VALID_AI_VERDICTS.has(aiVerdictRaw) ? (aiVerdictRaw as AiVerdictFilter) : 'all';
+}
 
 /** Full suggestion detail, shaped like the /suggest route's `suggestion` object
  *  so a DB-served suggestion renders identically to a freshly-generated one. */

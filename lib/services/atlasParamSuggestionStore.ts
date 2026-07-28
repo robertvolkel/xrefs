@@ -187,38 +187,115 @@ export async function upsertParamSuggestionsBulk(
 }
 
 // ─── Whole-queue verdict map (cap-safe via jsonb RPC) ─────────────────────────
+type RawVerdictRow = { family_id: string; param_name: string; verdict: string };
+// Shared cache of the raw `get_atlas_param_suggestion_verdicts` rows. BOTH the
+// verdict map and the accept-detail map derive from this, so the (whole-table,
+// jsonb) RPC runs at most once per TTL instead of once per consumer.
+let rawVerdictsCache: { at: number; rows: RawVerdictRow[] } | null = null;
+// Negative cache: when the verdict read fails, remember that briefly so a
+// SUSTAINED/slow outage doesn't re-hit (and hang on) the RPC once per request.
+// Short (5s) so recovery from a transient blip stays fast. (Review finding: no
+// negative cache.)
+let rawVerdictsFailedAt: number | null = null;
+const RAW_VERDICTS_FAILURE_TTL_MS = 5_000;
+// Bumped on every invalidation. An async fetch captures the generation when it
+// STARTS; if an invalidation bumps it before the fetch resolves, that fetch is a
+// "zombie" — it may hold pre-invalidation data, so it must NOT write any cache.
+// (Review finding: write-then-read stale race.)
+let cacheGeneration = 0;
 let verdictMapCache: { at: number; map: Map<string, Verdict> } | null = null;
+let acceptDetailCache: { at: number; map: Map<string, StoredSuggestion> } | null = null;
 const VERDICT_MAP_TTL_MS = 30_000;
 
+// In-flight de-dupe (single-flight). The route reads the verdict map AND the
+// accept-detail map in ONE Promise.all, so on a cold cache both call
+// fetchRawVerdicts before either has populated rawVerdictsCache — without this,
+// the (whole-table jsonb) RPC would fire twice on the first request. Concurrent
+// non-force callers share the one in-flight promise instead.
+let rawVerdictsInflight: Promise<RawVerdictRow[] | null> | null = null;
+
 export function invalidateVerdictMapCache(): void {
+  cacheGeneration += 1;         // zombie in-flight fetches won't write stale caches
+  rawVerdictsCache = null;
+  rawVerdictsFailedAt = null;   // a write should allow an immediate retry even after a recent failure
+  rawVerdictsInflight = null;   // post-invalidation readers start fresh, don't join a pre-write in-flight
   verdictMapCache = null;
+  acceptDetailCache = null;
+}
+
+/**
+ * The raw `get_atlas_param_suggestion_verdicts()` rows (family_id, param_name,
+ * verdict) — the single RPC read that `fetchVerdictMap` + `fetchAcceptDetailMap`
+ * share. RETURNS jsonb (NOT a plain `.select()`, which PostgREST caps at 1000
+ * rows and would silently freeze the Accept pile at 1000). 30s in-memory cache,
+ * single-flighted so concurrent cold callers issue ONE RPC, with a short
+ * negative cache so a sustained failure isn't retried every request. Returns
+ * `null` on any failure (RPC error or throw) so callers can tell a genuine empty
+ * result from an infra hiccup; success/failure is only cached if no invalidation
+ * raced it (generation guard).
+ */
+async function fetchRawVerdicts(force = false): Promise<RawVerdictRow[] | null> {
+  if (!force && rawVerdictsCache && Date.now() - rawVerdictsCache.at < VERDICT_MAP_TTL_MS) {
+    return rawVerdictsCache.rows;
+  }
+  if (!force && rawVerdictsFailedAt !== null && Date.now() - rawVerdictsFailedAt < RAW_VERDICTS_FAILURE_TTL_MS) {
+    return null; // recent failure — serve it from the negative cache instead of re-hitting the RPC
+  }
+  if (!force && rawVerdictsInflight) return rawVerdictsInflight;
+  const gen = cacheGeneration;
+  const inflight = (async (): Promise<RawVerdictRow[] | null> => {
+    try {
+      const supabase = createServiceClient();
+      const { data, error } = await supabase.rpc('get_atlas_param_suggestion_verdicts');
+      if (error || !Array.isArray(data)) {
+        if (gen === cacheGeneration) rawVerdictsFailedAt = Date.now();
+        return null;
+      }
+      const rows = data as RawVerdictRow[];
+      if (gen === cacheGeneration) {
+        rawVerdictsCache = { at: Date.now(), rows };
+        rawVerdictsFailedAt = null;
+      }
+      return rows;
+    } catch {
+      if (gen === cacheGeneration) rawVerdictsFailedAt = Date.now();
+      return null;
+    }
+  })();
+  rawVerdictsInflight = inflight;
+  try {
+    return await inflight;
+  } finally {
+    // Only clear OUR slot — invalidate (→ null) or a force call may have already
+    // replaced it, and clobbering that would break the next caller's dedupe.
+    if (rawVerdictsInflight === inflight) rawVerdictsInflight = null;
+  }
 }
 
 /**
  * Every verdict in the table, as `Map<'${scopeKey}::${normalizedParam}' →
- * verdict>`. Read from `get_atlas_param_suggestion_verdicts()` which RETURNS
- * jsonb — NOT a plain `.select()`, which PostgREST caps at 1000 rows and would
- * silently freeze the counter/Accept pile at 1000. 30s in-memory cache.
+ * verdict>`. Built from the shared cap-safe `fetchRawVerdicts` read. 30s
+ * in-memory cache. Fail-open — an empty map degrades to "nothing generated
+ * yet", never a crash.
  */
 export async function fetchVerdictMap(force = false): Promise<Map<string, Verdict>> {
   if (!force && verdictMapCache && Date.now() - verdictMapCache.at < VERDICT_MAP_TTL_MS) {
     return verdictMapCache.map;
   }
+  const gen = cacheGeneration;
+  const rows = await fetchRawVerdicts(force);
+  // Infra failure — degrade to an empty map for THIS call, but do NOT cache it,
+  // or a one-off blip would freeze the whole Accept pile + verdict counts at 0
+  // for the full TTL. Leaving verdictMapCache unset makes the next call retry.
+  if (rows === null) return new Map<string, Verdict>();
   const map = new Map<string, Verdict>();
-  try {
-    const supabase = createServiceClient();
-    const { data, error } = await supabase.rpc('get_atlas_param_suggestion_verdicts');
-    if (!error && Array.isArray(data)) {
-      for (const row of data as Array<{ family_id: string; param_name: string; verdict: string }>) {
-        if (row.verdict === 'accept' || row.verdict === 'defer') {
-          map.set(verdictMapKey(row.family_id ?? '', row.param_name), row.verdict);
-        }
-      }
+  for (const row of rows) {
+    if (row.verdict === 'accept' || row.verdict === 'defer') {
+      map.set(verdictMapKey(row.family_id ?? '', row.param_name), row.verdict);
     }
-  } catch {
-    // Fail-open — an empty map degrades to "nothing generated yet", never a crash.
   }
-  verdictMapCache = { at: Date.now(), map };
+  // Don't cache if an invalidation raced this read (the rows may be pre-write).
+  if (gen === cacheGeneration) verdictMapCache = { at: Date.now(), map };
   return map;
 }
 
@@ -283,6 +360,56 @@ export async function fetchSuggestionDetails(
     // AI card (the client can still Generate/hydrate from localStorage).
   }
   return result;
+}
+
+/**
+ * Suggestion detail for the WHOLE Accept pile, keyed like the verdict map
+ * (`verdictMapKey(scopeKey, normalizedParam)`). Powers the server-side "High
+ * confidence" (⭐ starrable) filter: queryTriage attaches this detail to every
+ * Accept row and runs the shared `isStarrableRow` predicate BEFORE pagination,
+ * so the filter reaches the entire queue — not just the loaded page (the
+ * client-side pass could only ever see the loaded ~500).
+ *
+ * WHOLE-PILE BY DESIGN (do not "optimize" into a per-filter fetch): the map is
+ * a single global cache keyed on nothing, so ONE hydration serves every
+ * MFR/family/search/paging combination the engineer cycles through within the
+ * TTL. On the standalone Triage page the working set is the whole queue anyway
+ * (no batch scope), so this is not over-fetching — it's the working set. A
+ * per-filter fetch would re-hydrate on every filter toggle, which is the exact
+ * workflow this cache exists to make cheap.
+ *
+ * Cost is bounded + cached: accept keys come from the shared cap-safe jsonb
+ * verdict read (`fetchRawVerdicts`, no second RPC), detail from the cap-safe
+ * `fetchSuggestionDetails` (grouped-by-family, name-chunked, concurrency-capped).
+ * 30s TTL mirrors the verdict map so paging/polling within the window is free.
+ * Only called when the filter is active.
+ *
+ * Returns `null` on infra failure (verdict read failed) — DISTINCT from an empty
+ * map (a genuine "no accept suggestions"). The caller must treat `null` as "skip
+ * the server filter and fall back to the Accept pile" so a transient hiccup
+ * degrades to the client-side pass over loaded rows rather than an empty list.
+ * A failure is NOT cached, so the next request retries.
+ */
+export async function fetchAcceptDetailMap(force = false): Promise<Map<string, StoredSuggestion> | null> {
+  if (!force && acceptDetailCache && Date.now() - acceptDetailCache.at < VERDICT_MAP_TTL_MS) {
+    return acceptDetailCache.map;
+  }
+  const gen = cacheGeneration;
+  const rows = await fetchRawVerdicts(force);
+  if (rows === null) return null; // infra failure — signal the caller to fall back, don't cache
+  const pairs = rows
+    .filter((row) => row.verdict === 'accept')
+    .map((row) => ({ familyId: row.family_id ?? '', paramName: row.param_name }));
+  // KNOWN LIMITATION (review finding #4): fetchSuggestionDetails swallows
+  // per-chunk errors and returns a PARTIAL map, so a detail-hydration failure
+  // (as opposed to the verdict-read failure caught above) isn't signalled — the
+  // affected high-confidence rows just go missing for the TTL. Signalling it
+  // would require changing fetchSuggestionDetails, which the per-page hydration
+  // path also depends on; deferred rather than risk that shared path.
+  const map = pairs.length > 0 ? await fetchSuggestionDetails(pairs) : new Map<string, StoredSuggestion>();
+  // Don't cache if an invalidation raced this read (the pile may be pre-write).
+  if (gen === cacheGeneration) acceptDetailCache = { at: Date.now(), map };
+  return map;
 }
 
 /**

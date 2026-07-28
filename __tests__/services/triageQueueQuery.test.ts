@@ -1,6 +1,12 @@
 import { queryTriage, type TriageQueryParams } from '@/lib/services/triageQueueQuery';
 import { paramUid } from '@/lib/services/paramUid';
 import type { Classified } from '@/lib/services/triageQueueCompute';
+import {
+  type StoredSuggestion,
+  normalizeParamKey,
+  scopeKeyForRow,
+  verdictMapKey,
+} from '@/lib/services/atlasParamSuggestionTypes';
 
 function cls(partial: Partial<Classified> & { paramName: string }): Classified {
   return {
@@ -231,6 +237,71 @@ describe('queryTriage', () => {
       // generatedTotal counts every row with a verdict (any status); accept/defer/
       // none are over the open synonym queue and DON'T shrink under the filter.
       expect(res.verdictCounts).toEqual({ generatedTotal: 3, accept: 2, defer: 1, none: 1 });
+    });
+  });
+
+  describe('high-confidence (⭐ starrable) filter', () => {
+    // Full StoredSuggestion detail; overridable per row.
+    const mkDetail = (p: Partial<StoredSuggestion>): StoredSuggestion => ({
+      translation: null,
+      suggestedAttributeId: 'rds_on',
+      suggestedAttributeName: 'Rds(on)',
+      suggestedUnit: 'Ω',
+      confidence: 'high',
+      reasoning: 'clear match',
+      suggestion: 'accept',
+      explanation: 'maps cleanly',
+      ...p,
+    });
+    // Key exactly as the route does: verdictMapKey(scopeKey, normalizedParam).
+    const keyFor = (paramName: string) =>
+      verdictMapKey(scopeKeyForRow({ dominantFamily: 'B5', dominantCategory: null }), normalizeParamKey(paramName));
+
+    // Five OPEN, scoped (B5), accept-verdict rows. Only `star` is starrable;
+    // each of the others fails ONE clause of isStarrableRow.
+    const mkRows = () => [
+      cls({ paramName: 'star', suggestion: { verdict: 'accept' } }),
+      cls({ paramName: 'lowconf', suggestion: { verdict: 'accept' } }),
+      cls({ paramName: 'caveat', suggestion: { verdict: 'accept' } }),
+      cls({ paramName: 'nomap', suggestion: { verdict: 'accept' } }),
+      cls({ paramName: 'nodetail', suggestion: { verdict: 'accept' } }),
+    ];
+    const mkDetailMap = () => {
+      const m = new Map<string, StoredSuggestion>();
+      m.set(keyFor('star'), mkDetail({}));
+      m.set(keyFor('lowconf'), mkDetail({ confidence: 'medium' }));      // not high
+      m.set(keyFor('caveat'), mkDetail({ explanation: 'looks right but please verify the unit' })); // caveat
+      m.set(keyFor('nomap'), mkDetail({ suggestedAttributeId: null }));  // no writable mapping
+      // 'nodetail' intentionally absent → no detail → not starrable
+      return m;
+    };
+
+    it('keeps ONLY the starrable rows (high conf + no caveat + writable + detail present)', () => {
+      const res = queryTriage(mkRows(), {
+        ...BASE, statusFilter: 'open', aiVerdict: 'accept',
+        highConfidenceOnly: true, starrableDetailByKey: mkDetailMap(),
+      });
+      expect(res.rows.map((r) => r.paramName)).toEqual(['star']);
+      // totalFiltered reflects the starrable set (drives "N of M" + Load-more).
+      expect(res.totalFiltered).toBe(1);
+    });
+
+    it('is a no-op when no detail map is supplied (keeps all accept rows)', () => {
+      const res = queryTriage(mkRows(), {
+        ...BASE, statusFilter: 'open', aiVerdict: 'accept', highConfidenceOnly: true,
+      });
+      expect(res.rows.map((r) => r.paramName).sort())
+        .toEqual(['caveat', 'lowconf', 'nodetail', 'nomap', 'star']);
+    });
+
+    it('does not mutate the input rows (detail attached on copies only)', () => {
+      const rows = mkRows();
+      const snapshot = JSON.stringify(rows);
+      queryTriage(rows, {
+        ...BASE, statusFilter: 'open', aiVerdict: 'accept',
+        highConfidenceOnly: true, starrableDetailByKey: mkDetailMap(),
+      });
+      expect(JSON.stringify(rows)).toBe(snapshot);
     });
   });
 });

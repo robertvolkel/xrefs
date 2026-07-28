@@ -41,6 +41,17 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+# Triage — High-confidence filter follow-ups (Decision #282, P3)
+
+Deferred findings from the three review rounds on the whole-queue "High confidence" filter. All low-severity; the filter ships correct without them.
+
+- **Partial detail-hydration failure isn't signalled.** `fetchAcceptDetailMap`'s null-return only catches a failed *verdict read*. `fetchSuggestionDetails` swallows per-chunk errors and returns a PARTIAL map, so if some detail chunks fail the affected high-confidence rows silently go missing (from the list AND `totalFiltered`) for the 30s TTL, with no fallback. Signalling it means changing `fetchSuggestionDetails`, which the per-page hydration path also depends on — deferred rather than risk that shared path.
+- **Toggle badge overstates during the failure fallback.** When the detail read fails and the route serves the full Accept pile, `totalFiltered` is the ACCEPT count, so the "High confidence" badge (`= viewTotal`) shows too high while the client-filtered list shows fewer. A clean fix needs a server "filter-not-applied" signal; not worth it for a rare transient.
+- **Single-flight is a 3rd hand-rolled copy.** The in-flight de-dupe in `fetchRawVerdicts` duplicates the pattern in `manufacturerAliasResolver.ts` and `triageQueueCache.ts`. Candidate for one shared `singleFlight<T>()` helper so the guard logic lives in one place.
+- **Store test leans on a real timer.** The single-flight test uses a 10ms `setTimeout` to hold the RPC open; it would hang (not assert) if the jest config ever enabled fake timers globally. The delay isn't strictly needed (the in-flight slot is set synchronously) — could drop it or pin real timers.
+
+---
+
 # ✅ FIXED — Greek mu (U+03BC) is now read by the Atlas unit parser (22 July 2026)
 
 `extractNumericWithPrefix`'s unit character class accepted the MICRO SIGN (U+00B5) but not GREEK

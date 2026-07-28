@@ -15,6 +15,7 @@ import PauseCircleOutlineIcon from '@mui/icons-material/PauseCircleOutline';
 import BlockOutlinedIcon from '@mui/icons-material/BlockOutlined';
 import NoteAltIcon from '@mui/icons-material/NoteAlt';
 import FlagIcon from '@mui/icons-material/Flag';
+import StarIcon from '@mui/icons-material/Star';
 import type { StatusFilter } from './types';
 
 export type TriageMode = 'synonyms' | 'auto_flagged' | 'all';
@@ -41,6 +42,13 @@ export interface TriageFilters {
    *  the table's RowState (loaded from localStorage); the filter is
    *  applied inside GlobalUnmappedParamsTable's orderedRows useMemo. */
   aiVerdict: AiVerdictFilter;
+  /** When true, narrow the Accept pile to only the high-confidence rows — the
+   *  ⭐ starred, "quick to batch-accept" set (isStarrableRow: verdict accept +
+   *  high confidence + no caveat + writable/scoped/open). Enabling it forces
+   *  `aiVerdict: 'accept'` (so the server loads the Accept pile); the star
+   *  filter itself is a client-side pass over loaded rows, applied inside
+   *  GlobalUnmappedParamsTable's orderedRows useMemo alongside aiVerdict. */
+  highConfidenceOnly: boolean;
 }
 
 export const EMPTY_FILTERS: TriageFilters = {
@@ -51,6 +59,7 @@ export const EMPTY_FILTERS: TriageFilters = {
   hasNote: false,
   flaggedOnly: false,
   aiVerdict: 'all',
+  highConfidenceOnly: false,
 };
 
 interface Props {
@@ -89,9 +98,14 @@ interface Props {
    *  Defer, `none` on None — so the chips are the single source for those
    *  numbers (no separate banner). */
   verdictCounts?: { generatedTotal: number; accept: number; defer: number; none: number };
+  /** Badge shown on the "High confidence" toggle. The panel passes the server's
+   *  whole-queue starrable total (totalFiltered) when the filter is ACTIVE, and
+   *  undefined when it's off (the count isn't computed unless the filter runs).
+   *  So when shown it's the true whole-queue count, not a loaded-rows subset. */
+  highConfidenceCount?: number;
 }
 
-export default function TriageFilterBar({ mfrOptions, familyOptions, filters, onChange, filteredCount, totalCount, mode, onModeChange, triageCounts, status, onStatusChange, statusCounts, noteCount, flaggedCount, verdictCounts }: Props) {
+export default function TriageFilterBar({ mfrOptions, familyOptions, filters, onChange, filteredCount, totalCount, mode, onModeChange, triageCounts, status, onStatusChange, statusCounts, noteCount, flaggedCount, verdictCounts, highConfidenceCount }: Props) {
   // mfrOptions / familyOptions are now server-provided (full working set), so
   // the dropdowns stay complete + stable even though the client holds one page.
 
@@ -102,7 +116,8 @@ export default function TriageFilterBar({ mfrOptions, familyOptions, filters, on
     filters.minProductCount > 0 ||
     filters.hasNote ||
     filters.flaggedOnly ||
-    filters.aiVerdict !== 'all';
+    filters.aiVerdict !== 'all' ||
+    filters.highConfidenceOnly;
 
   const synonymsCount = triageCounts?.synonyms ?? 0;
   const autoFlaggedCount = triageCounts?.autoFlagged ?? 0;
@@ -297,7 +312,7 @@ export default function TriageFilterBar({ mfrOptions, familyOptions, filters, on
             size="small"
             value={filters.aiVerdict}
             exclusive
-            onChange={(_e, v) => v && onChange({ ...filters, aiVerdict: v as AiVerdictFilter })}
+            onChange={(_e, v) => v && onChange({ ...filters, aiVerdict: v as AiVerdictFilter, highConfidenceOnly: false })}
             aria-label="AI verdict filter"
             sx={{ ml: 0.5 }}
           >
@@ -323,6 +338,39 @@ export default function TriageFilterBar({ mfrOptions, familyOptions, filters, on
               )}
             </ToggleButton>
           </ToggleButtonGroup>
+        </Tooltip>
+
+        {/* High-confidence quick-filter. Narrows the Accept pile to just the
+            ⭐ starred rows (isStarrableRow) so the engineer can jump straight to
+            the "quick to batch-accept" set without scrolling. Enabling it forces
+            the Accept verdict so the server loads the Accept pile; the star pass
+            is client-side over loaded rows (inside GlobalUnmappedParamsTable's
+            orderedRows). The count is loaded-rows-only (confidence detail is
+            hydrated per page). */}
+        <Tooltip title="Show only high-confidence Accept suggestions — the ⭐ starred, 'quick to batch-accept' rows (AI accept + high confidence + nothing it wants you to double-check). Filters the loaded Accept rows.">
+          <ToggleButton
+            size="small"
+            value="highConfidenceOnly"
+            selected={filters.highConfidenceOnly}
+            onChange={() => onChange(
+              filters.highConfidenceOnly
+                ? { ...filters, highConfidenceOnly: false }
+                : { ...filters, highConfidenceOnly: true, aiVerdict: 'accept' },
+            )}
+            sx={{ whiteSpace: 'nowrap', px: 1.25 }}
+          >
+            <Stack direction="row" spacing={0.75} alignItems="center">
+              <StarIcon fontSize="small" sx={{ color: filters.highConfidenceOnly ? 'success.main' : undefined }} />
+              <Box component="span" sx={{ fontSize: '0.75rem' }}>High confidence</Box>
+              {(highConfidenceCount ?? 0) > 0 && (
+                <Chip
+                  size="small"
+                  label={highConfidenceCount}
+                  sx={{ height: 18, fontSize: '0.65rem', bgcolor: filters.highConfidenceOnly ? 'success.dark' : 'action.selected', color: filters.highConfidenceOnly ? 'success.contrastText' : undefined }}
+                />
+              )}
+            </Stack>
+          </ToggleButton>
         </Tooltip>
 
         <TextField

@@ -1,4 +1,4 @@
-import { normalizeParamKey, scopeKeyForRow, verdictMapKey } from '@/lib/services/atlasParamSuggestionTypes';
+import { normalizeParamKey, scopeKeyForRow, verdictMapKey, resolveAiVerdict } from '@/lib/services/atlasParamSuggestionTypes';
 
 // These three pure helpers are the JOIN CONTRACT between a stored suggestion
 // and a queue row. If they drift from how /suggest stores (familyId +
@@ -28,5 +28,31 @@ describe('atlasParamSuggestionTypes join helpers', () => {
     const row = { dominantFamily: 'B6', dominantCategory: null };
     const raw = '  HFE(min)  ';
     expect(verdictMapKey(scopeKeyForRow(row), normalizeParamKey(raw))).toBe('B6::hfe(min)');
+  });
+});
+
+// The batches route forces the verdict to 'accept' when High confidence is on
+// (a starrable row is an Accept), and validates/defaults the raw param
+// otherwise. This is the one branch a stale/broken route would regress silently
+// — the queue would either show everything or fall to the legacy full-set path.
+describe('resolveAiVerdict', () => {
+  it('forces accept when high-confidence is on, regardless of the raw param', () => {
+    expect(resolveAiVerdict(null, true)).toBe('accept');
+    expect(resolveAiVerdict('all', true)).toBe('accept');
+    expect(resolveAiVerdict('defer', true)).toBe('accept');   // high-confidence WINS over a stale param
+    expect(resolveAiVerdict('garbage', true)).toBe('accept');
+  });
+
+  it('passes through a valid raw verdict when high-confidence is off', () => {
+    expect(resolveAiVerdict('accept', false)).toBe('accept');
+    expect(resolveAiVerdict('defer', false)).toBe('defer');
+    expect(resolveAiVerdict('none', false)).toBe('none');
+    expect(resolveAiVerdict('all', false)).toBe('all');
+  });
+
+  it('defaults to all for an absent or invalid raw verdict when high-confidence is off', () => {
+    expect(resolveAiVerdict(null, false)).toBe('all');
+    expect(resolveAiVerdict('', false)).toBe('all');
+    expect(resolveAiVerdict('bogus', false)).toBe('all');
   });
 });
