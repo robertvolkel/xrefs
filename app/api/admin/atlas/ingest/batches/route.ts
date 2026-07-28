@@ -55,12 +55,13 @@ import { queryTriage } from '@/lib/services/triageQueueQuery';
 import {
   fetchVerdictMap,
   fetchSuggestionDetails,
+  fetchAcceptDetailMap,
   fetchGeneratedCount,
   scopeKeyForRow,
   normalizeParamKey,
   verdictMapKey,
 } from '@/lib/services/atlasParamSuggestionStore';
-import type { AiVerdictFilter } from '@/lib/services/atlasParamSuggestionTypes';
+import { type AiVerdictFilter, resolveAiVerdict } from '@/lib/services/atlasParamSuggestionTypes';
 
 // Force the route to run dynamically on every request (no Next.js auto-caching).
 // We have our own L1+L2 cache layer with explicit invalidation; we don't want
@@ -74,7 +75,6 @@ const VALID_INCLUDE = new Set(['synonyms', 'auto_flagged', 'all']);
 type IncludeMode = 'synonyms' | 'auto_flagged' | 'all';
 const VALID_STATUS_FILTER = new Set(['open', 'accepted', 'undone', 'deferred', 'unmappable', 'all']);
 type StatusFilter = 'open' | 'accepted' | 'undone' | 'deferred' | 'unmappable' | 'all';
-const VALID_AI_VERDICT = new Set(['all', 'accept', 'defer', 'none']);
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
@@ -109,13 +109,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const flaggedParam = searchParams.get('flagged');
     const hasNoteParam = searchParams.get('has_note');
     const aiVerdictRaw = searchParams.get('ai_verdict');
-    const aiVerdict: AiVerdictFilter = aiVerdictRaw && VALID_AI_VERDICT.has(aiVerdictRaw)
-      ? (aiVerdictRaw as AiVerdictFilter)
-      : 'all';
+    const highConfidenceOnly = searchParams.get('high_confidence') === '1';
+    // High confidence is a strict refinement of the Accept pile — force the
+    // verdict to Accept (see resolveAiVerdict; defensive against a stale param).
+    const aiVerdict: AiVerdictFilter = resolveAiVerdict(aiVerdictRaw, highConfidenceOnly);
     const usePagedPath =
       pageParam !== null || pageSizeParam !== null || searchParam !== null ||
       mfrParam.length > 0 || familyParam.length > 0 || minProdsParam !== null ||
-      flaggedParam !== null || hasNoteParam !== null || aiVerdictRaw !== null;
+      flaggedParam !== null || hasNoteParam !== null || aiVerdictRaw !== null ||
+      highConfidenceOnly;
 
     if (!VALID_STATUSES.includes(statusParam)) {
       return NextResponse.json({ success: false, error: `Invalid status: ${statusParam}` }, { status: 400 });
@@ -310,10 +312,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       // parallel to keep the GET latency flat. Spread ONLY generated rows into
       // fresh objects; the rest pass by reference — NEVER mutate the cached
       // `classified` array (shared with the manufacturers route).
-      const [verdictMap, generatedCount] = await Promise.all([
+      const [verdictMap, generatedCount, starrableDetailRaw] = await Promise.all([
         fetchVerdictMap(),
         fetchGeneratedCount(),
+        // Whole-pile suggestion detail — only when the High confidence filter is
+        // active (otherwise skip the extra reads). Cap-safe + 30s-cached.
+        highConfidenceOnly ? fetchAcceptDetailMap() : Promise.resolve(undefined),
       ]);
+      // A `null` map means the detail read FAILED (distinct from an empty map =
+      // genuinely no accepts). Coerce null → undefined so queryTriage SKIPS the
+      // server-side high-confidence filter and returns the Accept pile; the
+      // client-side isStarrableRow pass then narrows the loaded page. This keeps
+      // a transient hiccup from blanking the list. (Decision: review finding #1.)
+      const starrableDetailByKey = starrableDetailRaw ?? undefined;
       const classifiedWithVerdicts: Classified[] = verdictMap.size === 0
         ? classified
         : classified.map((r) => {
@@ -332,6 +343,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         flaggedOnly: flaggedParam === '1',
         hasNoteOnly: hasNoteParam === '1',
         aiVerdict,
+        highConfidenceOnly,
+        starrableDetailByKey,
         sort: 'impact',
         page,
         pageSize,

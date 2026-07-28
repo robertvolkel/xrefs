@@ -30,7 +30,15 @@ import {
   type Classified,
   type GlobalUnmapped,
 } from '@/lib/services/triageQueueCompute';
-import type { AiVerdictFilter, VerdictCounts } from '@/lib/services/atlasParamSuggestionTypes';
+import {
+  type AiVerdictFilter,
+  type VerdictCounts,
+  type StoredSuggestion,
+  normalizeParamKey,
+  scopeKeyForRow,
+  verdictMapKey,
+} from '@/lib/services/atlasParamSuggestionTypes';
+import { isStarrableRow } from '@/lib/services/triageBatchApprove';
 
 export type IncludeMode = 'synonyms' | 'auto_flagged' | 'all';
 export type StatusFilter = 'open' | 'accepted' | 'undone' | 'deferred' | 'unmappable' | 'all';
@@ -49,6 +57,18 @@ export type TriageQueryParams = {
    *  filter; 'accept'/'defer' keep rows with that verdict; 'none' keeps rows not
    *  yet generated (no attached suggestion). */
   aiVerdict: AiVerdictFilter;
+  /** Whole-queue "High confidence" (⭐ starrable) filter. When true AND
+   *  `starrableDetailByKey` is supplied, keep only rows that pass the shared
+   *  `isStarrableRow` predicate (AI accept + high confidence + no caveat +
+   *  writable + scoped + open). Applied after the aiVerdict filter and BEFORE
+   *  sort/slice, so totalFiltered + pagination reflect the starrable set. No-op
+   *  without the detail map. The route pairs this with `aiVerdict: 'accept'`. */
+  highConfidenceOnly?: boolean;
+  /** Suggestion detail for the whole Accept pile, keyed by
+   *  `verdictMapKey(scopeKey, normalizedParam)` (from `fetchAcceptDetailMap`).
+   *  Required for `highConfidenceOnly` to do anything — it's the data
+   *  `isStarrableRow` reads (confidence / explanation / suggested mapping). */
+  starrableDetailByKey?: Map<string, StoredSuggestion>;
   sort: 'impact';
   page: number;            // 1-based
   pageSize: number;        // 0 = count-only (rows: [])
@@ -197,6 +217,23 @@ export function queryTriage(classified: Classified[], p: TriageQueryParams): Tri
     visible = visible.filter((r) => r.suggestion?.verdict === p.aiVerdict);
   } else if (p.aiVerdict === 'none') {
     visible = visible.filter((r) => !r.suggestion);
+  }
+
+  // ── High-confidence (⭐ starrable) filter — WHOLE queue ──
+  //   Reuses the SAME predicate that draws the star (isStarrableRow), fed the
+  //   suggestion detail hydrated for the entire Accept pile (starrableDetailByKey,
+  //   supplied by the route). Runs before sort/slice so totalFiltered +
+  //   pagination reflect the starrable set, not the loaded page. Attaches detail
+  //   on fresh copies (NEVER mutate the cached classified array). No-op unless
+  //   the caller both asks for it AND supplies the detail map.
+  if (p.highConfidenceOnly && p.starrableDetailByKey) {
+    const byKey = p.starrableDetailByKey;
+    visible = visible
+      .map((r) => {
+        const detail = byKey.get(verdictMapKey(scopeKeyForRow(r), normalizeParamKey(r.paramName)));
+        return detail ? { ...r, suggestion: { ...(r.suggestion ?? { verdict: 'accept' as const }), detail } } : r;
+      })
+      .filter(isStarrableRow);
   }
 
   // ── Sort ──
