@@ -1,6 +1,6 @@
-# Architectural Decisions — Archive (Decisions 200–280)
+# Architectural Decisions — Archive (Decisions 200–282)
 
-> Full text of decisions 200–280. The index lives in [docs/DECISIONS.md](DECISIONS.md).
+> Full text of decisions 200–282. The index lives in [docs/DECISIONS.md](DECISIONS.md).
 > Historical record — some entries here are superseded by later decisions.
 
 ## Decision #200 — Coverage Repair Workflow: Matching Impact + Per-MFR Drilldown + One-Click Backfill (May 23, 2026)
@@ -3300,3 +3300,28 @@ narrates in prose while every checkable atom — spec / price / cert — is syst
 #272 narrowing step, BUILT but OFF pending button repair), and a Family Value Catalog. Phase 3 = flip the
 MPN grounding gate from observe → enforce, plus spec-claim observe-only. Both were explicitly staged as
 "only if the Phase 1 measurement says go further."
+
+---
+
+## Decision #282 — Whole-queue "High confidence" filter on Mapping Triage, with a resilient shared verdict read (July 28, 2026)
+
+### Context
+The Mapping Triage page surfaces the ⭐ starred, quick-to-batch-accept rows (`isStarrableRow`: AI verdict = accept AND high confidence AND no caveat AND a writable, scoped, still-open mapping) by RANKING, not grouping — so after generating a batch of AI suggestions the engineer had to scroll the Accept pile to find them. Requested: a one-click "show only the high-confidence ones" filter.
+
+### The filter
+A "High confidence" toggle in `TriageFilterBar`, applied **server-side over the WHOLE Accept pile before pagination** so counts + Load-more reflect the true starrable total (not a 500-row window). The route (`high_confidence=1`) forces the Accept verdict and passes a whole-pile suggestion-detail map (`fetchAcceptDetailMap`, cap-safe + 30s cached) into `queryTriage`, which attaches the detail and runs the **shared** `isStarrableRow` predicate before sort/slice — so the filtered set is byte-identical to the star set and the Batch Accept set; it cannot drift. The client keeps a matching `isStarrableRow` pass as a **graceful-degradation fallback** (used when the server detail read fails and the route returns the full Accept pile rather than an empty list). Honest reach: this insulates the filter from the 500-row cap, but a genuinely enormous starrable pile still paginates.
+
+**Axis consistency.** Enabling the filter forces the Accept verdict AND snaps the status axis to Open (a starrable row is by definition open); changing verdict/status clears the filter — the two axes can't contradict, and a restored high-conf view can't rehydrate into a silently-empty list. Display filter only — no scoring/cache change to cross-refs.
+
+### The shared verdict read (hardening — three review rounds)
+`fetchVerdictMap` + `fetchAcceptDetailMap` both derive from ONE cap-safe jsonb read, `fetchRawVerdicts`, which is:
+- **single-flighted** — the route reads both in one `Promise.all`; without this the whole-table RPC fired twice on a cold request;
+- **negative-cached (5s)** — a sustained/slow RPC outage isn't re-hit (and hung on) every request, but a transient blip still recovers fast. Earlier iterations either cached the failure for the full 30s (froze the Accept pile empty) or removed failure caching entirely (hammered a struggling DB); 5s is the balance;
+- **generation-guarded** — a read invalidated mid-flight returns its result to its awaiter but writes NO cache (across all three cache writes), so a write-then-read can't be masked by pre-write data.
+
+A failed read returns `null` (distinct from an empty map — a genuine "no accepts") so the caller falls back rather than blanking the list. `resolveAiVerdict` is extracted + unit-tested (the route's "force to accept" branch); `AI_VERDICT_FILTERS` is ONE source for the type union and the runtime validation set.
+
+### Tested
+`queryTriage` high-confidence filter, `resolveAiVerdict`, and the store's single-flight / negative-cache / generation-guard — each **mutation-verified** (the fix was broken one line at a time and the matching test watched to fail). Store tests use the repo's `jest.mock('../../lib/supabase/service', …)` pattern with a controllable `rpc` (a caller-resolved promise for the mid-flight race).
+
+**Deferred (tracked in BACKLOG "Triage — High-confidence filter follow-ups"):** a partial detail-hydration failure (`fetchSuggestionDetails` swallows per-chunk errors) isn't signalled; the toggle badge can overstate during the failure fallback (needs a server "filter-not-applied" signal); the single-flight pattern is now a 3rd hand-rolled copy (`manufacturerAliasResolver`, `triageQueueCache`, here) and could be one shared helper.
