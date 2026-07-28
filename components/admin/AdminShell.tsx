@@ -132,7 +132,7 @@ const MONITORING_REDIRECT_MAP: Record<string, string> = {
   'distributor-clicks': 'distributor-clicks',
 };
 
-const DEFAULT_SECTION: AdminSection = 'manufacturers';
+const DEFAULT_SECTION: AdminSection = 'atlas-dict-triage';
 
 function isValidSection(s: string | null): s is AdminSection {
   return s !== null && VALID_SECTIONS.has(s as AdminSection);

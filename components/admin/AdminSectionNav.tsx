@@ -28,10 +28,10 @@ export type AdminSection =
 type SectionItem = { id: AdminSection; icon: React.ElementType; labelKey: string };
 
 const atlasSections: SectionItem[] = [
-  { id: 'manufacturers', icon: FactoryOutlinedIcon, labelKey: 'admin.manufacturers' },
+  { id: 'atlas-dict-triage', icon: AssignmentLateOutlinedIcon, labelKey: 'admin.atlasDictTriage' },
   { id: 'atlas-ingest', icon: CloudUploadOutlinedIcon, labelKey: 'admin.atlasIngest' },
   { id: 'atlas-dictionaries', icon: TranslateOutlinedIcon, labelKey: 'admin.atlasDictionaries' },
-  { id: 'atlas-dict-triage', icon: AssignmentLateOutlinedIcon, labelKey: 'admin.atlasDictTriage' },
+  { id: 'manufacturers', icon: FactoryOutlinedIcon, labelKey: 'admin.manufacturers' },
   { id: 'atlas-decision-log', icon: HistoryEduOutlinedIcon, labelKey: 'admin.atlasDecisionLog' },
   { id: 'atlas-domain-cards', icon: MenuBookOutlinedIcon, labelKey: 'admin.atlasDomainCards' },
 ];
