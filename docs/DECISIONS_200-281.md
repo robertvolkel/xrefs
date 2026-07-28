@@ -3234,3 +3234,69 @@ prove the code agrees with itself. **0 disagreements.**
 section still listing withdrawn mechanisms as FIXED; the 34,425 unvetted values in scoring
 slots; an epsilon for `evaluateThreshold`; the Greek-mu entry (overstated 2.6× — real figure
 **14,057**, and Decision #217 already fixed the handler in June).
+
+## Decision #281 — Smart-chat Phase 1: enabled in production (grounded reasoning restored, flag-gated) (July 27, 2026)
+
+The chat-intelligence "Phase 1" work — built and merged DARK behind four flags (commit `1c80b03`, all
+`process.env.X === '1'`, default OFF) — was validated and **enabled in production July 27, 2026**. This
+entry is the repo record of what shipped.
+
+**The four features (each an independent one-line switch in `next.config.ts` `env:`):**
+- **`FAMILY_KNOWLEDGE_ENABLED`** — per-turn injection of the routed family's rulebook (high-weight
+  `identity`/`identity_flag` hard gates + their `engineeringReason` paragraphs + context questions, via
+  `summarizeFamilyKnowledge` and the deterministic-first `intentRouter`) into the chat context, so the
+  model reasons from OUR encoded engineering knowledge instead of training-data memory. INPUT-only and
+  additive; never forces a tool or suppresses output, so a mis-route is a soft failure.
+- **`REFLECT_BACK_ENABLED`** — a deterministic, leak-proof play-back of the constraints the system parsed
+  for a guided/greenfield search ("Searching MOSFETs with: channel type N-Channel, drain-source voltage
+  30 V.") built by `describeSearchConstraints`, so a mis-extraction is visible and correctable. Every
+  token comes from a tracked constraint, never model prose.
+- **`SELECTION_VALIDATION_ENABLED`** — wrong-CHOICE validity: a stated categorical value that isn't a real
+  option for the family (a bogus dielectric / output type) triggers a system-authored clarify with the
+  REAL options before searching on the bad value. Pure + fail-open (consults per-rule `valueAliases`, so a
+  valid synonym like NP0≡C0G is never flagged); catch-rate is extractor-dependent but it is NEVER worse
+  than OFF.
+- **`PER_MFR_CARDS_ENABLED`** — search-result cards dedup by MPN + canonical manufacturer, so different
+  makers of a shared standard MPN (LM317T, 1N4148) each get a card instead of collapsing to one; true
+  same-maker cross-source duplicates still collapse. The flag is in the search cache key (`pm0`/`pm1`) so
+  a flip never serves a result computed under the other dedup.
+
+**Enablement mechanism (verified, not assumed).** The deploy is an IT-managed GitHub-pickup (off Vercel),
+so a runtime env var would need IT. Instead the flags live in the committed `next.config.ts` `env:` block,
+which Turbopack INLINES at build time. Verified against a real production build: genuine runtime env vars
+(`ANTHROPIC_API_KEY` etc.) stay as `process.env.X` lookups in `.next/server`, while all four flags are
+substituted away — so `=== '1'` reads TRUE in the deploy rather than silently no-op'ing. Reusable check:
+after `npm run build`, `grep -rl 'process.env.YOUR_FLAG' .next/server` — empty = inlined/on.
+
+**Two fixes shipped alongside enablement:**
+1. **Reflect-back had to actually reach the screen** (`OrchestratorResponse.constraintEcho`). As merged it
+   was a NO-OP in the live UI: the server prepended the echo to `message`, but the client greenfield-
+   presentation substitution (Decision #242, `useAppState`) rebuilds the results bubble from `searchResult`
+   alone and discarded it — validation "passed" only because it read server output, not the rendered
+   screen. Fix: carry the echo as its own `constraintEcho` field; the client re-prepends it in the
+   greenfield branch (the anti-fabrication guarantee is unchanged — the results line is still rebuilt from
+   `searchResult`, never model prose). Plus a wording polish: `displayPartType` (in `searchSummary.ts`)
+   renders a short, correctly-cased type name — "Searching MOSFETs with: ..." instead of the lowercased,
+   self-contradictory "searching mosfets — n-channel & p-channel with: ... channel type N-Channel".
+2. **A stated "any" spreads across the remaining guided value specs** (`decideGuidedTurn`). Answering the
+   value batch with a waive ("30V, any") recorded only the specs the extractor keyed and then re-asked the
+   rest one at a time ("What Package?"). Now an EXPLICIT waive — a null-valued answer, or a bare `/\bany\b/i`
+   in the reply as a backstop for when the extractor drops it — fills every still-unmentioned value spec as
+   null, so the flow searches instead of interrogating. Kept deliberately NARROW: a partial answer with NO
+   waive ("10k and 3500K") still re-asks the omitted required spec (the user didn't say they don't care).
+   `isAnswered` = `hasOwnProperty`, so a spec is skipped only when it carries a key.
+
+**Measurement posture (decided with founder).** The always-on observe-logging (`mpn_grounding_observations`
+/ `spec_value_observations`, written on every chat turn) is the fabrication-rate instrument. But the app is
+ALPHA with near-zero organic traffic: the July 27 2026 baseline was 253 turns over a month from only 3
+distinct users (founder + Claude testing; 15.8% of turns tripped a HIGH part-number-fabrication flag), so
+"let it run and measure" produces no real signal. Phase 2/3 are therefore NOT gated on organic usage —
+measure on DEMAND via replay (a fixed prompt set + real historical turns from `search_history.query` /
+`conversations.messages`) when a number is needed, and decide the next phase on PRODUCT priority.
+
+**Deferred (roadmap, tracked in BACKLOG "Chat Flow"):** Phase 2 = rendered-fact primitives (the model
+narrates in prose while every checkable atom — spec / price / cert — is system-rendered, generalizing
+`present_comparison`), price-filtered compound selection, live value-bucket narrowing buttons (the Decision
+#272 narrowing step, BUILT but OFF pending button repair), and a Family Value Catalog. Phase 3 = flip the
+MPN grounding gate from observe → enforce, plus spec-claim observe-only. Both were explicitly staged as
+"only if the Phase 1 measurement says go further."

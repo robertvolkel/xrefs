@@ -647,6 +647,13 @@ Deferred by Rob mid-QA — not blocking the checklist.
 > this index and carry long detail are **referenced by their section title** (searchable) rather
 > than copied, so there is one home per item and nothing drifts.
 
+> **STATUS (2026-07-27):** Smart-chat **Phase 1 is ENABLED in production** (Decision #281) — grounded
+> family reasoning, reflect-back, wrong-choice clarify, per-manufacturer cards, plus the guided
+> "any"-spread fix. The items below are the **remaining Phase 2/3 work** (narrated-fact rendering,
+> price-filtered selection, the Decision #272 narrowing repair, MPN-gate enforcement). These are **not
+> gated on usage measurement** — the app is alpha with near-zero traffic, so decide by product priority
+> and measure on demand via replay.
+
 ### A · Greenfield & guided selection — you describe a part, the agent asks for specs, then searches
 - **Narrowing step — BUILT (#272), then TURNED OFF 2026‑07‑15, pending repair (P1).** → full entry below.
 - **A bare stated value on an uncomparable spec does nothing (P2).** "gain 200" is heard but has no effect — see the residual gaps in *"Gaps left open by the narrowing step (Decision #272)"* (item 1).

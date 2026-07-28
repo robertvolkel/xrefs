@@ -214,7 +214,7 @@ Key design decisions inferred from the codebase, with rationale.
 - **#198** — Triage Queue Cache: L2 as Source of Truth (May 22, 2026)
 - **#199** — Retroactive Dict Override Backfill (May 23, 2026)
 
-## Decisions 200–280 — [DECISIONS_200-280.md](DECISIONS_200-280.md)
+## Decisions 200–281 — [DECISIONS_200-281.md](DECISIONS_200-281.md)
 
 - **#200** — Coverage Repair Workflow: Matching Impact + Per-MFR Drilldown + One-Click Backfill (May 23, 2026)
 - **#201** — Vendor-Name Hygiene: "gaia-" Prefix Must Never Reach End Users (May 24, 2026)
@@ -299,4 +299,5 @@ Key design decisions inferred from the codebase, with rationale.
 - **#278** ✓ — A parameter value is never discarded: accepting a mapping must not delete data (July 21, 2026)
 - **#279** ✓ — Four defects that let unvetted or mis-scaled numbers reach the matching engine (July 21, 2026)
 - **#280** ✓ — Fix the mis-scaled numbers only; withdraw the reserved-id renaming (July 21, 2026)
+- **#281** ✓ — Smart-chat Phase 1 enabled in production: grounded family reasoning + reflect-back + wrong-choice clarify + per-manufacturer cards, flag-gated (July 27, 2026)
 
