@@ -40,6 +40,11 @@ import { isDomainCoveredQualification } from '@/lib/services/qualificationDomain
 interface AttributesPanelProps {
   attributes: PartAttributes | null;
   loading?: boolean;
+  /** True while the source part's attribute+pricing fetch is still in flight
+   *  (the optimistic-preview window). Threaded to the Commercial tab so it shows
+   *  a loading skeleton instead of the "no pricing data" empty state while quotes
+   *  are still arriving. */
+  isEnriching?: boolean;
   title: string;
   activeTab: AttributesTab;
   onTabChange: (tab: AttributesTab) => void;
@@ -302,7 +307,7 @@ export function CommercialSkeleton() {
   );
 }
 
-export default function AttributesPanel({ attributes, loading, title, activeTab, onTabChange, allRecommendations, onManufacturerClick, xrefCategory, xrefMfr, onSelectXrefCategory, onSelectXrefMfr, acceptanceCriteria, onAcceptanceChange, spotQuantity = 1, onSpotQuantityChange, comparisonRows }: AttributesPanelProps) {
+export default function AttributesPanel({ attributes, loading, isEnriching = false, title, activeTab, onTabChange, allRecommendations, onManufacturerClick, xrefCategory, xrefMfr, onSelectXrefCategory, onSelectXrefMfr, acceptanceCriteria, onAcceptanceChange, spotQuantity = 1, onSpotQuantityChange, comparisonRows }: AttributesPanelProps) {
   const { t } = useTranslation();
   const { ref: scrollRef, canScrollUp, canScrollDown } = useScrollIndicators<HTMLDivElement>();
   const [showExtras, setShowExtras] = useState(false);
@@ -705,7 +710,7 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
         loading ? (
           <CommercialSkeleton />
         ) : attributes ? (
-          <CommercialContent part={attributes.part} t={t} spotQuantity={spotQuantity} onSpotQuantityChange={onSpotQuantityChange} />
+          <CommercialContent part={attributes.part} t={t} spotQuantity={spotQuantity} onSpotQuantityChange={onSpotQuantityChange} isEnriching={isEnriching} />
         ) : null
       )}
     </Box>

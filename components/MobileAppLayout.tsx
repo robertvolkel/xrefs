@@ -282,6 +282,7 @@ export default function MobileAppLayout({
             <AttributesPanel
               attributes={sourceAttributes}
               loading={phase === 'loading-attributes' && !sourceAttributes}
+              isEnriching={phase === 'loading-attributes'}
               title="Source Part"
               activeTab={attributesTab}
               onTabChange={setAttributesTab}
