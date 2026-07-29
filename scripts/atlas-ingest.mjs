@@ -3203,6 +3203,22 @@ function tagAtlasParameters(parameters) {
   return out;
 }
 
+// Count parameters carrying a non-empty value. Used by the translation backfill's
+// non-lossy guard: the DB holds ONE atlas_raw per (mpn, manufacturer), which for
+// legacy duplicate-MPN parts can be the SPARSE occurrence while `parameters`
+// already holds the RICH mapping — re-mapping the sparse raw must never reduce a
+// product's coverage (Decision #278 — no value is ever discarded).
+function countNonEmptyParams(params) {
+  if (!params) return 0;
+  let n = 0;
+  for (const [key, entry] of Object.entries(params)) {
+    if (key === 'ingested_at') continue;
+    const value = (entry && typeof entry === 'object') ? entry.value : entry;
+    if (typeof value === 'string' ? !isMissing(value) : value != null) n++;
+  }
+  return n;
+}
+
 // Collapse duplicate-MPN occurrences within ONE source file to ONE entry,
 // keeping the RICHEST (most mapped parameters). Vendor JSON occasionally lists
 // the same componentName twice under two different category classifications —
@@ -3926,13 +3942,14 @@ async function fetchExistingProducts(mfrName) {
   return map;
 }
 
-// Lighter projection used ONLY by the translation backfill. It reads just
-// id + parameters (the diff inputs) + category (the one NOT-NULL-without-default
-// column the bulk-upsert payload needs); mpn is the Map key and upsert conflict
-// key. Dropping the heavy atlas_raw JSONB (and the other unused columns) roughly
-// halves the per-row read payload across the whole ~198K-row table. Do NOT fold
-// this into fetchExistingProducts — its report/proceed callers use
-// subcategory/family_id/etc. from the existing row.
+// Lean per-MFR fetch for the translation backfill: only the columns the
+// re-translation actually reads — mpn (Map key + upsert conflict key),
+// manufacturer + category (upsert payload), parameters (the diff/merge input),
+// and atlas_raw + atlas_source_file (the mapModel inputs). Deliberately drops
+// the 8 columns fetchExistingProducts carries for report/proceed callers
+// (id/description/subcategory/family_id/status/datasheet_url/package/
+// manufacturer_country) so a full-corpus run doesn't haul unused bytes for
+// ~417K rows. Paginates past the 1000-row cap; stops on error.
 async function fetchExistingForBackfill(mfrName) {
   const map = new Map();
   let from = 0;
@@ -3940,7 +3957,7 @@ async function fetchExistingForBackfill(mfrName) {
   while (true) {
     const { data, error } = await supabase
       .from('atlas_products')
-      .select('id, mpn, category, parameters')
+      .select('mpn, manufacturer, category, parameters, atlas_source_file, atlas_raw')
       .eq('manufacturer', mfrName)
       .order('id', { ascending: true })  // stable pagination — see loadAndApplyDictOverrides comment
       .range(from, from + PAGE - 1);
@@ -4808,27 +4825,44 @@ async function runRegenerateAffectedBy(paramName) {
 async function runBackfillTranslations(mfrFilter) {
   if (!supabase) throw new Error('Supabase client required for backfill');
 
-  // Iterate every source JSON in data/atlas/ — these are the canonical
-  // source of truth for raw MFR params. If a file is missing, the MFR's
-  // existing atlas_products rows stay untouched (we can't re-translate
-  // without the source).
-  const allFiles = readdirSync('data/atlas/')
-    .filter(f => /^mfr_.+\.json$/i.test(f))
-    .map(f => `data/atlas/${f}`);
+  // Re-translate every product straight from its own raw source model stored
+  // in the DB (atlas_products.atlas_raw), NOT from the local data/atlas/*.json
+  // files. Those files are gitignored ("proprietary manufacturer data") and a
+  // fresh deploy wipes them — which used to make this backfill exit with "0
+  // files" on the server (0 scanned, exit 1). Every product already carries its
+  // ingested raw model in atlas_raw (the exact object mapModel() consumes), so
+  // the DB is a complete, deploy-proof source of truth. The manufacturer list
+  // comes from the already-deployed get_manufacturer_product_stats RPC (RETURNS
+  // jsonb, so not row-capped; its rows sum to 100% of atlas_products — no MFR is
+  // missed, including families with no classifier yet).
+  let mfrStatsRows;
+  try {
+    const { data, error } = await supabase.rpc('get_manufacturer_product_stats');
+    if (error) throw new Error(error.message);
+    mfrStatsRows = Array.isArray(data) ? data : [];
+  } catch (err) {
+    console.error(`Failed to load manufacturer list from get_manufacturer_product_stats: ${err.message}`);
+    process.exit(1);
+  }
+  const allManufacturers = [...new Set(mfrStatsRows.map(r => r.manufacturer).filter(Boolean))].sort();
 
+  // `filtered` now holds MANUFACTURER-NAME strings (previously file paths). The
+  // name is deliberately kept so the heartbeat's totalFiles/processedFiles
+  // fields — rendered as "N / M manufacturers" in the admin panel — stay correct
+  // with no further edits. `--mfr <x>` filters by manufacturer-name substring.
   const filtered = mfrFilter
-    ? allFiles.filter(p => basename(p).toLowerCase().includes(mfrFilter.toLowerCase()))
-    : allFiles;
+    ? allManufacturers.filter(m => m.toLowerCase().includes(mfrFilter.toLowerCase()))
+    : allManufacturers;
 
   if (filtered.length === 0) {
-    console.error(`No matching source files found${mfrFilter ? ` for filter '${mfrFilter}'` : ''}.`);
+    console.error(`No matching manufacturers found${mfrFilter ? ` for filter '${mfrFilter}'` : ''}.`);
     process.exit(1);
   }
 
-  console.log(`\nBackfill — ${filtered.length} source file${filtered.length === 1 ? '' : 's'}${dryRun ? ' (DRY RUN)' : ''}`);
+  console.log(`\nBackfill — ${filtered.length} manufacturer${filtered.length === 1 ? '' : 's'}${dryRun ? ' (DRY RUN)' : ''} — source: atlas_raw (DB)`);
   console.log('─'.repeat(60));
 
-  let grandTotal = { scanned: 0, changed: 0, unchanged: 0, missing: 0, errors: 0 };
+  let grandTotal = { scanned: 0, changed: 0, unchanged: 0, missing: 0, errors: 0, preserved: 0 };
 
   // ── Live progress heartbeat (admin-button runs only) ──────
   // Gated on BACKFILL_EMIT_STATUS so terminal runs (npm run atlas:backfill,
@@ -4881,29 +4915,12 @@ async function runBackfillTranslations(mfrFilter) {
 
   await emitStatus(true);   // initial: totalFiles known, 0 processed
 
-  for (const filePath of filtered) {
+  for (const mfrName of filtered) {
     processedFiles++;
-    let mapResult;
-    try {
-      mapResult = mapManufacturerProducts(filePath);
-    } catch (err) {
-      console.error(`  ${basename(filePath)}: parse failed — ${err.message}`);
-      grandTotal.errors++;
-      continue;
-    }
-    const { mfrName, mappedProducts: rawMappedProducts } = mapResult;
-    // Richest-wins dedup so duplicate-MPN dual-category rows land their rich
-    // mapping (not last-wins). Same collapse the dry-run sees, so these rows
-    // converge instead of perpetually re-flagging. Decision #233 follow-up.
-    const mappedProducts = dedupRichestByMpn(rawMappedProducts);
-    if (mappedProducts.length === 0) {
-      // Empty source file or filter-skipped — nothing to do.
-      continue;
-    }
 
-    // Pull existing atlas_products for this MFR via the lighter backfill-only
-    // projection (id, mpn, category, parameters) — drops the heavy atlas_raw
-    // column the backfill never reads. Paginates around the 1000-row limit.
+    // Pull this MFR's existing atlas_products rows WITH their raw source model
+    // (atlas_raw) + current parameters, via the lean backfill-only projection
+    // (paginates past the 1000-row cap).
     let existingMap;
     try {
       existingMap = await fetchExistingForBackfill(mfrName);
@@ -4912,21 +4929,46 @@ async function runBackfillTranslations(mfrFilter) {
       grandTotal.errors++;
       continue;
     }
+    const existingRows = [...existingMap.values()];
+    if (existingRows.length === 0) {
+      // The MFR came from get_manufacturer_product_stats, so it HAS products —
+      // 0 rows here means its stored `manufacturer` string doesn't match what
+      // that RPC reported (name/collision drift). Surface it rather than
+      // silently skipping the whole manufacturer's re-translation.
+      console.error(`  ${mfrName}: 0 rows fetched (name mismatch vs get_manufacturer_product_stats?) — skipped`);
+      continue;
+    }
 
     let mfrChanged = 0, mfrUnchanged = 0, mfrMissing = 0;
     const toUpdate = [];   // minimal upsert rows for this MFR's changed products
 
-    for (const np of mappedProducts) {
+    for (const row of existingRows) {
       grandTotal.scanned++;
-      const existing = existingMap.get(np.mpn);
-      if (!existing) {
-        // Source has an MPN that's not in atlas_products. Could happen if
-        // the row was hard-deleted or never proceeded. Skip — backfill
-        // intentionally doesn't INSERT (that's what --proceed is for).
+      if (!row.atlas_raw) {
+        // No stored raw model to re-translate from. Shouldn't happen — every
+        // ingested row carries atlas_raw — but skip rather than guess.
         mfrMissing++;
         grandTotal.missing++;
         continue;
       }
+
+      // Re-run the SAME mapper ingest uses, on the row's own raw model. The
+      // manufacturer/source-file args only feed part.manufacturer (discarded
+      // here); result.parameters depends solely on the raw model + the
+      // dictionary overrides loaded at startup (loadAndApplyDictOverrides), so
+      // newly-accepted mappings land on already-ingested products.
+      let mapped;
+      try {
+        mapped = mapModel(row.atlas_raw, row.manufacturer, row.atlas_source_file);
+      } catch (err) {
+        console.error(`  ${mfrName} / ${row.mpn}: map failed — ${err.message}`);
+        grandTotal.errors++;
+        continue;
+      }
+      // Shape a minimal `np` + reuse the row as `existing` so the downstream
+      // tag/merge/compare/upsert block below is byte-identical to before.
+      const np = { mpn: row.mpn, parameters: mapped.parameters };
+      const existing = row;
 
       // Compute fresh merged JSONB using the same merge function ingest uses.
       const newAtlasTagged = tagAtlasParameters(np.parameters);
@@ -4939,6 +4981,33 @@ async function runBackfillTranslations(mfrFilter) {
       if (sameShape) {
         mfrUnchanged++;
         grandTotal.unchanged++;
+        continue;
+      }
+
+      // Non-lossy guard (Decision #278 — no value is ever discarded). Never let a
+      // re-translation reduce a product's non-empty parameter count — keep the
+      // richer stored row. Re-mapping the single stored `atlas_raw` can yield
+      // FEWER values than what's already stored in two ways, both observed live:
+      //   (a) legacy duplicate-MPN parts — a source file lists the same MPN twice
+      //       under two category classifications (e.g. a full-spec TVS Diode AND
+      //       a sparse Rectifier row, see dedupRichestByMpn). `parameters` holds
+      //       the RICH mapping (a later backfill wrote it) but `atlas_raw` is the
+      //       SPARSE occurrence (never rewritten).
+      //   (b) dictionary drift — the mapping that produced `parameters` emitted
+      //       more/other keys than today's dictionary does (e.g. an older dict
+      //       carried a min/max band that the current one folds away).
+      // The file-based backfill dodged (a) by re-deriving the richest occurrence
+      // from the file; the DB has only the one raw. Either way, keeping the
+      // richer stored row is strictly safe and never worse than today's state.
+      const mergedNonEmpty = countNonEmptyParams(merged);
+      const existingNonEmpty = countNonEmptyParams(existing.parameters);
+      if (mergedNonEmpty < existingNonEmpty) {
+        mfrUnchanged++;
+        grandTotal.unchanged++;
+        grandTotal.preserved++;
+        if (verbose) {
+          console.log(`    ${row.mpn}: kept richer stored params (re-mapping would drop ${existingNonEmpty - mergedNonEmpty} value(s))`);
+        }
         continue;
       }
 
@@ -5017,6 +5086,9 @@ async function runBackfillTranslations(mfrFilter) {
 
   console.log('─'.repeat(60));
   console.log(`Scanned ${grandTotal.scanned} / Changed ${grandTotal.changed} / Unchanged ${grandTotal.unchanged} / Missing ${grandTotal.missing} / Errors ${grandTotal.errors}`);
+  if (grandTotal.preserved > 0) {
+    console.log(`Preserved ${grandTotal.preserved} product(s): kept richer stored params where re-mapping the stored raw would have dropped values (legacy duplicate-MPN or dictionary drift).`);
+  }
 
   if (!dryRun && grandTotal.changed > 0) {
     // Invalidate the coverage cache so the admin panel reflects the rewrite

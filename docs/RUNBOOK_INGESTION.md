@@ -49,8 +49,8 @@ End-to-end workflow for ingesting a new manufacturer's product JSON into Atlas. 
 
 | Step | Action | When to do it |
 |------|--------|---------------|
-| 13 | Run **`npm run atlas:backfill`** | Only if you accepted overrides during this session that benefit **older, already-applied** batches' products (i.e. MFRs whose products were ingested before today's accepts). Skip if you only worked on today's Pending → Proceed flow. |
-| 14 | Alternative: use the **"Refresh from accepts"** button in the Atlas → Manufacturers panel header | Same effect as `npm run atlas:backfill` — spawns the same script with no MFR filter, so it re-translates **all** manufacturers (it is a global button, not per-MFR). Use it instead of dropping to a terminal. |
+| 13 | Run **`npm run atlas:backfill`** | Only if you accepted overrides during this session that benefit **older, already-applied** batches' products (i.e. MFRs whose products were ingested before today's accepts). Skip if you only worked on today's Pending → Proceed flow. **Since Decision #284 the backfill re-translates from the DB (`atlas_products.atlas_raw`), not the local `data/atlas/*.json` files** — so it runs anywhere, including the deployed server, without the source folder present, and a **non-lossy guard** guarantees it never reduces a product's stored parameter count (skips are logged as `Preserved N`). |
+| 14 | Alternative: use the **"Refresh from accepts"** button in the Atlas → Manufacturers panel header | Same effect as `npm run atlas:backfill` — spawns the same script with no MFR filter, so it re-translates **all** manufacturers (it is a global button, not per-MFR). Reads from the DB (Decision #284), so it works on the server and can't break on deploy. Use it instead of dropping to a terminal. |
 
 ---
 
@@ -68,6 +68,8 @@ Manufacturers loaded **before** the batch pipeline existed (Decision #174) have 
 - Discovery batches are segregated from the Pending/Applied tabs and the apply queue — they exist only to feed Triage. They're never auto-expired.
 - A later real upload of a legacy MFR automatically supersedes its discovery batch (no double-counting).
 - `--force` re-scans files whose only batch is a discovery batch (use after the mapper itself improves).
+- **`--discover-legacy` (step 15) still reads the local `data/atlas/*.json` source files** — unlike the translation backfill (step 13/14), which now reads from the DB (Decision #284). So run discovery from a machine that has the source folder (a developer terminal), not the deployed server.
+- **Since Decision #284, the backfill's `--mfr <filter>` matches the manufacturer NAME** (case-insensitive substring), not the source filename as before. So `--mfr HONGFA` works, but a filter that only appears in the filename (a file number, or a Chinese-only fragment) no longer matches and aborts with "No matching manufacturers found".
 
 ---
 

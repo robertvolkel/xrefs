@@ -214,7 +214,7 @@ Key design decisions inferred from the codebase, with rationale.
 - **#198** — Triage Queue Cache: L2 as Source of Truth (May 22, 2026)
 - **#199** — Retroactive Dict Override Backfill (May 23, 2026)
 
-## Decisions 200–283 — [DECISIONS_200-283.md](DECISIONS_200-283.md)
+## Decisions 200–284 — [DECISIONS_200-284.md](DECISIONS_200-284.md)
 
 - **#200** — Coverage Repair Workflow: Matching Impact + Per-MFR Drilldown + One-Click Backfill (May 23, 2026)
 - **#201** — Vendor-Name Hygiene: "gaia-" Prefix Must Never Reach End Users (May 24, 2026)
@@ -302,4 +302,5 @@ Key design decisions inferred from the codebase, with rationale.
 - **#281** ✓ — Smart-chat Phase 1 enabled in production: grounded family reasoning + reflect-back + wrong-choice clarify + per-manufacturer cards, flag-gated (July 27, 2026)
 - **#282** ✓ — Whole-queue "High confidence" filter on Mapping Triage + a resilient shared verdict read (single-flight / 5s negative-cache / generation-guard) (July 28, 2026)
 - **#283** ✓ — Atlas coverage is one per-product definition (Data + Reach), and the admin numbers stay current (unified rollup, drawer RPC + variant resolution, cache-invalidation + stale-read fixes) (July 28, 2026)
+- **#284** ✓ — Atlas translation backfill re-translates from the DB (`atlas_raw`), not local `data/atlas/*.json` files (deploy-proof; "Refresh from accepts" was exiting 0-scanned on the server), with a non-lossy guard that keeps the richer stored row when re-mapping would drop values (July 29, 2026)
 
