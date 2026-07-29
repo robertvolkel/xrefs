@@ -13,6 +13,11 @@ export interface AtlasSummary {
   searchOnlyProducts: number;
   familiesCovered: number;
   lastUpdated: string | null;
+  // Product-level coverage headline (per-product, unified across admin pages).
+  dataCoveragePct: number; // covered attribute slots / required slots
+  reachPct: number; // classifiable products / all products
+  coveredSlots: number; // raw numerator, for the live tooltip
+  requiredSlots: number; // raw denominator, for the live tooltip
 }
 
 export interface AtlasMfr {

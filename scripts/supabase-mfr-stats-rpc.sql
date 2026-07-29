@@ -20,16 +20,22 @@ DROP FUNCTION IF EXISTS get_manufacturer_product_stats();
 CREATE OR REPLACE FUNCTION get_manufacturer_product_stats()
 RETURNS jsonb
 LANGUAGE sql STABLE
--- Override Supabase's default 8s statement_timeout. The param_union CTE
--- below unnests every JSONB key across all scorable atlas_products
--- (~500K key-rows after YANGJIE — Decision #174 bulk apply pushed past 8s).
--- 120s is generous; if we ever exceed it, precompute param_keys on ingest.
+-- Override Supabase's default 8s statement_timeout. Kept generous even though
+-- the expensive param_union CTE was removed (see below): a plain GROUP BY over
+-- ~440K rows is fast, but the margin is cheap insurance.
 SET statement_timeout = '120s'
 AS $$
-  -- Step 1: Get all (manufacturer, family_id) groups with counts + last-modified timestamp
-  -- Step 2: For scorable groups, collect distinct param keys
-  -- Step 3: jsonb_agg the joined rows into one array (no 1000-row cap).
-  WITH groups AS (
+  -- Per (manufacturer, family_id): product count + last-modified timestamp,
+  -- jsonb_agg'd into one array (no 1000-row cap).
+  --
+  -- The old param_union CTE (a LATERAL jsonb_object_keys unnest over ~500K
+  -- key-rows) fed a coverage metric that credited an attribute to EVERY product
+  -- in a group if one product had it — inflated coverage that couldn't respond
+  -- to dictionary accepts. Coverage now comes per-product from
+  -- get_atlas_coverage_aggregates via the shared rollup, so param_keys has no
+  -- consumer and the unnest (the sole reason for the 120s timeout) is gone.
+  SELECT COALESCE(jsonb_agg(row_to_json(t)), '[]'::jsonb)
+  FROM (
     SELECT
       p.manufacturer,
       p.family_id,
@@ -37,32 +43,6 @@ AS $$
       MAX(p.updated_at) AS max_updated_at
     FROM atlas_products p
     GROUP BY p.manufacturer, p.family_id
-  ),
-  -- Collect distinct parameter keys per (manufacturer, family_id) for scorable products
-  param_union AS (
-    SELECT
-      p.manufacturer,
-      p.family_id,
-      ARRAY_AGG(DISTINCT k) AS param_keys
-    FROM atlas_products p,
-         LATERAL jsonb_object_keys(COALESCE(p.parameters, '{}'::jsonb)) AS k
-    WHERE p.family_id IS NOT NULL
-      AND p.parameters IS NOT NULL
-      AND p.parameters != '{}'::jsonb
-    GROUP BY p.manufacturer, p.family_id
-  )
-  SELECT COALESCE(jsonb_agg(row_to_json(t)), '[]'::jsonb)
-  FROM (
-    SELECT
-      g.manufacturer,
-      g.family_id,
-      g.product_count,
-      pu.param_keys,
-      g.max_updated_at
-    FROM groups g
-    LEFT JOIN param_union pu
-      ON g.manufacturer = pu.manufacturer
-      AND g.family_id IS NOT DISTINCT FROM pu.family_id
   ) t;
 $$;
 

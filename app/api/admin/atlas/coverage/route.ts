@@ -8,6 +8,7 @@ import {
 } from '@/lib/services/atlasMapper';
 import { getDigikeyAttributeIdsForFamily } from '@/lib/services/digikeyParamMap';
 import { reversePartsioParamLookup } from '@/lib/services/partsioParamMap';
+import { resolveManufacturerAlias } from '@/lib/services/manufacturerAliasResolver';
 
 /** GET /api/admin/atlas/coverage?manufacturer=RUILON&familyId=B5 */
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -55,27 +56,36 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const partsioReverse = reversePartsioParamLookup(familyId);
     const partsioAttrs = new Set(partsioReverse.keys());
 
-    // 4. Query Atlas products for this manufacturer + family
+    // 4. Count per-attribute fill rate for this manufacturer + family, in the DB.
+    //    Resolve name variants first: the drawer's caller passes a manufacturer's
+    //    canonical display name ("ISC 无锡固电"), but products are stored under
+    //    the English-only name ("ISC"), so a single-string match would return
+    //    zero for variant-stored MFRs. The RPC also dodges PostgREST's 1000-row
+    //    cap (which truncated the old .select() for the 66 groups >1000 products).
     const supabase = await createClient();
-    const { data: products } = await supabase
-      .from('atlas_products')
-      .select('parameters')
-      .eq('manufacturer', manufacturer)
-      .eq('family_id', familyId);
+    const aliasMatch = await resolveManufacturerAlias(manufacturer);
+    const variants = aliasMatch?.variants?.length ? aliasMatch.variants : [manufacturer];
 
-    const totalProducts = products?.length ?? 0;
-
-    // Count per-attribute frequency across products
-    const attrFrequency = new Map<string, number>();
-    if (products) {
-      for (const prod of products) {
-        const params = prod.parameters as Record<string, unknown> | null;
-        if (!params) continue;
-        for (const attrId of Object.keys(params)) {
-          attrFrequency.set(attrId, (attrFrequency.get(attrId) ?? 0) + 1);
-        }
-      }
+    const { data: coverageData, error: coverageErr } = await supabase.rpc(
+      'get_atlas_family_attr_coverage',
+      { p_manufacturer_variants: variants, p_family_id: familyId },
+    );
+    if (coverageErr) {
+      console.error('get_atlas_family_attr_coverage RPC error:', coverageErr);
+      return NextResponse.json(
+        { success: false, error: 'Coverage query failed' },
+        { status: 500 },
+      );
     }
+
+    const coveragePayload = (coverageData ?? {}) as {
+      totalProducts?: number;
+      attrCounts?: Record<string, number>;
+    };
+    const totalProducts = Number(coveragePayload.totalProducts ?? 0);
+    const attrFrequency = new Map<string, number>(
+      Object.entries(coveragePayload.attrCounts ?? {}).map(([k, v]) => [k, Number(v)]),
+    );
 
     // 5. Build gap matrix from logic table rules
     const attributes = logicTable.rules.map(rule => {

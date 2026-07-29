@@ -150,7 +150,7 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
   // Fetch manufacturer data
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/admin/manufacturers/${slug}`)
+    fetch(`/api/admin/manufacturers/${slug}`, { cache: 'no-store' })
       .then((r) => {
         if (!r.ok) throw new Error('Not found');
         return r.json();
@@ -186,7 +186,7 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
       params.set('dir', productSortDir);
     }
 
-    fetch(`/api/admin/manufacturers/${slug}/products?${params}`)
+    fetch(`/api/admin/manufacturers/${slug}/products?${params}`, { cache: 'no-store' })
       .then((r) => r.json())
       .then(setProducts)
       .catch(() => {})

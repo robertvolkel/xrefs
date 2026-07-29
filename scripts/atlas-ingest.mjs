@@ -5022,7 +5022,13 @@ async function runBackfillTranslations(mfrFilter) {
     // Invalidate the coverage cache so the admin panel reflects the rewrite
     // on next load. Best-effort — fall through on error.
     try {
-      await supabase.from('admin_stats_cache').delete().in('key', ['atlas-coverage', 'manufacturers-list']);
+      // Prefix-match the manufacturers-list key: it's VERSIONED
+      // ('manufacturers-list-v6' today), so the old literal 'manufacturers-list'
+      // matched nothing and terminal backfills never busted that cache. A
+      // separate .like() is required because a prefix can't ride in the same
+      // .in() as the exact-match keys.
+      await supabase.from('admin_stats_cache').delete().in('key', ['atlas-coverage']);
+      await supabase.from('admin_stats_cache').delete().like('key', 'manufacturers-list%');
       console.log('Coverage cache invalidated.');
     } catch (err) {
       console.error('Cache invalidation failed (non-fatal):', err.message);
@@ -5129,7 +5135,11 @@ async function runDiscoverLegacy(mfrFilter) {
     // is invalidated separately by the trigger endpoint after this spawn exits
     // (the .mjs can only reach the persistent admin_stats_cache rows).
     try {
-      await supabase.from('admin_stats_cache').delete().in('key', ['triage-queue', 'manufacturers-list']);
+      // manufacturers-list is versioned (-v6) → prefix-match, not the stale
+      // literal 'manufacturers-list' (which matched nothing). Separate .like()
+      // because a prefix can't ride in the same .in() as exact keys.
+      await supabase.from('admin_stats_cache').delete().in('key', ['triage-queue']);
+      await supabase.from('admin_stats_cache').delete().like('key', 'manufacturers-list%');
       console.log('Admin caches invalidated (triage-queue, manufacturers-list).');
     } catch (err) {
       console.error('Cache invalidation failed (non-fatal):', err.message);
@@ -5226,7 +5236,9 @@ async function runRescanUnmappedParams() {
   }
   console.log(`Done. ${ok} batches updated.`);
   try {
-    await supabase.from('admin_stats_cache').delete().in('key', ['triage-queue', 'manufacturers-list']);
+    // manufacturers-list is versioned (-v6) → prefix-match, not the stale literal.
+    await supabase.from('admin_stats_cache').delete().in('key', ['triage-queue']);
+    await supabase.from('admin_stats_cache').delete().like('key', 'manufacturers-list%');
     console.log('Admin caches invalidated (triage-queue, manufacturers-list).');
   } catch (err) {
     console.error('Cache invalidation failed (non-fatal):', err.message);

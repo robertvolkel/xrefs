@@ -144,8 +144,8 @@ const PHASE_4_ROWS: PhaseRow[] = [
   },
   {
     step: '14',
-    action: <>Alternative: <b>"Refresh from accepts"</b> button on a specific MFR's admin detail page</>,
-    why: 'Same effect as backfill but scoped to one MFR. Use when you know exactly which MFR needs retranslation.',
+    action: <>Alternative: the <b>"Refresh from accepts"</b> button in the Atlas → Manufacturers panel header</>,
+    why: 'Same effect as npm run atlas:backfill — it spawns the same script with no MFR filter, so it re-translates ALL manufacturers (global button, not per-MFR). Use it instead of a terminal.',
   },
 ];
 

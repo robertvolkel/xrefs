@@ -25,6 +25,7 @@ import {
   IconButton,
   Collapse,
   LinearProgress,
+  CircularProgress,
   Paper,
 } from '@mui/material';
 import SearchOutlinedIcon from '@mui/icons-material/SearchOutlined';
@@ -36,6 +37,7 @@ import AtlasExplorerTab from './AtlasExplorerTab';
 import FlaggedProductsTab from './FlaggedProductsTab';
 import { getAtlasFlags, syncAllMfrProfiles } from '@/lib/api';
 import { formatRelativeTime } from '@/lib/utils/dateFormatting';
+import { dataCoverageTooltip, reachTooltip } from '@/lib/services/atlasCoverageCopy';
 
 interface MfrListItem {
   id: number;
@@ -76,10 +78,13 @@ interface MfrListData {
     totalProducts: number;
     scorableProducts: number;
     familiesCovered: number;
-    // Unweighted mean coverage % across MFRs with scorable products, and the
-    // count it was averaged over. Optional for back-compat with pre-v3 payloads.
-    avgCoveragePct?: number;
-    avgCoverageMfrCount?: number;
+    // Product-level coverage headline (per-product; identical to the Atlas
+    // Coverage page). Data = covered slots / required slots; Reach = classifiable
+    // / all products. Optional for back-compat with older cached payloads.
+    dataCoveragePct?: number;
+    reachPct?: number;
+    coveredSlots?: number;
+    requiredSlots?: number;
   };
 }
 
@@ -120,6 +125,10 @@ export default function ManufacturersPanel() {
   } | null>(null);
   const [backfillSubmitting, setBackfillSubmitting] = useState(false);
   const [backfillMessage, setBackfillMessage] = useState<string | null>(null);
+  // True while we poll for the post-backfill coverage recompute to land, so the
+  // panel shows "Updating coverage…" instead of flashing the pre-backfill number.
+  const [coverageUpdating, setCoverageUpdating] = useState(false);
+  const coveragePollRef = useRef(false);
   // Optimistic flag: keeps the progress panel open the instant the button is
   // clicked (before the POST returns / the route compiles in dev), so the user
   // gets immediate feedback instead of a dead 10-20s wait. Cleared once the run
@@ -130,9 +139,9 @@ export default function ManufacturersPanel() {
     getAtlasFlags('open').then((resp) => setFlaggedCount(resp.flags.length)).catch(() => {});
   }, []);
 
-  const loadData = useCallback(async (forceRefresh: boolean) => {
+  const loadData = useCallback(async (forceRefresh: boolean): Promise<MfrListData | null> => {
     try {
-      const res = await fetch(`/api/admin/manufacturers${forceRefresh ? '?refresh=1' : ''}`);
+      const res = await fetch(`/api/admin/manufacturers${forceRefresh ? '?refresh=1' : ''}`, { cache: 'no-store' });
       if (!res.ok) {
         let detail = `HTTP ${res.status}`;
         try {
@@ -141,13 +150,15 @@ export default function ManufacturersPanel() {
           else if (body?.error) detail = String(body.error);
         } catch {}
         setFetchError(detail);
-        return;
+        return null;
       }
       const json = (await res.json()) as MfrListData;
       setData(json);
       setFetchError(null);
+      return json;
     } catch (err) {
       setFetchError(err instanceof Error ? err.message : 'Network error');
+      return null;
     }
   }, []);
 
@@ -182,9 +193,9 @@ export default function ManufacturersPanel() {
     void fetchBackfillStatus();
   }, [fetchBackfillStatus]);
 
-  // Poll every 10s while a run is in-flight. Stops automatically once
-  // lastFinishedAt > lastStartedAt. Also reloads MFR list once when the
-  // run completes so the coverage % column reflects the rewrite.
+  // Poll every 1.5s while a run is in-flight (see the interval below). Stops
+  // automatically once lastFinishedAt > lastStartedAt. Coverage refresh on
+  // completion is handled by the separate poll-until-fresh effect further down.
   useEffect(() => {
     if (!backfillStatus) return;
     const inFlight = !backfillStatus.lastFinishedAt;
@@ -220,6 +231,11 @@ export default function ManufacturersPanel() {
   useEffect(() => {
     const cur = backfillStatus?.lastFinishedAt ?? null;
     if (cur && cur !== prevFinishedAtRef.current) {
+      // Did we WATCH this run go in-flight → done (vs. just finding a pre-existing
+      // finished row on mount)? Captured before the toast branch resets the ref;
+      // gates the coverage poll below so a stale finished row on mount doesn't
+      // flash "Updating coverage…".
+      const watchedThisRun = sawInFlightRef.current;
       // Run just finished. If we watched it run, replace the stale "started…"
       // banner with an explicit completion message (the badge alone is too quiet).
       if (sawInFlightRef.current) {
@@ -230,12 +246,34 @@ export default function ManufacturersPanel() {
         );
         sawInFlightRef.current = false;
       }
-      // Serve the cached stats (which always exist) rather than forcing a
-      // synchronous cold recompute (?refresh=1) that can hang under post-backfill
-      // load and surface "Stats failed to refresh". The backfill route already
-      // kicked a background SWR recompute (invalidateManufacturersListCache), so
-      // fresh coverage lands shortly and shows on the next read.
-      void loadData(false);
+      // The backfill route kicked a background recompute (invalidateManufacturers
+      // ListCache) AFTER writing the finished status, so fresh coverage lands a
+      // few seconds later. A single immediate re-fetch would flash the PRE-backfill
+      // number (the recompute hasn't landed yet) — the exact "I refreshed and it
+      // didn't change" symptom. So poll until the served stats reflect a compute
+      // NEWER than this run's finish. Only when something changed (a 0-change run
+      // triggers no recompute, so there's nothing to wait for). Capped so a failed
+      // recompute can't spin forever. Guarded so overlapping completions don't
+      // start two polls.
+      const changed = backfillStatus?.changed ?? 0;
+      if (watchedThisRun && changed > 0 && !coveragePollRef.current) {
+        const finishedMs = Date.parse(cur);
+        coveragePollRef.current = true;
+        setCoverageUpdating(true);
+        void (async () => {
+          const deadline = Date.now() + 90_000;
+          for (;;) {
+            const json = await loadData(false);
+            const cachedMs = json?.cachedAt ? Date.parse(json.cachedAt) : 0;
+            if (cachedMs > finishedMs || Date.now() > deadline) break;
+            await new Promise((r) => setTimeout(r, 2500));
+          }
+          setCoverageUpdating(false);
+          coveragePollRef.current = false;
+        })();
+      } else {
+        void loadData(false);
+      }
     }
     prevFinishedAtRef.current = cur;
   }, [backfillStatus?.lastFinishedAt, backfillStatus, loadData]);
@@ -451,24 +489,40 @@ export default function ManufacturersPanel() {
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, mb: 2 }}>
                 <Typography variant="body2" color="text.secondary">
                   {`${data.summary.withProducts} manufacturers with products · ${data.summary.totalProducts.toLocaleString()} products · ${data.summary.scorableProducts.toLocaleString()} scorable · ${data.summary.familiesCovered} families`}
-                  {typeof data.summary.avgCoveragePct === 'number' && (
+                  {typeof data.summary.dataCoveragePct === 'number' && (
                     <>
                       {' · '}
-                      <Tooltip
-                        title={`Unweighted average of each manufacturer's coverage %, across the ${(data.summary.avgCoverageMfrCount ?? 0).toLocaleString()} manufacturers with scorable products. Every manufacturer counts equally regardless of size — this is "the typical manufacturer is X% covered", not the dataset-wide weighted coverage.`}
-                      >
+                      <Tooltip title={dataCoverageTooltip(data.summary.coveredSlots ?? 0, data.summary.requiredSlots ?? 0)}>
                         <Box
                           component="span"
                           sx={{ borderBottom: '1px dotted', borderColor: 'text.disabled', cursor: 'help' }}
                         >
-                          {`${data.summary.avgCoveragePct}% average coverage`}
+                          {`${data.summary.dataCoveragePct}% data coverage`}
+                        </Box>
+                      </Tooltip>
+                    </>
+                  )}
+                  {typeof data.summary.reachPct === 'number' && (
+                    <>
+                      {' · '}
+                      <Tooltip title={reachTooltip(data.summary.scorableProducts, data.summary.totalProducts)}>
+                        <Box
+                          component="span"
+                          sx={{ borderBottom: '1px dotted', borderColor: 'text.disabled', cursor: 'help' }}
+                        >
+                          {`${data.summary.reachPct}% reach`}
                         </Box>
                       </Tooltip>
                     </>
                   )}
                 </Typography>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }}>
-                  {data.cachedAt && (
+                  {coverageUpdating ? (
+                    <Typography variant="caption" color="primary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      <CircularProgress size={12} thickness={5} />
+                      Updating coverage…
+                    </Typography>
+                  ) : data.cachedAt && (
                     <Tooltip title={new Date(data.cachedAt).toLocaleString()}>
                       <Typography variant="caption" color="text.secondary">
                         Computed {formatRelativeTime(data.cachedAt)}

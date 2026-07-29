@@ -93,8 +93,8 @@ export default function AtlasIngestPanel() {
       // server-side paged path and returns counts + an empty rows array,
       // avoiding two full-set pulls per operator load (Decision #231).
       const [pendingRes, appliedRes] = await Promise.all([
-        fetch('/api/admin/atlas/ingest/batches?status=pending&page_size=0'),
-        fetch('/api/admin/atlas/ingest/batches?status=applied&page_size=0'),
+        fetch('/api/admin/atlas/ingest/batches?status=pending&page_size=0', { cache: 'no-store' }),
+        fetch('/api/admin/atlas/ingest/batches?status=applied&page_size=0', { cache: 'no-store' }),
       ]);
       if (!pendingRes.ok) throw new Error(`Pending fetch failed: ${pendingRes.status}`);
       if (!appliedRes.ok) throw new Error(`Applied fetch failed: ${appliedRes.status}`);

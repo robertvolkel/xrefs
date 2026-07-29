@@ -11,6 +11,13 @@ import { getOrComputeTriageData } from '@/lib/services/triageQueueCache';
 // compute). Do not remove — the registration is the whole point.
 import '@/lib/services/triageQueueCompute';
 import { invalidateAtlasCache } from '../atlas/route';
+import {
+  buildFamilyAttrsPayload,
+  rollupCoverageByManufacturer,
+  computeDataCoveragePct,
+  computeReachPct,
+  type CoverageAggRow,
+} from '@/lib/services/atlasCoverageAggregates';
 
 // ── Hot in-memory cache (60s) ─────────────────────────────────
 // Fronts the persistent admin_stats_cache row so per-render
@@ -18,6 +25,25 @@ import { invalidateAtlasCache } from '../atlas/route';
 let memCache: { body: string; cachedAt: string } | null = null;
 let memCacheTimestamp = 0;
 const MEM_CACHE_TTL_MS = 60_000;
+
+// SWR backstop: if the persisted row is older than this, serve it but kick a
+// background recompute. The atlas + growth routes already have this; the
+// manufacturers route did NOT, so a background recompute that threw left the row
+// served indefinitely (only a manual ?refresh=1 could fix it).
+const SWR_STALE_THRESHOLD_MS = 6 * 60 * 60 * 1000; // 6 hours
+let backgroundRecomputeInFlight = false;
+
+// Advance the hot cache only when the incoming payload is at least as fresh as
+// what's there (compares computed_at ISO strings, which sort chronologically).
+// Prevents a slow stale read from clobbering a fresh background recompute that
+// landed first — the race that pinned a stale number for the full TTL after an
+// invalidate (a backfill's "Refresh from accepts" completion re-read the old row
+// and wrote it back into L1).
+function setMemCache(body: string, cachedAt: string): void {
+  if (memCache && memCache.cachedAt > cachedAt) return;
+  memCache = { body, cachedAt };
+  memCacheTimestamp = Date.now();
+}
 
 // Bumping the suffix forces persisted rows from the previous schema to be
 // recomputed so they pick up new fields. v3: added summary.triageAvailable +
@@ -29,7 +55,12 @@ const MEM_CACHE_TTL_MS = 60_000;
 // products) which looksPoisoned() does NOT reject (it's nonzero), so the bump is
 // the only thing that discards it. Bumping discards stale rows so the first
 // post-deploy read recomputes with the corrected (uncapped) counts.
-const CACHE_KEY = 'manufacturers-list-v5';
+// v6: coverage switched from param_keys bucket-distinct (inflated ~+10ppt,
+// couldn't move on accepts) to per-product via the shared get_atlas_coverage_
+// aggregates rollup; headline is now dataCoveragePct + reachPct (was the
+// unweighted mean avgCoveragePct). The v5 row holds the old inflated numbers,
+// which looksPoisoned() does NOT reject, so the bump is what discards it.
+const CACHE_KEY = 'manufacturers-list-v6';
 
 export function invalidateManufacturersListCache() {
   memCache = null;
@@ -66,7 +97,6 @@ interface StatsRow {
   manufacturer: string;
   family_id: string | null;
   product_count: number;
-  param_keys: string[] | null;
   max_updated_at: string | null;
 }
 
@@ -129,7 +159,7 @@ async function computeStats(): Promise<object> {
   // the registered compute (~1-3s) so the column doesn't stay blank after a triage
   // invalidation. It returns null only if the compute is unregistered or throws —
   // in which case the column falls back to "—" rather than blocking the page.
-  const [mfrResult, rpcResult, { data: xrefCounts }, triageData] = await Promise.all([
+  const [mfrResult, rpcResult, coverageResult, { data: xrefCounts }, triageData] = await Promise.all([
     // Paginate past PostgREST's 1000-row cap. atlas_manufacturers crossed 1000
     // identity rows (1014 as of Jun 2026), so a plain .select() silently dropped
     // the alphabetical tail — those MFRs vanished from the admin list and any
@@ -155,6 +185,14 @@ async function computeStats(): Promise<object> {
       return { data: rows, error: null };
     })(),
     supabase.rpc('get_manufacturer_product_stats'),
+    // Per-product coverage — the SAME RPC the Atlas Coverage page uses, fed
+    // through the SAME shared rollup (lib/services/atlasCoverageAggregates.ts),
+    // so the two pages report identical coverage. Replaces the old param_keys
+    // bucket-distinct math, which credited an attribute to every product in a
+    // group if ONE product had it (inflated coverage ~+10ppt, couldn't move on
+    // accepts). get_manufacturer_product_stats is still fetched above for
+    // product counts / families / timestamps.
+    supabase.rpc('get_atlas_coverage_aggregates', { family_attrs: buildFamilyAttrsPayload() }),
     supabase.rpc('get_cross_ref_counts'),
     getOrComputeTriageData().catch(() => null),
   ]);
@@ -184,6 +222,15 @@ async function computeStats(): Promise<object> {
     throw new Error(`get_manufacturer_product_stats RPC failed: ${statsErr.message}`);
   }
 
+  // Per-product coverage from the shared rollup (identical source + math to the
+  // Atlas Coverage page). Throw rather than serve synthetic coverage — same RPC
+  // both admin pages depend on, so if it's down, both are.
+  const coverageErr = coverageResult.error;
+  if (coverageErr) {
+    throw new Error(`get_atlas_coverage_aggregates RPC failed: ${coverageErr.message}`);
+  }
+  const coverage = rollupCoverageByManufacturer((coverageResult.data ?? []) as CoverageAggRow[]);
+
   const manufacturers = (mfrRows ?? []) as MfrRow[];
   const stats = (statsRows ?? []) as StatsRow[];
 
@@ -195,16 +242,11 @@ async function computeStats(): Promise<object> {
   }>();
   const allFamilies = new Set<string>();
 
-  const familyRuleAttrs = new Map<string, Set<string>>();
-  // weightedTotalRules accumulates Σ (Σ rule.weight in family × productCount)
-  // for every (MFR, family) bucket. It's the denominator for improvement
-  // potential — independent of coverage % so we don't change the existing
-  // count-based coverage metric users are already calibrated to.
-  const mfrCoverage = new Map<string, {
-    totalCovered: number;
-    totalRules: number;
-    weightedTotalRules: number;
-  }>();
+  // weightedTotalRules accumulates Σ (Σ rule.weight in family × productCount) for
+  // every (MFR, family) bucket. It's the denominator for Improvement Potential —
+  // separate from the covered/required attribute-slot coverage (which now comes
+  // from the shared `coverage` rollup above), so the two never share source data.
+  const mfrWeighted = new Map<string, { weightedTotalRules: number }>();
 
   let totalProducts = 0;
   let totalScorable = 0;
@@ -227,32 +269,11 @@ async function computeStats(): Promise<object> {
       agg.families.add(row.family_id);
       allFamilies.add(row.family_id);
 
-      if (!familyRuleAttrs.has(row.family_id)) {
-        const table = getLogicTable(row.family_id);
-        if (table) {
-          familyRuleAttrs.set(row.family_id, new Set(table.rules.map(r => r.attributeId)));
-        }
-      }
-      const ruleAttrs = familyRuleAttrs.get(row.family_id);
-      if (ruleAttrs && ruleAttrs.size > 0) {
-        let covered = 0;
-        if (row.param_keys && row.param_keys.length > 0) {
-          for (const key of row.param_keys) {
-            if (ruleAttrs.has(key)) covered++;
-          }
-        }
-
-        let mc = mfrCoverage.get(row.manufacturer);
-        if (!mc) {
-          mc = { totalCovered: 0, totalRules: 0, weightedTotalRules: 0 };
-          mfrCoverage.set(row.manufacturer, mc);
-        }
-        mc.totalCovered += covered * count;
-        mc.totalRules += ruleAttrs.size * count;
-        // Weighted denominator: every product in this (MFR, family) bucket
-        // contributes the family's full Σ rule-weight to the matching budget.
-        mc.weightedTotalRules += getFamilyWeightSum(row.family_id) * count;
-      }
+      // Weighted denominator: every product in this (MFR, family) bucket
+      // contributes the family's full Σ rule-weight to the matching budget.
+      let mw = mfrWeighted.get(row.manufacturer);
+      if (!mw) { mw = { weightedTotalRules: 0 }; mfrWeighted.set(row.manufacturer, mw); }
+      mw.weightedTotalRules += getFamilyWeightSum(row.family_id) * count;
     }
   }
 
@@ -323,12 +344,17 @@ async function computeStats(): Promise<object> {
         for (const f of agg.families) families.add(f);
         lastProductUpdate = maxIso(lastProductUpdate, agg.lastProductUpdate);
       }
-      const cov = mfrCoverage.get(v);
+      // Coverage (covered/required attribute slots) from the shared per-product
+      // rollup; weighted denominator (Improvement Potential) from the stats loop.
+      // Both are keyed by the raw atlas_products.manufacturer string, so the
+      // variant fold reaches every spelling for each.
+      const cov = coverage.byManufacturer.get(v);
       if (cov) {
         totalCovered += cov.totalCovered;
         totalRules += cov.totalRules;
-        weightedTotalRules += cov.weightedTotalRules;
       }
+      const wt = mfrWeighted.get(v);
+      if (wt) weightedTotalRules += wt.weightedTotalRules;
       const impact = mfrWeightedImpact.get(v);
       if (impact) {
         addressableSlots += impact.addressableSlots;
@@ -380,17 +406,6 @@ async function computeStats(): Promise<object> {
   const enabledMfrs = result.filter(m => m.enabled);
   const enabledWithProducts = enabledMfrs.filter(m => m.productCount > 0).length;
 
-  // Average coverage = unweighted mean of each MFR's coverage %, taken over the
-  // manufacturers that actually HAVE scorable products (coverage is undefined
-  // for non-scorable MFRs — their coveragePct is a structural 0 and would drag
-  // the average down misleadingly). Every MFR counts equally regardless of size;
-  // this is "the typical manufacturer is X% covered", not the dataset-wide
-  // weighted coverage.
-  const scorableMfrs = result.filter(m => m.scorableCount > 0);
-  const avgCoveragePct = scorableMfrs.length > 0
-    ? Math.round(scorableMfrs.reduce((s, m) => s + m.coveragePct, 0) / scorableMfrs.length)
-    : 0;
-
   return {
     manufacturers: result,
     summary: {
@@ -400,10 +415,15 @@ async function computeStats(): Promise<object> {
       totalProducts,
       scorableProducts: totalScorable,
       familiesCovered: allFamilies.size,
-      // Unweighted mean coverage % across MFRs with scorable products, plus the
-      // count it was averaged over (for the tooltip).
-      avgCoveragePct,
-      avgCoverageMfrCount: scorableMfrs.length,
+      // Product-level coverage headline — the SAME numbers the Atlas Coverage
+      // page shows (identical RPC + shared rollup). Replaces the old unweighted
+      // mean-of-per-MFR-% (avgCoveragePct), which over-counted and couldn't move
+      // on accepts. Data = covered slots / required slots; Reach = classifiable
+      // products / all products. Raw slot counts travel for the live tooltip.
+      dataCoveragePct: computeDataCoveragePct(coverage.totalCovered, coverage.totalRules),
+      reachPct: computeReachPct(totalScorable, totalProducts),
+      coveredSlots: coverage.totalCovered,
+      requiredSlots: coverage.totalRules,
       // Whether the Improvement Potential column has real data. Drives the
       // looksPoisoned() self-heal guard — see that function.
       triageAvailable,
@@ -422,7 +442,30 @@ async function computeAndPersist(): Promise<{ payload: object; computedAt: strin
   } catch (err) {
     console.error('admin_stats_cache persist failed:', err);
   }
+  // Populate L1 too — a BACKGROUND recompute (invalidate / SWR) previously wrote
+  // only L2, so the hot cache kept serving the pre-recompute payload for the full
+  // 60s TTL. setMemCache's newer-guard keeps a slow stale read from clobbering
+  // this fresh write if it lands afterward.
+  setMemCache(JSON.stringify({ ...payload, cachedAt: computedAt, stale: false }), computedAt);
   return { payload, computedAt };
+}
+
+function isStale(computedAt: string): boolean {
+  return Date.now() - new Date(computedAt).getTime() > SWR_STALE_THRESHOLD_MS;
+}
+
+function triggerBackgroundRecompute() {
+  if (backgroundRecomputeInFlight) return;
+  backgroundRecomputeInFlight = true;
+  void (async () => {
+    try {
+      await computeAndPersist();
+    } catch (err) {
+      console.error('manufacturers background recompute failed:', err);
+    } finally {
+      backgroundRecomputeInFlight = false;
+    }
+  })();
 }
 
 /** Detect a cached payload we shouldn't trust.
@@ -514,6 +557,10 @@ export async function GET(request: NextRequest) {
       if (cached && !looksPoisoned(cached.payload, { includeTriageGap: true })) {
         payload = cached.payload;
         computedAt = cached.computedAt;
+        // SWR: if the row is old, serve it but kick a background recompute so a
+        // recompute that once threw can't leave it stale forever (this route had
+        // no age backstop before).
+        if (isStale(cached.computedAt)) triggerBackgroundRecompute();
       }
     }
 
@@ -541,8 +588,9 @@ export async function GET(request: NextRequest) {
     }
 
     const body = JSON.stringify({ ...payload, cachedAt: computedAt, stale });
-    memCache = { body, cachedAt: computedAt };
-    memCacheTimestamp = Date.now();
+    // Newer-guarded so a slow read of a stale row can't overwrite a fresher
+    // background recompute that already populated L1.
+    setMemCache(body, computedAt);
 
     return new NextResponse(body, {
       headers: { 'Content-Type': 'application/json' },

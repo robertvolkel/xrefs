@@ -45,6 +45,7 @@ import { openSync, readFileSync, existsSync } from 'fs';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createServiceClient } from '@/lib/supabase/service';
 import { invalidateManufacturersListCache } from '@/app/api/admin/manufacturers/route';
+import { invalidateAtlasCache } from '@/app/api/admin/atlas/route';
 
 const STATUS_KEY = 'atlas-backfill-status';
 
@@ -198,14 +199,20 @@ export async function POST(): Promise<NextResponse> {
           logPath,
           exitCode: code,
         });
-        // Refresh the admin manufacturers/coverage stats now that the backfill
-        // re-translated parameters. Use the same SWR helper the proceed/revert
-        // routes use (background recompute that keeps serving the prior payload
-        // until fresh lands) — NOT a synchronous force-refresh, which can hang
-        // under post-burst load and surface "Stats failed to refresh". Only when
-        // something actually changed; a 0-change run leaves coverage untouched.
+        // Refresh the admin stats now that the backfill re-translated parameters.
+        // Invalidate BOTH the Manufacturers list AND the Atlas Coverage caches —
+        // the backfill changes attribute coverage on both pages, and the sibling
+        // write paths (ingest proceed/revert/proceed-all-clean) already invalidate
+        // both. Before this, a backfill never refreshed atlas-coverage, so the
+        // Atlas Coverage page sat stale until its 6h SWR window. Use the SWR
+        // helpers (background recompute that keeps serving the prior payload until
+        // fresh lands) — NOT a synchronous force-refresh, which can hang under
+        // post-burst load. Only when something actually changed; a 0-change run
+        // leaves coverage untouched. (Growth is unaffected — parameters-only
+        // rewrite, no product-count change — so it's intentionally omitted.)
         if ((parsed?.changed ?? 0) > 0) {
           invalidateManufacturersListCache();
+          invalidateAtlasCache();
         }
       } catch (err) {
         console.error('[atlas-backfill] status write failed:', err);

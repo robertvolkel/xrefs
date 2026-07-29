@@ -26,6 +26,15 @@ const MEM_CACHE_TTL_MS = 60_000;
 const SWR_STALE_THRESHOLD_MS = 6 * 60 * 60 * 1000;
 let backgroundRecomputeInFlight = false;
 
+// Advance L1 only when the incoming payload is at least as fresh as what's there
+// (computed_at ISO strings sort chronologically). Stops a slow stale read from
+// clobbering a fresh background recompute that landed first.
+function setMemCache(body: string, cachedAt: string): void {
+  if (memCache && memCache.cachedAt > cachedAt) return;
+  memCache = { body, cachedAt };
+  memCacheTimestamp = Date.now();
+}
+
 export function invalidateAtlasGrowthCache() {
   memCache = null;
   memCacheTimestamp = 0;
@@ -397,6 +406,9 @@ async function computeAndPersist(): Promise<{ payload: AtlasGrowthResponse; comp
   } catch (err) {
     console.error('admin_stats_cache persist failed (atlas-growth):', err);
   }
+  // Populate L1 too so a background recompute updates the hot cache, not just L2.
+  // Body shape must match the GET cache (full payload + cachedAt). Newer-guarded.
+  setMemCache(JSON.stringify({ ...payload, cachedAt: computedAt }), computedAt);
   return { payload, computedAt };
 }
 
@@ -512,8 +524,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const fullPayload: AtlasGrowthResponse = { ...payload, cachedAt: computedAt };
     const body = JSON.stringify(fullPayload);
-    memCache = { body, cachedAt: computedAt };
-    memCacheTimestamp = Date.now();
+    setMemCache(body, computedAt);
 
     return NextResponse.json(sliceForMode(fullPayload, mode));
   } catch (err) {

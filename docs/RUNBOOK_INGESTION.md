@@ -50,7 +50,7 @@ End-to-end workflow for ingesting a new manufacturer's product JSON into Atlas. 
 | Step | Action | When to do it |
 |------|--------|---------------|
 | 13 | Run **`npm run atlas:backfill`** | Only if you accepted overrides during this session that benefit **older, already-applied** batches' products (i.e. MFRs whose products were ingested before today's accepts). Skip if you only worked on today's Pending → Proceed flow. |
-| 14 | Alternative: use **"Refresh from accepts"** button on a specific MFR's admin detail page | Same effect as backfill but scoped to one MFR. Use when you know exactly which MFR needs retranslation. |
+| 14 | Alternative: use the **"Refresh from accepts"** button in the Atlas → Manufacturers panel header | Same effect as `npm run atlas:backfill` — spawns the same script with no MFR filter, so it re-translates **all** manufacturers (it is a global button, not per-MFR). Use it instead of dropping to a terminal. |
 
 ---
 

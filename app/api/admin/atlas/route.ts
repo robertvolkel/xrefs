@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 import { createServiceClient } from '@/lib/supabase/service';
-import { getLogicTable, getAllLogicTables } from '@/lib/logicTables';
+import { getLogicTable } from '@/lib/logicTables';
+import {
+  buildFamilyAttrsPayload,
+  rollupCoverageByManufacturer,
+  computeDataCoveragePct,
+  computeReachPct,
+  type CoverageAggRow,
+} from '@/lib/services/atlasCoverageAggregates';
 
 // ── Cache layering (mirrors /api/admin/manufacturers) ───────
 //
@@ -23,6 +30,16 @@ const CACHE_KEY = 'atlas-coverage';
 let memCache: { body: string; cachedAt: string } | null = null;
 let memCacheTimestamp = 0;
 const MEM_CACHE_TTL_MS = 60_000;
+
+// Advance L1 only when the incoming payload is at least as fresh as what's there
+// (computed_at ISO strings sort chronologically). Stops a slow stale read from
+// clobbering a fresh background recompute that landed first — the race that left
+// L1 serving the pre-invalidate payload for the full TTL.
+function setMemCache(body: string, cachedAt: string): void {
+  if (memCache && memCache.cachedAt > cachedAt) return;
+  memCache = { body, cachedAt };
+  memCacheTimestamp = Date.now();
+}
 
 // If the persistent cache is older than this, serve it (stale-while-revalidate)
 // AND kick off a background recompute. Safety net for writes that don't
@@ -48,22 +65,6 @@ export function invalidateAtlasCache() {
       console.error('invalidateAtlasCache background error:', err);
     }
   })();
-}
-
-/** Build the family → rule-attributeIds map that the SQL RPC consumes.
- *  Static across requests since logic tables ship with the codebase. The
- *  full payload is ~10–20 KB; trivial to send. We pass every supported
- *  family even if only some have products in the DB — the RPC ignores
- *  unused entries via the `family_attrs ? family_id` guard. */
-let familyAttrsCache: Record<string, string[]> | null = null;
-function buildFamilyAttrsPayload(): Record<string, string[]> {
-  if (familyAttrsCache) return familyAttrsCache;
-  const out: Record<string, string[]> = {};
-  for (const table of getAllLogicTables()) {
-    out[table.familyId] = table.rules.map((r) => r.attributeId);
-  }
-  familyAttrsCache = out;
-  return out;
 }
 
 async function computeAtlasCoverage(): Promise<object> {
@@ -170,6 +171,10 @@ async function computeAtlasCoverage(): Promise<object> {
         searchOnlyProducts: 0,
         familiesCovered: 0,
         lastUpdated: null,
+        dataCoveragePct: 0,
+        reachPct: 0,
+        coveredSlots: 0,
+        requiredSlots: 0,
       },
       manufacturers: [],
       familyBreakdown: [],
@@ -198,7 +203,11 @@ async function computeAtlasCoverage(): Promise<object> {
     scorableCount: number;
   }>();
 
-  const mfrCoverage = new Map<string, { totalCovered: number; totalRules: number }>();
+  // Per-MFR + global coverage via the SHARED rollup — the single definition
+  // both admin routes use (see lib/services/atlasCoverageAggregates.ts). The
+  // per-family breakdown (fbCoverage) stays inline below; it's atlas-only and
+  // not duplicated anywhere, so it isn't a drift risk.
+  const coverage = rollupCoverageByManufacturer(aggRows as CoverageAggRow[]);
   const fbCoverage = new Map<string, { totalCovered: number; totalRules: number }>();
 
   const allFamilies = new Set<string>();
@@ -252,15 +261,11 @@ async function computeAtlasCoverage(): Promise<object> {
     fb.count += productCount;
     if (r.family_id) fb.scorableCount += productCount;
 
-    // Coverage rollup — only for scorable rows. The RPC already aggregated
-    // total_covered + total_rules per (mfr, family_id) tuple at the
-    // (category, subcategory) granularity; sum back up.
+    // Per-family coverage rollup — only for scorable rows. (Per-MFR + global
+    // coverage is handled by the shared `coverage` rollup above.) The RPC
+    // already aggregated total_covered + total_rules per (mfr, family_id) tuple
+    // at the (category, subcategory) granularity; sum back up.
     if (r.family_id && totalRules > 0) {
-      let mc = mfrCoverage.get(r.manufacturer);
-      if (!mc) { mc = { totalCovered: 0, totalRules: 0 }; mfrCoverage.set(r.manufacturer, mc); }
-      mc.totalCovered += totalCovered;
-      mc.totalRules += totalRules;
-
       const coverageKey = `${r.manufacturer}::${r.family_id}`;
       let fc = fbCoverage.get(coverageKey);
       if (!fc) { fc = { totalCovered: 0, totalRules: 0 }; fbCoverage.set(coverageKey, fc); }
@@ -271,7 +276,7 @@ async function computeAtlasCoverage(): Promise<object> {
 
   const manufacturers = [...mfrMap.entries()]
     .map(([name, m]) => {
-      const cov = mfrCoverage.get(name);
+      const cov = coverage.byManufacturer.get(name);
       const identity = mfrIdentity.get(name);
       return {
         manufacturer: name,
@@ -328,6 +333,13 @@ async function computeAtlasCoverage(): Promise<object> {
       searchOnlyProducts: totalProducts - scorableProducts,
       familiesCovered: allFamilies.size,
       lastUpdated: globalLastUpdated,
+      // Product-level coverage headline (Decision: unify on per-product). Data =
+      // covered slots / required slots; Reach = classifiable / all products. Raw
+      // slot counts travel too so the tooltip can show live figures.
+      dataCoveragePct: computeDataCoveragePct(coverage.totalCovered, coverage.totalRules),
+      reachPct: computeReachPct(scorableProducts, totalProducts),
+      coveredSlots: coverage.totalCovered,
+      requiredSlots: coverage.totalRules,
     },
     manufacturers,
     familyBreakdown,
@@ -346,6 +358,11 @@ async function computeAndPersist(): Promise<{ payload: object; computedAt: strin
   } catch (err) {
     console.error('admin_stats_cache persist failed:', err);
   }
+  // Populate L1 too — a background recompute (invalidate / SWR) otherwise wrote
+  // only L2, leaving the hot cache serving the pre-recompute payload for the full
+  // TTL. Body shape must match the GET response (payload + cachedAt). Newer-
+  // guarded against a stale read landing afterward.
+  setMemCache(JSON.stringify({ ...payload, cachedAt: computedAt }), computedAt);
   return { payload, computedAt };
 }
 
@@ -368,6 +385,15 @@ async function readPersistentCache(): Promise<{ payload: object; computedAt: str
 
 function isStale(computedAt: string): boolean {
   return Date.now() - new Date(computedAt).getTime() > SWR_STALE_THRESHOLD_MS;
+}
+
+/** True when a cached payload carries the current coverage schema (the Data/Reach
+ *  fields added in Decision #283). A pre-deploy row lacks `summary.dataCoveragePct`;
+ *  treating it as a miss forces a recompute so the first post-deploy read serves
+ *  the new fields — cheaper than versioning CACHE_KEY (referenced by 5 scripts). */
+function hasCoverageSchema(payload: unknown): boolean {
+  const summary = (payload as { summary?: { dataCoveragePct?: unknown } } | null)?.summary;
+  return typeof summary?.dataCoveragePct === 'number';
 }
 
 function triggerBackgroundRecompute() {
@@ -418,7 +444,12 @@ export async function GET(request: NextRequest) {
     // L2: persistent cache (unless force refresh)
     if (!forceRefresh) {
       const cached = await readPersistentCache();
-      if (cached) {
+      // Skip a pre-schema row that predates the Data/Reach coverage fields — the
+      // CACHE_KEY isn't versioned here (it's referenced by several offline
+      // scripts), so instead we treat a row lacking summary.dataCoveragePct as a
+      // miss and recompute. Prevents serving an old row whose missing coveredSlots
+      // would crash AtlasOverviewTab's tooltip for up to the 6h SWR window.
+      if (cached && hasCoverageSchema(cached.payload)) {
         payload = cached.payload;
         computedAt = cached.computedAt;
         // SWR: serve stale, refresh silently in the background
@@ -452,8 +483,7 @@ export async function GET(request: NextRequest) {
     }
 
     const body = JSON.stringify({ ...payload, cachedAt: computedAt });
-    memCache = { body, cachedAt: computedAt };
-    memCacheTimestamp = Date.now();
+    setMemCache(body, computedAt);
 
     return new NextResponse(body, {
       headers: { 'Content-Type': 'application/json' },

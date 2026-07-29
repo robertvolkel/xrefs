@@ -13,12 +13,14 @@ import {
   TableSortLabel,
   Button,
   GlobalStyles,
+  Tooltip,
 } from '@mui/material';
 import PrintOutlinedIcon from '@mui/icons-material/PrintOutlined';
 import { useTranslation } from 'react-i18next';
 import type { ComponentCategory } from '@/lib/types';
 import type { AtlasResponse, AtlasMfr } from './atlasCoverage/types';
 import CacheFreshnessBar from './atlasCoverage/CacheFreshnessBar';
+import { dataCoverageTooltip, reachTooltip } from '@/lib/services/atlasCoverageCopy';
 
 const CATEGORY_BLOCKS: { label: string; categories: ComponentCategory[] }[] = [
   { label: 'Passives', categories: ['Capacitors', 'Resistors', 'Inductors', 'Filters'] },
@@ -214,11 +216,11 @@ export default function AtlasOverviewTab({ data, latestUpdatesSlot, growthChartS
             '.atlas-print-only': {
               display: 'block !important',
             },
-            // KPI tiles: the responsive grid falls back to xs (2 cols) at
-            // Letter width (~720px at 96 DPI). Force 4 cols in print so the
-            // tiles share a single row and page 1 isn't half-empty.
+            // KPI tiles: 6 tiles now (added Data coverage + Reach). Force 3 cols
+            // in print so they pack into two tidy rows and page 1 isn't
+            // half-empty (was 4 cols when there were 4 tiles).
             '.atlas-coverage-kpi-grid': {
-              gridTemplateColumns: 'repeat(4, 1fr) !important',
+              gridTemplateColumns: 'repeat(3, 1fr) !important',
               gap: '8px !important',
             },
             // Category cards: 4-col on screen, but at the smaller print font
@@ -316,7 +318,7 @@ export default function AtlasOverviewTab({ data, latestUpdatesSlot, growthChartS
           className="atlas-coverage-section atlas-coverage-kpi-grid"
           sx={{
             display: 'grid',
-            gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, 1fr)' },
+            gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(3, 1fr)' },
             gap: 2,
             mb: 3,
           }}
@@ -332,6 +334,29 @@ export default function AtlasOverviewTab({ data, latestUpdatesSlot, growthChartS
             value={s.enabledProducts.toLocaleString()}
             subtitle={t('admin.atlasCoverageReport.kpiTotalProductsSub')}
           />
+          {/* Product-level coverage — the SAME numbers the Manufacturers page
+              shows (shared RPC + rollup). Data = data completeness on parts we
+              can score; Reach = share of the catalog we can classify at all.
+              Guarded on dataCoveragePct being a number so a pre-schema cached
+              payload (missing coveredSlots/requiredSlots) can't crash the tooltip;
+              ?? 0 is belt-and-suspenders. */}
+          {typeof s.dataCoveragePct === 'number' && (
+            <KpiTile
+              label={t('admin.atlasCoverageReport.kpiDataCoverage')}
+              value={`${s.dataCoveragePct}%`}
+              subtitle={t('admin.atlasCoverageReport.kpiDataCoverageSub')}
+              tooltip={dataCoverageTooltip(s.coveredSlots ?? 0, s.requiredSlots ?? 0)}
+              accent
+            />
+          )}
+          {typeof s.reachPct === 'number' && (
+            <KpiTile
+              label={t('admin.atlasCoverageReport.kpiReach')}
+              value={`${s.reachPct}%`}
+              subtitle={t('admin.atlasCoverageReport.kpiReachSub')}
+              tooltip={reachTooltip(s.scorableProducts, s.totalProducts)}
+            />
+          )}
           <KpiTile
             label={t('admin.atlasCoverageReport.kpiCategories')}
             value={categoriesWithCoverage.toLocaleString()}
@@ -545,12 +570,29 @@ function KpiTile({
   value,
   subtitle,
   accent,
+  tooltip,
 }: {
   label: string;
   value: string;
   subtitle: string;
   accent?: boolean;
+  tooltip?: string;
 }) {
+  const labelEl = (
+    <Typography
+      variant="caption"
+      color="text.secondary"
+      sx={{
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+        fontWeight: 600,
+        fontSize: '0.65rem',
+        ...(tooltip ? { borderBottom: '1px dotted', borderColor: 'text.disabled', cursor: 'help' } : {}),
+      }}
+    >
+      {label}
+    </Typography>
+  );
   return (
     <Box
       sx={{
@@ -561,9 +603,7 @@ function KpiTile({
         bgcolor: 'background.paper',
       }}
     >
-      <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600, fontSize: '0.65rem' }}>
-        {label}
-      </Typography>
+      {tooltip ? <Tooltip title={tooltip}>{labelEl}</Tooltip> : labelEl}
       <Typography
         variant="h5"
         fontWeight={700}

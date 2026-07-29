@@ -73,7 +73,7 @@ export default function AtlasCoverageDrawer({
   const fetchData = useCallback(() => {
     if (!manufacturer || !familyId) return;
     setLoading(true);
-    fetch(`/api/admin/atlas/coverage?manufacturer=${encodeURIComponent(manufacturer)}&familyId=${encodeURIComponent(familyId)}`)
+    fetch(`/api/admin/atlas/coverage?manufacturer=${encodeURIComponent(manufacturer)}&familyId=${encodeURIComponent(familyId)}`, { cache: 'no-store' })
       .then(r => r.json())
       .then(json => {
         if (json.success) setData(json.data);
