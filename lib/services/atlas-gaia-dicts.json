@@ -22,7 +22,12 @@
     "temperature range (°c)":            { "attributeId": "operating_temp", "attributeName": "Operating Temperature", "unit": "°C", "sortOrder": 90 },
     "temperature range(℃)":              { "attributeId": "operating_temp", "attributeName": "Operating Temperature", "unit": "°C", "sortOrder": 90 },
     "temp range (°c)":                   { "attributeId": "operating_temp", "attributeName": "Operating Temperature", "unit": "°C", "sortOrder": 90 },
-    "operating temperature range(℃)":    { "attributeId": "operating_temp", "attributeName": "Operating Temperature", "unit": "°C", "sortOrder": 90 }
+    "operating temperature range(℃)":    { "attributeId": "operating_temp", "attributeName": "Operating Temperature", "unit": "°C", "sortOrder": 90 },
+    "storage_temperature_range":            { "attributeId": "storage_temp_range", "attributeName": "Storage Temperature Range", "unit": "°C", "sortOrder": 91 },
+    "storage_temperature":                  { "attributeId": "storage_temp_range", "attributeName": "Storage Temperature Range", "unit": "°C", "sortOrder": 91 },
+    "storage_temp":                         { "attributeId": "storage_temp_range", "attributeName": "Storage Temperature Range", "unit": "°C", "sortOrder": 91 },
+    "storage_temp_range":                   { "attributeId": "storage_temp_range", "attributeName": "Storage Temperature Range", "unit": "°C", "sortOrder": 91 },
+    "storage_temperature_ambient":          { "attributeId": "storage_temp_range", "attributeName": "Storage Temperature Range", "unit": "°C", "sortOrder": 91 }
   },
   "families": {
     "B1": {
