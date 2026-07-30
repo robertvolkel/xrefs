@@ -22,7 +22,6 @@ jest.mock('../../lib/supabase/service', () => ({
 }));
 
 declare global {
-  // eslint-disable-next-line no-var
   var __sbMock: SupabaseMock;
 }
 

@@ -18,9 +18,11 @@
  * can render bucket badges without re-querying.
  *
  * Caching (L1+L2+SWR, mirrors /api/admin/atlas):
- *   - L1 in-memory (30 min) + L2 Supabase admin_stats_cache row 'triage-queue'
- *     (persistent, no TTL — invalidation kicks off background recompute that
- *     upserts L2 in place).
+ *   - L1 in-memory (30 sec) + L2 Supabase admin_stats_cache row 'triage-queue'
+ *     (persistent, no TTL). Per-row invalidation marks the L2 row stale and
+ *     kicks off a background recompute that overwrites it; this route serves the
+ *     last-good snapshot immediately via getOrComputeTriageData (never blocks on
+ *     a rebuild except a genuinely cold cache or ?refresh=1).
  *   - SWR threshold (6h) on L2: if older, serve immediately and trigger a
  *     silent recompute. Safety net for invalidations we missed.
  *   - The HEAVY aggregation (queueSourceQuery + dictionary overrides + notes

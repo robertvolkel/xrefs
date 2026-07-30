@@ -22,12 +22,12 @@
  *   - SWR (6h): if L2 is older than this on read, serve it AND kick off a
  *     silent background recompute. Safety net for ingest paths that bypass
  *     the API routes (e.g. CLI scripts) and don't call invalidate.
- *   - Background recompute on invalidation: when invalidate is called, the
- *     L2 DELETE is the durability guarantee. A registered compute (set by
- *     the batches route at module-load) fires async to pre-warm L2 so the
- *     next reader doesn't pay cold-compute cost. If registeredCompute isn't
- *     bound in this module instance (HMR), the next reader sync-computes
- *     and writes L2 — still correct, just ~2-3s slower for that one reader.
+ *   - Background recompute on invalidation: per-row invalidate marks the L2 row
+ *     stale (the shared UPDATE is the cross-process durability guarantee); the
+ *     registered compute (set by the batches route at module-load) fires async
+ *     to pre-warm L2 so the next reader gets fresh data. If registeredCompute
+ *     isn't bound in this module instance (HMR), the next reader still serves
+ *     the stale row immediately and triggers its own recompute — still correct.
  *
  * Process scope:
  *   L1 lives in module memory; each Next.js worker has its own copy. L2 is
@@ -58,7 +58,8 @@ const L2_CACHE_KEY = 'triage-queue';
 // L1, leaving accepted rows visible for hours). With a 30-second TTL, even
 // if invalidation misses a fragmented L1, staleness bounds to 30s. L1 is
 // now strictly a burst-absorption layer, not a durability layer — L2 is the
-// source of truth and is cleared cross-process via DELETE on invalidate.
+// source of truth, marked stale cross-process via UPDATE on per-row invalidate
+// (or DELETEd by the guaranteed-fresh batch-state variant).
 const MEM_CACHE_TTL_MS = 30 * 1000;             // 30 sec
 const SWR_STALE_THRESHOLD_MS = 6 * 60 * 60 * 1000; // 6 hours
 // Sentinel computed_at used to MARK the cached row stale WITHOUT deleting it
