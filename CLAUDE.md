@@ -377,7 +377,7 @@ Contains 31 `.docx` files — one per base component family — defining the cro
 
 Also: `application-context-attribute-map.md` — comprehensive guide mapping families to context questions with effects.
 
-See [docs/DECISIONS.md](docs/DECISIONS.md) — an **index** of all architectural decisions (full text in flat archives `docs/DECISIONS_001-099.md` / `docs/DECISIONS_100-199.md` / `docs/DECISIONS_200-284.md`) — and [docs/BACKLOG.md](docs/BACKLOG.md) for known gaps (finished items live in `docs/BACKLOG_DONE.md`).
+See [docs/DECISIONS.md](docs/DECISIONS.md) — an **index** of all architectural decisions (full text in flat archives `docs/DECISIONS_001-099.md` / `docs/DECISIONS_100-199.md` / `docs/DECISIONS_200-285.md`) — and [docs/BACKLOG.md](docs/BACKLOG.md) for known gaps (finished items live in `docs/BACKLOG_DONE.md`).
 
 **Doc lifecycle** — keeps these files from re-saturating; full policy in [docs/KNOWLEDGE_DOCS_STRATEGY.md](docs/KNOWLEDGE_DOCS_STRATEGY.md). Three shelves by how often each is needed: Shelf 1 always-loaded (`CLAUDE.md` + `MEMORY.md`, budgeted), Shelf 2 on-demand topic docs, Shelf 3 flat top-level archives. **Demote, don't delete.** After any doc edit run `npm run docs:check` (`scripts/check-claude-md-facts.mjs`) — it proves every hard fact from the pinned CLAUDE.md baseline is still reachable in `CLAUDE.md` + `docs/*.md`; archives MUST be flat `docs/*.md` because that corpus is non-recursive. A superseded decision moves to the archive in the same commit that supersedes it; finished backlog items move to `docs/BACKLOG_DONE.md`.
 
