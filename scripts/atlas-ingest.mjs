@@ -344,6 +344,12 @@ const SHARED_PARAMS = {
   '温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
   'operating temperature range': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
   'operating temperature range (°c)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
+  // Storage temperature — display-only. Mirrors sharedParamDictionary in
+  // lib/services/atlasMapper.ts per Decision #174. Gaia-prefixed spellings live in
+  // the shared block of atlas-gaia-dicts.json; these are the raw non-gaia names.
+  'storage temperature range': { attributeId: 'storage_temp_range', attributeName: 'Storage Temperature Range', unit: '°C', sortOrder: 16 },
+  'storage temperature': { attributeId: 'storage_temp_range', attributeName: 'Storage Temperature Range', unit: '°C', sortOrder: 16 },
+  'storage temp': { attributeId: 'storage_temp_range', attributeName: 'Storage Temperature Range', unit: '°C', sortOrder: 16 },
   '电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 17 },
 };
 

@@ -215,7 +215,9 @@ describe('golden file — real models through the real mapper', () => {
   it('records a KNOWN DEFECT: a range value yields numericValue NaN, not null', () => {
     // FOUND BY THIS GOLDEN FILE, on its first run against a new fixture.
     //
-    // `storage_temperature` = "–55 to 125 ℃" is a RANGE written with an EN DASH.
+    // `storage_temp_range` (the display-only Storage Temperature attribute the gaia
+    // `storage_temperature` stem now maps to) = "–55 to 125 ℃" is a RANGE written
+    // with an EN DASH.
     // The numeric parser can't reduce it to one number and returns NaN rather
     // than null. Measured breadth before reporting it: 3 occurrences in 365,726
     // mapped parameters across the first 40 source files (0.0008%), all of them
@@ -237,8 +239,8 @@ describe('golden file — real models through the real mapper', () => {
       string,
       { numericValue: unknown; value: string }
     >;
-    expect(params.storage_temperature.value).toBe('–55 to 125 ℃');
-    expect(params.storage_temperature.numericValue).toBe('__NaN__');
+    expect(params.storage_temp_range.value).toBe('–55 to 125 ℃');
+    expect(params.storage_temp_range.numericValue).toBe('__NaN__');
   });
 
   it('accounts for every source parameter — mapped, unmapped, or deliberately skipped', () => {

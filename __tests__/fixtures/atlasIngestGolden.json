@@ -1212,10 +1212,10 @@
         "value": "1.116 V",
         "numericValue": 1.116
       },
-      "storage_temperature": {
+      "storage_temp_range": {
         "value": "–55 to 125 ℃",
         "numericValue": "__NaN__",
-        "unit": "℃"
+        "unit": "°C"
       },
       "supply_current-Typical": {
         "value": "10",
@@ -2141,12 +2141,6 @@
         "paramName": "gaia-schmitt_trigger_low_level-Typical",
         "sampleValue": "0.957 V",
         "attributeId": "schmitt_trigger_low_level-Typical",
-        "kind": "gaia"
-      },
-      {
-        "paramName": "gaia-storage_temperature-Max",
-        "sampleValue": "–55 to +125 ℃",
-        "attributeId": "storage_temperature",
         "kind": "gaia"
       },
       {

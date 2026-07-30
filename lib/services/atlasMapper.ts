@@ -2338,6 +2338,12 @@ const sharedParamDictionary: Record<string, AtlasParamMapping> = {
   '温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
   'operating temperature range': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
   'operating temperature range (°c)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
+  // Storage temperature — display-only (no logic-table rule except D1 crystals, where
+  // it feeds a non-blocking application_review). Captured, never scored. Gaia-prefixed
+  // spellings live in the shared block of atlas-gaia-dicts.json; these are the raw names.
+  'storage temperature range': { attributeId: 'storage_temp_range', attributeName: 'Storage Temperature Range', unit: '°C', sortOrder: 16 },
+  'storage temperature': { attributeId: 'storage_temp_range', attributeName: 'Storage Temperature Range', unit: '°C', sortOrder: 16 },
+  'storage temp': { attributeId: 'storage_temp_range', attributeName: 'Storage Temperature Range', unit: '°C', sortOrder: 16 },
   '电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 17 },
 };
 
