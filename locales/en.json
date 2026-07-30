@@ -761,6 +761,8 @@
     "date": "Date",
     "user": "User",
     "sourceMpn": "Source MPN",
+    "sourceManufacturer": "Manufacturer",
+    "chineseManufacturer": "Chinese manufacturer",
     "family": "Family",
     "recs": "Recs",
     "source": "Source",

@@ -24,6 +24,7 @@ import {
   Menu,
   MenuItem,
   Autocomplete,
+  Tooltip,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import FlagIcon from '@mui/icons-material/Flag';
@@ -177,6 +178,7 @@ export default function QcLogsTab() {
     { id: 'created_at', label: t('adminQc.date'), sortable: true },
     { id: 'user', label: t('adminQc.user'), sortable: false },
     { id: 'source_mpn', label: t('adminQc.sourceMpn'), sortable: true },
+    { id: 'source_manufacturer', label: t('adminQc.sourceManufacturer'), sortable: true },
     { id: 'family_name', label: t('adminQc.family'), sortable: true },
     { id: 'recommendation_count', label: t('adminQc.recs'), sortable: true, align: 'center' as const },
     { id: 'request_source', label: t('adminQc.source'), sortable: true },
@@ -213,8 +215,13 @@ export default function QcLogsTab() {
                   {selectedLog.sourceMpn}
                 </Typography>
                 {selectedLog.sourceManufacturer && (
-                  <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.78rem' }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center' }}>
                     {selectedLog.sourceManufacturer}
+                    {selectedLog.sourceMfrOrigin === 'atlas' && (
+                      <Tooltip title={t('adminQc.chineseManufacturer')} arrow>
+                        <Box component="span" sx={{ ml: 0.5, fontSize: 11, verticalAlign: 'middle', lineHeight: 1 }}>&#127464;&#127475;</Box>
+                      </Tooltip>
+                    )}
                   </Typography>
                 )}
                 <Chip label={selectedLog.requestSource} size="small" variant="outlined" sx={{ height: 20, fontSize: '0.65rem' }} />
@@ -503,6 +510,18 @@ export default function QcLogsTab() {
                   </TableCell>
                   <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.78rem', fontWeight: 500 }}>
                     {log.sourceMpn}
+                  </TableCell>
+                  <TableCell sx={{ fontSize: '0.78rem' }}>
+                    {log.sourceManufacturer ? (
+                      <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center' }}>
+                        {log.sourceManufacturer}
+                        {log.sourceMfrOrigin === 'atlas' && (
+                          <Tooltip title={t('adminQc.chineseManufacturer')} arrow>
+                            <Box component="span" sx={{ ml: 0.5, fontSize: 11, verticalAlign: 'middle', lineHeight: 1 }}>&#127464;&#127475;</Box>
+                          </Tooltip>
+                        )}
+                      </Box>
+                    ) : '—'}
                   </TableCell>
                   <TableCell sx={{ fontSize: '0.75rem' }}>
                     {log.familyName || '—'}

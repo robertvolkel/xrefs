@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
 import { RecommendationLogEntry, FeedbackStatus } from '@/lib/types';
+import { resolveManufacturerAlias } from '@/lib/services/manufacturerAliasResolver';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
@@ -60,7 +61,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     // Dynamic sort with whitelist
-    const allowedSorts = ['created_at', 'source_mpn', 'family_name', 'recommendation_count', 'request_source', 'data_source'];
+    const allowedSorts = ['created_at', 'source_mpn', 'source_manufacturer', 'family_name', 'recommendation_count', 'request_source', 'data_source'];
     const column = allowedSorts.includes(sortBy) ? sortBy : 'created_at';
     query = query
       .order(column, { ascending: sortDir === 'asc' })
@@ -121,15 +122,42 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       }
     }
 
+    // Resolve Chinese (atlas) vs Western origin per unique source manufacturer name.
+    // Mirrors getRecommendations()'s per-MFR mfrOrigin resolution (Decision #161);
+    // the alias resolver is cached (5-min L1 + L2), so this is cheap for a page of rows.
+    const mfrOriginMap = new Map<string, 'atlas' | 'western'>();
+    const uniqueMfrNames = [
+      ...new Set(
+        (logs ?? [])
+          .map((l: Record<string, unknown>) => (l.source_manufacturer as string | undefined)?.trim())
+          .filter((n): n is string => !!n),
+      ),
+    ];
+    await Promise.all(
+      uniqueMfrNames.map(async (name) => {
+        try {
+          const match = await resolveManufacturerAlias(name);
+          if (match?.source === 'atlas' || match?.source === 'western') {
+            mfrOriginMap.set(name.toLowerCase(), match.source);
+          }
+        } catch {
+          // Origin lookup is best-effort — a failure just means no flag,
+          // never a broken logs page.
+        }
+      }),
+    );
+
     // Map to typed entries
     const items: RecommendationLogEntry[] = (logs ?? []).map((row: Record<string, unknown>) => {
       const profile = profileMap.get(row.user_id as string);
       const fbCount = feedbackCounts.get(row.id as string) ?? 0;
+      const mfrName = (row.source_manufacturer as string | undefined)?.trim();
       return {
         id: row.id as string,
         userId: row.user_id as string,
         sourceMpn: row.source_mpn as string,
         sourceManufacturer: row.source_manufacturer as string | undefined,
+        sourceMfrOrigin: mfrName ? mfrOriginMap.get(mfrName.toLowerCase()) : undefined,
         familyId: row.family_id as string | undefined,
         familyName: row.family_name as string | undefined,
         recommendationCount: row.recommendation_count as number,

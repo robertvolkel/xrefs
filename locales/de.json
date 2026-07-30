@@ -504,6 +504,8 @@
     "date": "Datum",
     "user": "Benutzer",
     "sourceMpn": "Quell-MPN",
+    "sourceManufacturer": "Hersteller",
+    "chineseManufacturer": "Chinesischer Hersteller",
     "family": "Familie",
     "recs": "Empf.",
     "source": "Quelle",

@@ -1525,6 +1525,8 @@ export interface RecommendationLogEntry {
   userId: string;
   sourceMpn: string;
   sourceManufacturer?: string;
+  /** Chinese (atlas) vs Western origin of the source manufacturer, resolved at read time. */
+  sourceMfrOrigin?: 'atlas' | 'western';
   familyId?: string;
   familyName?: string;
   recommendationCount: number;

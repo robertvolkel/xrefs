@@ -677,6 +677,8 @@
     "date": "日期",
     "user": "用户",
     "sourceMpn": "源MPN",
+    "sourceManufacturer": "制造商",
+    "chineseManufacturer": "中国制造商",
     "family": "系列",
     "recs": "推荐数",
     "source": "来源",
