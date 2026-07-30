@@ -3965,6 +3965,16 @@ export function fromParametersJsonb(
     }
   }
 
+  // 3a. Gaia shared dictionary — registers display names for gaia-shared-only
+  //     attributeIds (e.g. op_storage_temp, storage_temp_range) that have no
+  //     logic-table rule and aren't in the standard shared dict, so they render
+  //     with their proper label instead of a humanized id.
+  for (const entry of Object.values(gaiaSharedDictionary)) {
+    if (!nameLookup.has(entry.attributeId)) {
+      nameLookup.set(entry.attributeId, { name: entry.attributeName, sortOrder: entry.sortOrder ?? 50 });
+    }
+  }
+
   // 3b. Metadata dictionary — compliance / export-control / regulatory.
   // Registered in nameLookup so legacy rows whose JSONB still has raw English
   // keys (e.g. `rohs`, `eccn`) get canonical names AND so the metadata-skip
