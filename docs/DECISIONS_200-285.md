@@ -1,6 +1,6 @@
-# Architectural Decisions — Archive (Decisions 200–284)
+# Architectural Decisions — Archive (Decisions 200–285)
 
-> Full text of decisions 200–284. The index lives in [docs/DECISIONS.md](DECISIONS.md).
+> Full text of decisions 200–285. The index lives in [docs/DECISIONS.md](DECISIONS.md).
 > Historical record — some entries here are superseded by later decisions.
 
 ## Decision #200 — Coverage Repair Workflow: Matching Impact + Per-MFR Drilldown + One-Click Backfill (May 23, 2026)
@@ -3365,3 +3365,31 @@ Deploy-proof, and unchanged everywhere else: `mapModel`/dictionaries/classifier 
 - The **27 preserved** are exactly the would-be-lossy cases (SEMBO drops `ipp/vbr/vc`; UMW `height/mounting_style`; SUMIDA `mounting_type`; AK `BZT52C*` Zeners drop a min/max band via dict drift) — the guard keeps the richer stored row. **Zero products lose a value.** 3,759 tests pass; golden unchanged; baseline 85 lint / 92 type.
 
 **Honest limits.** (a) The guard is conservative: it can skip a legitimate canonical rename when it happens to come bundled with a key-count reduction (~21 AK Zeners keep older attribute IDs) — no data loss, no regression vs the current frozen state, just a non-improvement that the file-with-richest-model path couldn't apply on the server anyway (files gone). (b) Reading `atlas_raw` for ~417K rows is heavier than reading local files, so a full run is somewhat slower — acceptable for a backgrounded admin job with a live progress bar. Scope decision (confirmed with the user): **a reliable button, not automation** — the user still clicks "Refresh from accepts" when they want to apply accepts; it just stops failing.
+
+## Decision #285 — Mapping Triage ~60s load: a near-linear clustering rewrite + serve-stale cache (July 29, 2026)
+
+**Symptom.** Opening the Mapping Triage page (`/admin` → Atlas Dictionary Triage) took almost a minute, every time — worst right after accepting a mapping.
+
+**Diagnosis was MEASURED, not reasoned** (isolated prod build on a spare port + a throwaway timing route, against live data: 457 batches, 26,221 params). Split of a cold load:
+
+| Phase | Time |
+|---|---|
+| DB reads (`get_triage_unmapped_aggregate` RPC + overrides + notes) | ~2.0s |
+| parse + round2 (admin names, MFR slugs) | ~0.1s |
+| classification (`detectForeignFamilyWithList` over 26k rows) | ~0.1s |
+| **`computeSimilarSiblings` — the "+N similar" clustering** | **~16.3–16.9s** |
+| `queryTriage` (filter/sort/slice) | ~0.02s |
+| client render (100 rows) | ~0.4s |
+| **total blocking server rebuild** | **~18.7s** |
+
+This overturned the initial hypothesis (the DB query) — the RPC is only ~2s. The bottleneck was one function, `computeSimilarSiblings` ([lib/services/triageClustering.ts](../lib/services/triageClustering.ts)): a Pass-2 fuzzy near-duplicate merge that compared **every group against every other group** calling `isFuzzyMatch` (Levenshtein-≤1) — O(groups²) per override scope. And this ~18.7s rebuild reran on **every** post-mutation load, because per-row invalidation **deleted** the cached list and the read path started its **own** synchronous rebuild (not even awaiting the background pre-warm — a double-compute). In production that ~18.7s single-compute, plus CPU contention from the double-compute, read as ~60s.
+
+**Fix A — `computeSimilarSiblings` made near-linear (byte-identical output).** Pass 1 now uses a per-scope `Map<normKey, Group>` (was a per-row linear `arr.find`). Pass 2 uses a **deletion-neighborhood (SymSpell) index**: two ASCII keys of length ≥5 are Levenshtein-≤1 iff they share a "delete-one-character" variant, so each group is indexed by `{normKey} ∪ {its 1-char deletions}` and a source probes only its own `{normKey} ∪ deletions` — matching is near-linear regardless of how key lengths cluster. The winning target is the earliest-`idx` unmerged verified match, which is exactly the old "first viable target in insertion order wins."
+
+> **A measured mis-step worth recording:** the FIRST attempt was **length-bucketing** (only compare groups of length {L-1,L,L+1}, since `isFuzzyMatch` rejects `|Δlen|>1`). It was measured **ineffective — still ~17s** — because a scope's param keys share a narrow length band, so the ±1 buckets still contained most of the scope (and the added per-source sort made it marginally worse). Reasoning about algorithmic constants over an unknown data distribution is unreliable; each optimization was measured, not assumed. The SymSpell index then dropped Pass 2 from **16,863ms → ~300ms**, and full compute from **~18.7s → ~2.2s** (now DB-bound). Output parity is guarded by a **differential test** that runs a frozen copy of the old O(n²) algorithm against the new one over a large deterministic fixture, plus order-sensitivity and length-edge cases — all mutation-verified to FAIL if the bucket range or the idx-order tie-break is broken.
+
+**Fix B — never block the interactive load (serve-stale).** Per-row `invalidateTriageQueueCache` ([lib/services/triageQueueCache.ts](../lib/services/triageQueueCache.ts)) now **marks the L2 row stale** (backdates `computed_at` to the epoch sentinel) instead of deleting it, so the next reader gets `source='l2-stale'` — serves the last-good snapshot immediately + background-recomputes. The batches route ([app/api/admin/atlas/ingest/batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts)) reads via the existing `getOrComputeTriageData()`, which serves-stale and single-flights the compute (fixing the old double-compute; a genuinely cold cache still computes once, now ~2.2s). Cross-worker durability is preserved (an UPDATE to the shared row is as visible as the old DELETE; the acting user is covered by client-side optimistic UI). **`invalidateTriageQueueCacheAndAwaitFresh` (batch-state mutations) still hard-DELETEs + awaits a fresh recompute** — its guaranteed-fresh contract (the Sunlord case, Decision #198 lineage) must not converge with mark-stale; a new cache test pins this.
+
+**No schema change, no cache-version bump** (payload shape unchanged). New tests: `__tests__/services/triageQueueCache.test.ts` (mark-stale vs. guaranteed-fresh vs. single-flight) and three new cases in `triageClustering.test.ts`. Full suite 3767 passing; ratchet unchanged (85 lint / 92 type).
+
+**Honest limits.** Fix B makes the page load instant; Fix A makes the underlying rebuild (and every background recompute) ~2.2s so it no longer strains the server. The remaining ~2s cold-compute is DB-bound (the aggregate RPC); it was not optimized further because serve-stale means the interactive load rarely pays it.

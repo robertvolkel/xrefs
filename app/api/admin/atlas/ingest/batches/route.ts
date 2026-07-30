@@ -37,9 +37,8 @@ import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createServiceClient } from '@/lib/supabase/service';
 import type { IngestBatch, IngestRisk, IngestStatus } from '@/lib/services/atlasIngestService';
 import {
-  readCachedTriageData,
+  getOrComputeTriageData,
   writeCachedTriageData,
-  triggerBackgroundRecompute,
 } from '@/lib/services/triageQueueCache';
 import {
   computeTriageAggregation,
@@ -237,14 +236,32 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     let cachedTriageCounts: { synonyms: number; autoFlagged: number; total: number };
     let cachedStatusCounts: { open: number; accepted: number; undone: number; deferred: number; unmappable: number };
 
-    const cacheResult = await readCachedTriageData(forceFresh);
-    if (cacheResult) {
-      classified = cacheResult.data.classified as Classified[];
-      cachedTriageCounts = cacheResult.data.triageCounts;
+    if (forceFresh) {
+      // Explicit Refresh button (?refresh=1) — force a synchronous fresh compute
+      // and rewrite the cache.
+      const fresh = await computeTriageAggregation();
+      void writeCachedTriageData(fresh).catch(() => {});
+      classified = fresh.classified;
+      cachedTriageCounts = fresh.triageCounts;
+      cachedStatusCounts = fresh.statusCounts;
+    } else {
+      // Normal load — NEVER block on a rebuild. getOrComputeTriageData serves
+      // L1/L2 immediately; on l2-stale (the branch a per-row invalidation now
+      // marks the row into) it serves the last-good snapshot AND kicks a
+      // background recompute; only a GENUINELY cold cache computes synchronously,
+      // and even then it single-flights (awaiting an in-flight recompute rather
+      // than starting a redundant second — fixes the old double-compute).
+      const cached = await getOrComputeTriageData();
+      // Compute is registered in this module (it imports triageQueueCompute), so
+      // null means the compute threw — preserve the prior 500 rather than serve
+      // an empty queue.
+      if (!cached) throw new Error('triage aggregation unavailable');
+      classified = cached.classified as Classified[];
+      cachedTriageCounts = cached.triageCounts;
       // L2-migration safety: pre-deploy cached entries lack deferred /
       // unmappable. Recompute them from the cached classified set instead
       // of waiting for SWR refresh — keeps chip counts honest immediately.
-      const rawCounts = cacheResult.data.statusCounts as Partial<typeof cachedStatusCounts>;
+      const rawCounts = cached.statusCounts as Partial<typeof cachedStatusCounts>;
       cachedStatusCounts = {
         open: rawCounts.open ?? 0,
         accepted: rawCounts.accepted ?? 0,
@@ -252,21 +269,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         deferred: rawCounts.deferred ?? classified.filter(isDeferred).length,
         unmappable: rawCounts.unmappable ?? classified.filter(isUnmappable).length,
       };
-      // SWR: serve stale L2 immediately, refresh in background. The
-      // recompute upserts L2 when finished; next request gets fresh data.
-      if (cacheResult.source === 'l2-stale') {
-        triggerBackgroundRecompute();
-      }
-    } else {
-      // Fully cold cache (first load post-deploy or after explicit purge).
-      // Compute synchronously — post-Supabase-upgrade (May 21, 2026, Decision
-      // #194) this runs in ~1s; the prior 30-90s pathology was a Free-tier
-      // Nano-compute symptom, not an RPC algorithmic issue.
-      const fresh = await computeTriageAggregation();
-      void writeCachedTriageData(fresh).catch(() => {});
-      classified = fresh.classified;
-      cachedTriageCounts = fresh.triageCounts;
-      cachedStatusCounts = fresh.statusCounts;
     }
 
     // ── Aggregate counters (per-request, depend on the visible batch list) ─

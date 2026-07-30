@@ -6,11 +6,16 @@
  * and /api/admin/atlas/growth (atlas-growth).
  *
  * Why this layering (May 2026 redesign — see Decision #198):
- *   - L2 is the SOURCE OF TRUTH. Invalidation DELETEs the L2 row, which is
- *     visible to every Next.js module instance + worker on next read. This
- *     fixed a dev-mode HMR fragility where one module instance's L1 wipe
- *     couldn't clear another instance's L1, leaving accepted Triage rows
- *     visible for up to 30 min after Accept.
+ *   - L2 is the SOURCE OF TRUTH. Per-row invalidation MARKS the L2 row stale
+ *     (backdates computed_at) rather than deleting it (July 2026 — Triage load
+ *     fix): the next reader then serves the last-good snapshot immediately +
+ *     background-recomputes, instead of a cold miss forcing a synchronous
+ *     rebuild on the interactive load right after an Accept. The UPDATE is just
+ *     as cross-worker-visible as the old DELETE, so it still fixes the dev-mode
+ *     HMR fragility where one module instance's L1 wipe couldn't clear another
+ *     instance's L1 (accepted rows stuck visible for up to 30 min). Batch-state
+ *     invalidation (invalidateTriageQueueCacheAndAwaitFresh) still hard-DELETEs
+ *     + awaits a fresh recompute, because it needs guaranteed-fresh semantics.
  *   - L1 (30 sec) is a tiny burst-absorption layer. Stale L1 in a fragmented
  *     instance now self-heals within seconds rather than the prior 30-min
  *     TTL — staleness is bounded, not unbounded.
@@ -56,6 +61,11 @@ const L2_CACHE_KEY = 'triage-queue';
 // source of truth and is cleared cross-process via DELETE on invalidate.
 const MEM_CACHE_TTL_MS = 30 * 1000;             // 30 sec
 const SWR_STALE_THRESHOLD_MS = 6 * 60 * 60 * 1000; // 6 hours
+// Sentinel computed_at used to MARK the cached row stale WITHOUT deleting it
+// (per-row invalidation). Any timestamp older than SWR_STALE_THRESHOLD_MS forces
+// readCachedTriageData → source='l2-stale'; the Unix epoch is unambiguously a
+// manual stale-mark (never a real compute time) to anyone inspecting the row.
+const STALE_SENTINEL_ISO = new Date(0).toISOString();
 
 let memCache: CachedTriageData | null = null;
 
@@ -176,24 +186,35 @@ function startRecompute(reason: 'invalidate' | 'swr' | 'cold'): void {
  *  running, which may have started BEFORE your DB commit and miss your
  *  changes. Use invalidateTriageQueueCacheAndAwaitFresh() instead. */
 export async function invalidateTriageQueueCache(): Promise<void> {
-  // Local L1 wipe (this module instance only — dev-HMR-safe, see below).
+  // Local L1 wipe (this module instance only) — forces this worker to re-read
+  // L2 (now stale) rather than serve its fresh in-process copy for up to 30s.
   memCache = null;
-  // L2 wipe — the durability fix. DELETE on a shared Supabase row is visible
-  // to every module instance in every Next.js worker on next read. Without
-  // this, dev-mode HMR fragmentation left the queue route's L1 stuck with
-  // pre-accept data for up to 30 min while the dictionaries route happily
-  // cleared its own local copy (May 2026 incident).
+  // L2 MARK-STALE (was a DELETE). We backdate computed_at to the epoch sentinel
+  // instead of deleting the row so the next reader gets source='l2-stale' and
+  // serves the LAST-GOOD snapshot IMMEDIATELY while a background recompute
+  // refreshes it — instead of a cold miss that forced the next interactive load
+  // to synchronously rebuild the whole queue right after an Accept. Preserves
+  // the Decision #198 cross-worker durability: an UPDATE to the shared row is
+  // visible to every module instance / worker on next read, exactly like the old
+  // DELETE, so staleness is still bounded to one recompute cycle. The acting user
+  // is covered by client-side optimistic UI; other readers tolerate a few seconds
+  // of stale L2. UPDATE-only (no upsert): if the row is physically absent we do
+  // NOT resurrect an empty-payload row — a no-match UPDATE is a harmless no-op and
+  // the next reader cold-computes once.
   try {
     const supabase = createServiceClient();
-    await supabase.from('admin_stats_cache').delete().eq('key', L2_CACHE_KEY);
+    await supabase
+      .from('admin_stats_cache')
+      .update({ computed_at: STALE_SENTINEL_ISO })
+      .eq('key', L2_CACHE_KEY);
   } catch (err) {
-    // Non-fatal — short L1 TTL (30s) bounds staleness even if the DELETE fails.
-    console.error('triage cache L2 delete failed:', err);
+    // Non-fatal — short L1 TTL (30s) bounds staleness even if this fails.
+    console.error('triage cache L2 mark-stale failed:', err);
   }
   // Kick a background recompute so the next reader doesn't pay the cold compute.
-  // Best-effort; if registeredCompute isn't bound in this module instance
-  // (HMR), the next read just computes synchronously — still correct, just
-  // ~2-3s slower for that one reader.
+  // Best-effort, single-flight; if registeredCompute isn't bound in this module
+  // instance (HMR), the mark-stale alone still makes the next reader serve-stale
+  // and trigger its own recompute — still correct.
   startRecompute('invalidate');
 }
 
