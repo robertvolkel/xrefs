@@ -2704,6 +2704,22 @@ export function effectiveUnit(parsedUnit: string | undefined, dictUnit: string |
   return parsedUnit || dictUnit;
 }
 
+// On-resistance recognizer patterns (B5 MOSFET rds_on). rds_on is a weight-9 lte
+// rule, so a guessed unit is a 1000× error. These identify on-resistance param NAMES
+// and the unit written INSIDE the name (mΩ / Ω). See the recognizer block in mapModel
+// (and its byte-for-byte mirror in scripts/atlas-ingest.mjs). Check mΩ BEFORE Ω —
+// 'mΩ' also contains 'Ω'.
+export const RDS_ON_NAME_RE = /导通电阻|rds\s*\(?on\)?|rdson/i;
+export const RDS_ON_UNIT_MOHM_RE = /m\s*Ω|milliohm|mohm/i;
+export const RDS_ON_UNIT_OHM_RE = /Ω|ohm/i;
+
+// Display names for attributeIds emitted by code recognizers (not present in any
+// dict or logic table). fromParametersJsonb seeds these into its name lookup so they
+// render cleanly instead of a humanized id. These ids have NO logic rule (display-only).
+export const RECOGNIZER_DISPLAY_NAMES: Record<string, string> = {
+  rds_on_unverified: 'On-Resistance (unverified unit)',
+};
+
 /**
  * Checks if a raw value is a "missing" placeholder.
  *
@@ -3665,6 +3681,52 @@ export function mapAtlasModel(
       continue;
     }
 
+    // ── On-resistance recognizer (B5 MOSFETs) — unit-safe rds_on ──────────
+    // rds_on is a weight-9 lte rule; a wrong unit is a 1000× error. Chinese/vendor
+    // on-resistance columns write the unit inconsistently: in the value ("80mΩ"), in
+    // the param NAME only ("RDS(on)(mΩ)"), or NOWHERE (a bare "4"). Score ONLY when the
+    // unit is explicitly known (value wins, then name); otherwise route to the
+    // display-only `rds_on_unverified`, which no rule scores. This separation is
+    // load-bearing: matchingEngine.getNumeric() re-parses digits from the value string
+    // when numericValue is absent, so a "parked" value must live under an attributeId
+    // with NO rule — not under rds_on with a blanked number.
+    // Mirror: scripts/atlas-ingest.mjs (keep in lockstep).
+    if (classification.familyId === 'B5' && RDS_ON_NAME_RE.test(lowerName)) {
+      const { numericValue: rdsNum, parsedUnit: rdsValUnit } = extractNumericWithPrefix(p.value.trim());
+      const rdsNameUnit = RDS_ON_UNIT_MOHM_RE.test(p.name) ? 'mΩ'
+        : RDS_ON_UNIT_OHM_RE.test(p.name) ? 'Ω' : undefined;
+      const rdsUnit = effectiveUnit(rdsValUnit, rdsNameUnit); // value wins, else name
+      if (rdsUnit) {
+        // Unit explicitly known → scored rds_on, normalized to base Ω.
+        if (seenAttributeIds.has('rds_on')) { keepLosingValue(decodedName, p.value, 'rds_on'); continue; }
+        seenAttributeIds.add('rds_on');
+        parameters.push({
+          parameterId: 'rds_on',
+          parameterName: 'On-State Resistance (Rds(on))',
+          value: p.value.trim(),
+          // Bit-exact scaling (matches the rescue path / Decision #280): mΩ → ×10⁻³ by
+          // decimal-shift, not float multiply (9 mΩ → 0.009 exactly, not 0.009000…1). Ω unchanged.
+          numericValue: rdsNum === undefined ? undefined
+            : RDS_ON_UNIT_MOHM_RE.test(rdsUnit) ? scaleByExponent(rdsNum, -3) : rdsNum,
+          unit: rdsUnit,
+          sortOrder: 12,
+        });
+      } else {
+        // Unit unknown (bare value + unit-less name) → display-only, NEVER scored.
+        if (seenAttributeIds.has('rds_on_unverified')) { keepLosingValue(decodedName, p.value, 'rds_on_unverified'); continue; }
+        seenAttributeIds.add('rds_on_unverified');
+        parameters.push({
+          parameterId: 'rds_on_unverified',
+          parameterName: 'On-Resistance (unverified unit)',
+          value: p.value.trim(),
+          numericValue: undefined,
+          unit: undefined,
+          sortOrder: 12,
+        });
+      }
+      continue;
+    }
+
     // ── Standard dictionary lookup (Chinese + English) ───────
     // Metadata dict is the third fallback: it normalizes regulatory/compliance
     // keys (rohs, eccn, etc.) to canonical attributeIds so they're stored
@@ -3973,6 +4035,11 @@ export function fromParametersJsonb(
     if (!nameLookup.has(entry.attributeId)) {
       nameLookup.set(entry.attributeId, { name: entry.attributeName, sortOrder: entry.sortOrder ?? 50 });
     }
+  }
+
+  // 3a2. Code-recognizer display names (e.g. rds_on_unverified) — not in any dict.
+  for (const [id, name] of Object.entries(RECOGNIZER_DISPLAY_NAMES)) {
+    if (!nameLookup.has(id)) nameLookup.set(id, { name, sortOrder: 12 });
   }
 
   // 3b. Metadata dictionary — compliance / export-control / regulatory.

@@ -2639,6 +2639,12 @@ function effectiveUnit(parsedUnit, dictUnit) {
   return parsedUnit || dictUnit;
 }
 
+// On-resistance recognizer patterns (B5 MOSFET rds_on). Mirror of atlasMapper.ts.
+// rds_on is a weight-9 lte rule → a guessed unit is a 1000× error. Check mΩ BEFORE Ω.
+const RDS_ON_NAME_RE = /导通电阻|rds\s*\(?on\)?|rdson/i;
+const RDS_ON_UNIT_MOHM_RE = /m\s*Ω|milliohm|mohm/i;
+const RDS_ON_UNIT_OHM_RE = /Ω|ohm/i;
+
 function isMissing(value) {
   const t = value.trim();
   return t === '-' || t === '/' || t === '' || t === 'N/A' || t === 'n/a';
@@ -2981,6 +2987,35 @@ function mapModel(model, manufacturerName, sourceFile) {
         ...(gaiaNumConverted !== undefined && { numericValue: gaiaNumConverted }),
         ...(gaiaMapping.unit ? { unit: gaiaMapping.unit } : parsed.unit ? { unit: parsed.unit } : {}),
       };
+      continue;
+    }
+
+    // ── On-resistance recognizer (B5 MOSFETs) — unit-safe rds_on ──────────
+    // Mirror of lib/services/atlasMapper.ts (keep in lockstep). rds_on is a weight-9
+    // lte rule; a wrong unit is a 1000× error. Unit written in value / name / nowhere.
+    // Score ONLY when the unit is explicitly known (value wins, then name); otherwise
+    // route to display-only `rds_on_unverified` (no rule scores it). Parked values MUST
+    // live under a rule-less attributeId — matchingEngine.getNumeric re-parses digits
+    // from the value string when numericValue is absent.
+    if (classification.familyId === 'B5' && RDS_ON_NAME_RE.test(lowerName)) {
+      const { numericValue: rdsNum, parsedUnit: rdsValUnit } = extractNumericWithPrefix(p.value.trim());
+      const rdsNameUnit = RDS_ON_UNIT_MOHM_RE.test(p.name) ? 'mΩ'
+        : RDS_ON_UNIT_OHM_RE.test(p.name) ? 'Ω' : undefined;
+      const rdsUnit = effectiveUnit(rdsValUnit, rdsNameUnit); // value wins, else name
+      if (rdsUnit) {
+        if (parameters['rds_on']) { keepLosingValue(parameters, decodedName, p.value, parameters['rds_on']); continue; }
+        // Bit-exact scaling (matches rescue path / Decision #280): mΩ → ×10⁻³ decimal-shift, Ω unchanged.
+        const rdsNumConverted = rdsNum === undefined ? undefined
+          : RDS_ON_UNIT_MOHM_RE.test(rdsUnit) ? scaleByExponent(rdsNum, -3) : rdsNum;
+        parameters['rds_on'] = {
+          value: p.value.trim(),
+          ...(rdsNumConverted !== undefined && { numericValue: rdsNumConverted }),
+          unit: rdsUnit,
+        };
+      } else {
+        if (parameters['rds_on_unverified']) { keepLosingValue(parameters, decodedName, p.value, parameters['rds_on_unverified']); continue; }
+        parameters['rds_on_unverified'] = { value: p.value.trim() };
+      }
       continue;
     }
 
