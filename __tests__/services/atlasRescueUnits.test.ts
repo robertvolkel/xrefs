@@ -247,8 +247,8 @@ describe('the two copies agree, token for token', () => {
   });
 
   it.each([
-    ['导通电阻(RDS(on))', '80mΩ@10V', 'rds_on', 0.08, 'scaled through storeRawValue'],
-    ['导通电阻(RDS(on))', '9mΩ', 'rds_on', 0.009, 'bit-exact through storeRawValue'],
+    ['导通电阻(RDS(on))', '80mΩ@10V', 'rds_on', 0.08, 'scaled through the on-resistance recognizer'],
+    ['导通电阻(RDS(on))', '9mΩ', 'rds_on', 0.009, 'bit-exact through the on-resistance recognizer'],
     ['磁工作点', '30GS', '磁工作点', 30, 'gauss NOT scaled, end to end'],
     ['测试参数', '+15 ppm', '测试参数', 15, 'unrecognised token untouched, end to end'],
   ])('%s = %s stores %s = %p (%s)', (col, value, key, expected) => {

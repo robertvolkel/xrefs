@@ -152,11 +152,12 @@
         "value": "TO-252",
         "numericValue": -252
       },
-      "rdson_vgs_10v_max": {
+      "rds_on": {
         "value": "1.300",
-        "numericValue": 1.3
+        "numericValue": 1.3,
+        "unit": "Ω"
       },
-      "rdson_vgs_4_5v_max": {
+      "rdson_vgs_4_5v_max_ω": {
         "value": "0.000",
         "numericValue": 0
       },
@@ -185,18 +186,6 @@
         "paramName": "ID [max] (A)",
         "sampleValue": "7.0",
         "attributeId": "id_max_a",
-        "kind": "standard"
-      },
-      {
-        "paramName": "RDSon@VGS=10V [max] (Ω)",
-        "sampleValue": "1.300",
-        "attributeId": "rdson_vgs_10v_max",
-        "kind": "standard"
-      },
-      {
-        "paramName": "RDSon@VGS=4.5V [max] (Ω)",
-        "sampleValue": "0.000",
-        "attributeId": "rdson_vgs_4_5v_max",
         "kind": "standard"
       },
       {
