@@ -1376,6 +1376,22 @@ Why this hasn't bitten yet: zero MFRs are currently disabled in either table. As
 
 **Related caveat:** Galaxy `AEC Qualified` row (also surfaced June 2, 2026) is a different problem class — that's source data quality (numeric values in a Yes/No column), not a value-based family signal. Don't conflate the two.
 
+## Products filed under B1 Rectifier Diodes that are NOT rectifier diodes (`类别` / `子类` value signal) — pre-existing data drift
+**Status:** Not started (added Aug 1, 2026)
+**Priority:** P3 (data quality — parts are still searchable/returnable, just in the wrong family)
+**Cost:** ~1-2 hours (extend value-based reclassifier + dict coverage + mirror + scoped backfill), shares the build with the JJW `cate3` entry above
+
+**Trigger:** Surfaced Aug 1, 2026 while triaging the `类别` ("category") and `子类` ("subclass") Triage rows, which the AI wanted to map to `recovery_category` (rejected — see below). Scanning the live `atlas_products` `atlas_raw` for `family_id='B1'` (48,646 products), these two generic taxonomy columns carry device-TYPE values, not recovery speeds — and several reveal products misclassified as B1 Rectifier Diodes:
+- `类别` (2 distinct): `晶体管` (transistor) ×1,711, `二极管` (diode) ×56 — transistors should not be in B1 at all.
+- `子类` (13 distinct): `肖特基二极管`/`低正向肖特基二极管`/`肖特基整流桥` (Schottky, ~913 — belong in **B2**), `桥式整流器`/`快恢复桥式整流器`/`高效桥式整流器`/`快恢复软桥` (bridge rectifiers — a module/config, not a single rectifier diode), `开关二极管` (switching diode), `高压二极管` (high-voltage diode), plus the genuinely-B1 recovery values `超快恢复二极管`/`快恢复二极管`/`普通整流二极管`.
+- The Triage snapshot also showed cross-batch junk under `类别` from other MFRs — `8位可寻址锁存器` (8-bit addressable latch), `IDC排线` (IDC ribbon cable), `PFC IGBT栅极驱动` (PFC IGBT gate driver) — none of which are diodes.
+
+**The shape:** same value-based reclassification pattern as the JJW `cate3` entry above (`reclassifyByParameterSignals` / a `reclassifyByValueSignals` sibling). Candidate rules: `子类` value contains `肖特基` → **B2** (Schottky); `类别` value = `晶体管` → transistor family (B5/B6, needs a finer signal). Bridge-rectifier subtypes are a separate question — they may warrant their own handling rather than living as single B1 diodes.
+
+**Why NOT map `类别`/`子类` to `recovery_category`:** the AI matched on the column NAME (sounds like "recovery category") while ignoring the values. `recovery_category` is a **weight-10** `identity_upgrade` rule accepting only Ultrafast/Fast/Standard; these columns are device taxonomy (mostly non-recovery), and the engine already infers `recovery_category` from `trr` + description keywords (`enrichRectifierAttributes`). Correct Triage disposition for both rows is **unmappable**, not accept.
+
+**Why deferred:** low blast radius (mis-filed parts are still searchable), and the reclassification rules want domain review (which `子类` values are true B2 vs. bridge-module vs. genuine B1). Fold into the next value-based-reclassification / pre-existing-misclass cleanup sweep.
+
 ## Triage UI: surface "requires product-context" marker for cooccurrence sigs
 **Status:** Not started
 **Priority:** P3 (UX polish)
