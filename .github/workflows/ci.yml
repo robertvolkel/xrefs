@@ -20,6 +20,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # docs:check --strict diffs CLAUDE.md against origin/main to find ADDED
+          # entries. The default shallow clone has no origin/main, so the guard would
+          # silently no-op — the exact failure mode it exists to prevent.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -29,3 +34,5 @@ jobs:
         run: npm test
       - name: Lint + typecheck ratchet (must not increase)
         run: npm run baseline
+      - name: Knowledge-doc guard (no lost facts, no new paragraphs, no phantom files)
+        run: npm run docs:check:strict

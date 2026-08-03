@@ -134,7 +134,7 @@ components/                   # React components
     AtlasExplorerDrawer.tsx   # Atlas product detail — schema comparison (L3 or L2), extra attrs, raw params
     AtlasDictionaryPanel.tsx  # Atlas translation dictionary viewer/editor (per-family + L2 category + shared)
     AtlasDecisionLogPanel.tsx # Decision Log — every Triage param decision, newest first, Undo single/bulk, per-param history. REPLACED AtlasAiLogPanel (Decision #277)
-    AtlasDictOverrideDrawer.tsx # Right-side drawer for editing dictionary overrides — schema Autocomplete, AI suggestion, sample values
+    DictionaryOverrideDrawer.tsx # Right-side drawer for editing dictionary overrides — schema Autocomplete, AI suggestion, sample values
     atlasIngest/              # Re-ingest UI components (Decision #174)
       AtlasIngestPanel.tsx    # Top-level orchestrator (Pending/Applied tabs, dashboard, batch list)
       IngestUploader.tsx      # Drag-drop upload zone + new-MFR confirm step
@@ -142,15 +142,13 @@ components/                   # React components
       GlobalUnmappedParamsTable.tsx # AI dict triage: per-param suggestions with canonical-vs-invented indicators, bulk-accept. Contains the memoized `TriageRow` — see Decision #269 before editing it
       BatchCard.tsx           # Per-batch card with embedded triage panel when single-batch
       ProductDiffTable.tsx    # Per-product attribute diff inside expanded attention cards
-      BatchProgressDialog.tsx # Modal during bulk/single apply
+      TriageFilterBar.tsx     # Triage filter row incl. the "High confidence" toggle (Decision #282)
       types.ts                # Shared client-side types for the ingest UI
     ManufacturersPanel.tsx    # Manufacturer list + search + flagged tabs
     ManufacturerDetailPage.tsx # MFR detail (5 tabs: Products, Flagged, Coverage, Cross-Refs, Profile)
     FlaggedProductsTab.tsx    # Flagged products list with status filters
     CrossReferencesTab.tsx    # MFR cross-ref upload (drag-drop + column mapping) + paginated table
     CrossRefColumnMappingDialog.tsx # Column mapping dialog for cross-ref upload (6 fields)
-    SearchLogicPanel.tsx      # Admin docs: how single-part search pipeline works (hardcoded markdown)
-    ListLogicPanel.tsx        # Admin docs: how batch list validation pipeline works (hardcoded markdown)
     logicConstants.ts         # Shared typeColors/typeLabels for rule type chips
   auth/                        # Registration and onboarding
     RegisterForm.tsx          # Step 1 — account creation (name, email, password, invite code)
@@ -171,9 +169,9 @@ components/                   # React components
     FeedbackThread.tsx        # Reused by user + admin — composer at top, comments newest-first, feed layout (avatar + name + body)
     FeedbackDetailModal.tsx   # Trello-style overlay (60% left details, 40% right thread); viewerRole drives admin status editor
     FeedbackRowMenu.tsx       # Kebab + Delete-thread confirm dialog (both sides; calls DELETE /api/app-feedback/[id])
-  qc/                         # QC top-level shell (admin-only)
-    QcShell.tsx               # QC orchestrator — settings toggle, section nav, content
-    QcSectionNav.tsx          # Left nav: Feedback + Logs sections
+  monitoring/                 # Monitoring shell (admin-only) — REPLACED the old /qc page; app/qc/page.tsx is now only a redirect
+    MonitoringShell.tsx       # Orchestrator — settings toggle, section nav, content
+    MonitoringSectionNav.tsx  # Left nav sections (activity logs, logic feedback, …)
 
 hooks/
   useAppState.ts              # Main state machine (LLM mode with deterministic fallback)
@@ -379,7 +377,7 @@ Also: `application-context-attribute-map.md` — comprehensive guide mapping fam
 
 See [docs/DECISIONS.md](docs/DECISIONS.md) — an **index** of all architectural decisions (full text in flat archives `docs/DECISIONS_001-099.md` / `docs/DECISIONS_100-199.md` / `docs/DECISIONS_200-286.md`) — and [docs/BACKLOG.md](docs/BACKLOG.md) for known gaps (finished items live in `docs/BACKLOG_DONE.md`).
 
-**Doc lifecycle** — keeps these files from re-saturating; full policy in [docs/KNOWLEDGE_DOCS_STRATEGY.md](docs/KNOWLEDGE_DOCS_STRATEGY.md). Three shelves by how often each is needed: Shelf 1 always-loaded (`CLAUDE.md` + `MEMORY.md`, budgeted), Shelf 2 on-demand topic docs, Shelf 3 flat top-level archives. **Demote, don't delete.** After any doc edit run `npm run docs:check` (`scripts/check-claude-md-facts.mjs`) — it proves every hard fact from the pinned CLAUDE.md baseline is still reachable in `CLAUDE.md` + `docs/*.md`; archives MUST be flat `docs/*.md` because that corpus is non-recursive. A superseded decision moves to the archive in the same commit that supersedes it; finished backlog items move to `docs/BACKLOG_DONE.md`.
+**Doc lifecycle** — keeps these files from re-saturating; full policy in [docs/KNOWLEDGE_DOCS_STRATEGY.md](docs/KNOWLEDGE_DOCS_STRATEGY.md). Three shelves by how often each is needed: Shelf 1 always-loaded (`CLAUDE.md` + `MEMORY.md`, budgeted), Shelf 2 on-demand topic docs, Shelf 3 flat top-level archives. **Demote, don't delete.** After any doc edit run `npm run docs:check` (`scripts/check-claude-md-facts.mjs`) — it proves every hard fact from the CLAUDE.md baselines is still reachable in `CLAUDE.md` + `docs/*.md`; archives MUST be flat `docs/*.md` because that corpus is non-recursive. A superseded decision moves to the archive in the same commit that supersedes it; finished backlog items move to `docs/BACKLOG_DONE.md`. ⚠️ **A new Key Patterns entry is a one-line rule + a `(Decision #N)` pointer, NEVER a paragraph — this is now enforced**: `npm run docs:check:strict` (in `npm run verify` + CI) fails on an added/changed Key-Patterns line over **1,100 bytes**, on any source filename that isn't in `git ls-files`, and on any lost fact. The rule existed as prose from 2026-07-23 and the next five entries broke it 5/5, which is why it is a check and not a sentence. `BASELINES` in that script is **append-only** — append the pre-pass ref after a compaction, never replace one, or coverage silently decays.
 
 ## Key Patterns
 
@@ -467,7 +465,7 @@ The QC page (`/qc`) is a top-level admin-only route (sidebar icon: `RateReviewOu
 
 ### QC Component Structure
 
-`QcShell.tsx` (`components/qc/`) is the top-level orchestrator with settings toggle in the header and `QcSectionNav` for Feedback/Logs sections. Content components live in `components/admin/`:
+`MonitoringShell.tsx` (`components/monitoring/`) is the top-level orchestrator, with `MonitoringSectionNav.tsx` for the sections. ⚠️ `/qc` is NOT the live route — `app/qc/page.tsx` only redirects to `/monitoring?section=…`. Content components live in `components/admin/`:
 - `QcFeedbackTab.tsx` → `QcFeedbackDetailView.tsx` (feedback flow)
 - `QcLogsTab.tsx` → inline DetailView + Export/Analyze buttons (logs flow)
 - `QcAnalysisDrawer.tsx` — AI analysis right-side drawer with streaming markdown

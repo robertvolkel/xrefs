@@ -25,10 +25,29 @@ and cap each shelf.
 begins, so every token here is paid for constantly.
 - **Contents:** the map of the codebase, the load-bearing invariants (as
   one-liners), and pointers to where the detail lives.
-- **Budget:** CLAUDE.md ≤ ~135 KB and falling; MEMORY.md ≤ ~15 KB (it truncates
-  **silently** past ~24 KB, so keep hard headroom).
+- **Budget ladder** (target < enforced < cliff — the gaps are deliberate, do not
+  collapse them to one number):
+
+  | | target | enforced at | hard cliff |
+  |---|---|---|---|
+  | `CLAUDE.md` | 80 KB | 1,100 B per *new* Key-Patterns entry (`docs:check --strict`) | — |
+  | `MEMORY.md` | 14 KB | 17,100 B, `memory-budget.mjs` **denies the write** | truncates **silently** ~24 KB |
+
 - **Rule:** a new pattern earns a *one-line rule + a `(Decision #N)` / topic-doc
   pointer* here — never a paragraph. The paragraph goes to Shelf 2/3.
+- ⚠️ **That rule is now enforced, because writing it down did not work.** It was
+  added 2026-07-23; the next five entries were 1,324 / 1,299 / 1,807 / 1,474 /
+  1,220 bytes — **five paragraphs out of five**, three written by the same author
+  who wrote the rule. `npm run docs:check -- --strict` now fails on an added or
+  changed Key-Patterns line over **1,100 bytes**.
+  - The cap applies to **added/changed lines only** (diffed against `origin/main`).
+    A whole-section cap would fail on every pre-existing paragraph and be switched
+    off within a day.
+  - **1,100 is measured, not chosen.** Backtested against every real commit *and*
+    against the output a compaction pass itself produces: 700 B blocks 5/47
+    legitimate entries; 1,200 B misses real regrowth; 1,100 B is the only value
+    where both error rates are zero. ⚠️ **A threshold validated on one failure mode
+    is not validated** — check false positives and false negatives before trusting one.
 
 ### Shelf 2 — On-demand reference ("read before touching X")
 The topic docs: `docs/FAMILIES.md`, `docs/DATA_SOURCES.md`,
@@ -48,13 +67,37 @@ invariant does not throw — it resurfaces months later as a bug nobody connects
 a doc edit. So Shelf 1 is never trimmed on care alone:
 
 ```
-npm run docs:check      # scripts/check-claude-md-facts.mjs
+npm run docs:check              # advisory  — also runs in prebuild, can never fail a build
+npm run docs:check:strict       # enforcing — runs in `npm run verify` and CI
 ```
 
-It extracts every hard fact from a **pinned pre-diet baseline** of `CLAUDE.md`
-and asserts each is still reachable in the corpus. Content may **move**; it may
-not **disappear**. Run it after every structural doc change — green means nothing
-was lost, only relocated.
+It extracts every hard fact from a **union of baselines** of `CLAUDE.md` and
+asserts each is still reachable in the corpus. Content may **move**; it may not
+**disappear**. Run it after every structural doc change.
+
+`--strict` adds two checks that only make sense as hard failures:
+1. **the per-entry cap** described above;
+2. **every source filename named in `CLAUDE.md` must exist in `git ls-files`.**
+
+⚠️ **Three things this net does NOT do.** Green is necessary, never sufficient:
+- **It is ~88% pre-satisfied for `Key Patterns`** — 789 of 889 identifiers there
+  already appear in `docs/*.md`, so it stays green whether a trim is careful or
+  careless. And only **0.4% of `CLAUDE.md` is word-for-word duplicated** in
+  `docs/` — the *identifiers* repeat, the *sentences* do not, so **there is no
+  free deletion.**
+- **It protects vocabulary, not grammar.** Prohibitions, ordering chains, bare
+  numeric thresholds and "bump X when you change Y" couplings match none of its
+  patterns; 142 of its "facts" are bare words like `MUST`/`ONLY`/`TRUE`. Those
+  invariants must be preserved by hand — **no script covers them.**
+- **A single pinned baseline decays.** It was pinned 2026-07-12; by 2026-08-03
+  **21.6% of current facts were covered by nothing**, 66 of them deletable with a
+  green result. Hence `BASELINES` is an **append-only array** — appending keeps
+  the never-measure-against-the-previously-trimmed-file property. **Append the
+  pre-pass ref at the end of every compaction; never replace an entry.**
+
+Deliberate deletions go in the `RETIRED` map in the script, each with a reason —
+otherwise a legitimate removal leaves the check permanently red, and a
+permanently-red check gets silenced. (That is how `|| true` reached `prebuild`.)
 
 **Load-bearing constraint:** `docs:check` scans `CLAUDE.md` + `docs/*.md`
 **non-recursively**. It does **not** look inside `docs/audits/`,
