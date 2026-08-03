@@ -3393,3 +3393,34 @@ This overturned the initial hypothesis (the DB query) — the RPC is only ~2s. T
 **No schema change, no cache-version bump** (payload shape unchanged). New tests: `__tests__/services/triageQueueCache.test.ts` (mark-stale vs. guaranteed-fresh vs. single-flight) and three new cases in `triageClustering.test.ts`. Full suite 3767 passing; ratchet unchanged (85 lint / 92 type).
 
 **Honest limits.** Fix B makes the page load instant; Fix A makes the underlying rebuild (and every background recompute) ~2.2s so it no longer strains the server. The remaining ~2s cold-compute is DB-bound (the aggregate RPC); it was not optimized further because serve-stale means the interactive load rarely pays it.
+
+---
+
+## Decision #286 — The source panel distinguishes "still loading" from "no data", on every tab (August 2, 2026)
+
+**Symptom.** The Source Part panel looked empty while a part loaded. Every not-yet-arrived value rendered a hard-coded em-dash and Distributors rendered a literal `0` — which reads as *"we looked and there is nothing"* when the truth is *"we are still looking."* [Commit `982e951`](https://github.com/robertvolkel/xrefs_app/commit/982e951) had fixed exactly this for the **Commercial** tab only; Overview and Specs were never given the same treatment.
+
+**Measured, not assumed.** The fix hinges on whether `phase === 'loading-attributes'` is actually true while that screen shows. Calling `getAttributes()` against the live APIs:
+
+```
+GRM188R71H104KA93D (control)  ms=18023  params=11  subcat="MLCC"
+MNS2N2222AUB (reported part)  ms=16661  params=0   quotes=3   subcat="BJT"
+```
+
+~17 seconds. The reported screen was the loading window, so the flag covers it. The control proves the harness, making `params = 0` a real property of that part rather than a broken measurement. Independent confirmation: the Commercial fix is gated on this same flag and worked; all three tabs render in one pass of `AttributesPanel` from the same prop, so it cannot be true for one tab and false for another.
+
+**The rule.** One predicate, `isPending(value, isEnriching)` in the new [components/AttributesSkeletons.tsx](../components/AttributesSkeletons.tsx): shimmer iff the fetch is in flight AND the value is `null`/`undefined`/`''`. **`0`, `false` and `[]` are REAL values** — a part with zero distributors must render `0`; a `!value` implementation would reintroduce the same class of lie in the opposite direction. Pinned by a mutation-tested case.
+
+**Per field, never per section.** `buildOptimisticFromRec` copies the whole FC-enriched `rec.part`, so on the recommendation-click path the preview *already* holds real quotes and lifecycle. A section-level flag would shimmer over live data the user was looking at one click earlier.
+
+**Alignment is by construction, not by matched magic numbers.** `ShimmerValue` keeps the em-dash in the DOM but `color: 'transparent'` and absolutely-positions the `Skeleton` over it, so a shimmering row is *provably* the height of the resolved row. A bare `<Skeleton height={14}/>` is ~4 px shorter than the resolved `Typography`; across a dozen rows that is a visible whole-panel jolt the moment data lands.
+
+**Specs was the worst offender, and needed an empty state — not just shimmer.** [digikeyMapper.ts:1714](../lib/services/digikeyMapper.ts#L1714) is the **only** producer of `PartSummary.keyParameters` repo-wide; Atlas and parts.io search cards carry none, and the Specs table had no empty state, so clicking an Atlas card gave a bare column header over blank space for the whole ~20 s fetch. But `MNS2N2222AUB` returns `params = 0` *even after* the fetch — so shimmer alone would have turned a stable blank into "17 s of animation, then blank," i.e. **worse than before**. Hence `attributes.noParametricData` ("No parametric data available for this part"), gated on `!isEnriching && specRows.length === 0`. Three states that previously looked identical — still loading / genuinely nothing published / unexplained blank — are now distinct.
+
+**Two adjacent bugs, both made *more* visible by the shimmer, fixed here.**
+1. **Re-clicking the part blanked it.** `handleConfirmPart(state.sourcePart)` passed no preview, so `buildOptimisticFromSummary` rebuilt from the thin `PartSummary` and discarded the datasheet, quotes and compliance already on screen. Now passes `sourceAttributesRef.current`.
+2. **Typing mid-load stranded the panel.** `handleSearchWithLLM` opens with `freshAbort()`, which shared ONE `AbortController` and therefore killed the in-flight `getPartAttributes`; the phase then stayed `'loading-attributes'` (it is preserved when `sourceAttributes` is set, and the preview always sets it) and the confirm flow bailed on `signal.aborted` without resolving it — attributes never arrived, loading state never cleared. Fixed with a **separate abort scope** (`attrsAbortRef`), cancelled only when the fetch's result would no longer be wanted (different part / reset / conversation switch). On the chat-superseded path the attributes are landed **silently** — no chat message, no auto-fire — guarded by `prev.sourcePart?.mpn === part.mpn` so a stale part cannot overwrite a newer one. Scope is narrower than it looks: `handleConfirmDeterministic` passes `undefined` as its signal, so that path was never abortable and is untouched.
+
+**Verification.** 13/13 mutations caught (each invariant broken one at a time, revert proven to land). The settled-state render was proven **byte-identical** to the pre-change component via `renderToStaticMarkup`, so nothing changed outside the loading window. While loading, the same harness shows 32 shimmer elements, no bare `0`, and no premature "No image". Also: `lib/services/.ua/**` (untracked knowledge-graph tooling scratch, including a `.trash-*` folder of generated `.cjs`) was charging the quality ratchet 3 lint errors for files nobody wrote — now gitignored and eslint-ignored.
+
+**Known limits, deliberately not fixed.** Sparse fields (Grade, Years to EOL, Risk Rank, ECCN, HTS) are empty on most parts, so roughly half the Overview rows shimmer and resolve to `—`; "we checked, nothing there" is more honest than a dash that was there from the start. The preview still fabricates `status: 'Active'` when a card has no status (`Part.status` is required, `PartSummary.status` optional) — `isPending` correctly reports that as present-not-missing, so it asserts a value we do not have; a `previewFabricated` marker is the honest fix. Qualifications and Cross References remain conditionally-rendered blocks that can appear late and shift content below them.

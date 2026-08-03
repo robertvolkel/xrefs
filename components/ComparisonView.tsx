@@ -26,7 +26,7 @@ import { useScrollIndicators } from '@/hooks/useScrollIndicators';
 import ComparisonFeedbackDialog from './ComparisonFeedbackDialog';
 import type { AttributesTab } from './DesktopLayout';
 import { pillGroupSx, OverviewContent, CommercialContent } from './AttributesTabContent';
-import { OverviewSkeleton, CommercialSkeleton } from './AttributesPanel';
+import { OverviewSkeleton, CommercialSkeleton } from './AttributesSkeletons';
 import DomainChip from './DomainChip';
 import { isDomainCoveredQualification } from '@/lib/services/qualificationDomain';
 import MatchPercentageBadge from './MatchPercentageBadge';

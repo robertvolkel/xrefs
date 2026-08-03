@@ -15,6 +15,10 @@ const eslintConfig = defineConfig([
     // Vendored third-party assets (minified Siemens logo / cookie-consent
     // scripts) — not application code, so exclude from linting.
     "docs/siemens_logo_files/**",
+    // Scratch/cache output from the knowledge-graph tooling (untracked, and
+    // includes a .trash-* folder of generated .cjs). Linting it charges the
+    // quality ratchet for files nobody wrote and nobody commits.
+    "**/.ua/**",
   ]),
 ]);
 

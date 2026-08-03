@@ -249,7 +249,8 @@
     "leadTime": "Lieferzeit",
     "unitPrice": "Stückpreis",
     "priceBreaks": "Preisstaffeln",
-    "quantity": "Menge"
+    "quantity": "Menge",
+    "noParametricData": "Keine parametrischen Daten für dieses Teil verfügbar."
   },
   "chat": {
     "searchPlaceholder": "Teilenummer eingeben (z.B. EEF-LX0E471R)",

@@ -34,6 +34,11 @@ import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZ
 import { useScrollIndicators } from '@/hooks/useScrollIndicators';
 import type { AttributesTab } from './DesktopLayout';
 import { pillGroupSx, OverviewContent, CommercialContent } from './AttributesTabContent';
+import { OverviewSkeleton, CommercialSkeleton, SkeletonSpecRow } from './AttributesSkeletons';
+
+/** Rows the Specs tab pads to while loading — both for the full skeleton and for
+ *  the filler under a partial preview, so the two loading states look the same. */
+const SPECS_SKELETON_ROWS = 12;
 import DomainChip, { inferContextActive } from './DomainChip';
 import { isDomainCoveredQualification } from '@/lib/services/qualificationDomain';
 
@@ -237,76 +242,6 @@ function SetEditor({
   );
 }
 
-function SkeletonSectionHeader() {
-  return (
-    <Box sx={{ bgcolor: 'background.paper', borderTop: 1, borderBottom: 1, borderColor: 'divider', px: 2, py: 0.75 }}>
-      <Skeleton width={90} height={14} />
-    </Box>
-  );
-}
-
-function SkeletonFieldRow({ labelWidth, valueWidth }: { labelWidth: number; valueWidth: number }) {
-  return (
-    <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ py: 0.75, px: 2, minHeight: 32 }}>
-      <Skeleton width={labelWidth} height={14} />
-      <Skeleton width={valueWidth} height={14} />
-    </Stack>
-  );
-}
-
-export function OverviewSkeleton() {
-  return (
-    <Box sx={{ flex: 1, overflowY: 'auto' }}>
-      {/* Hero */}
-      <Box sx={{ display: 'flex', gap: 1.5, px: 2, py: 1.5 }}>
-        <Skeleton variant="rectangular" width={80} height={80} sx={{ borderRadius: 1, flexShrink: 0 }} />
-        <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 0.5 }}>
-          <Skeleton width="50%" height={12} />
-          <Skeleton width="70%" height={18} />
-          <Skeleton width="40%" height={14} />
-        </Box>
-      </Box>
-      <SkeletonSectionHeader />
-      <SkeletonFieldRow labelWidth={80} valueWidth={220} />
-      <SkeletonFieldRow labelWidth={70} valueWidth={70} />
-      <SkeletonFieldRow labelWidth={110} valueWidth={60} />
-      <SkeletonFieldRow labelWidth={90} valueWidth={80} />
-      <SkeletonFieldRow labelWidth={120} valueWidth={50} />
-      <SkeletonSectionHeader />
-      <SkeletonFieldRow labelWidth={80} valueWidth={40} />
-      <SkeletonFieldRow labelWidth={90} valueWidth={70} />
-      <SkeletonFieldRow labelWidth={100} valueWidth={120} />
-      <SkeletonFieldRow labelWidth={90} valueWidth={70} />
-      <SkeletonSectionHeader />
-      <Box sx={{ px: 2, py: 0.75 }}>
-        <Stack direction="row" spacing={0.75}>
-          <Skeleton variant="rounded" width={70} height={20} />
-          <Skeleton variant="rounded" width={60} height={20} />
-          <Skeleton variant="rounded" width={80} height={20} />
-        </Stack>
-      </Box>
-    </Box>
-  );
-}
-
-export function CommercialSkeleton() {
-  return (
-    <Box sx={{ flex: 1, overflowY: 'auto', px: 2, py: 1.5 }}>
-      {Array.from({ length: 4 }).map((_, i) => (
-        <Box key={i} sx={{ mb: 2, p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1 }}>
-          <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-            <Skeleton width={120} height={18} />
-            <Skeleton width={60} height={18} />
-          </Stack>
-          <Skeleton width="40%" height={14} sx={{ mb: 0.5 }} />
-          <Skeleton width="60%" height={14} sx={{ mb: 0.5 }} />
-          <Skeleton width="50%" height={14} />
-        </Box>
-      ))}
-    </Box>
-  );
-}
-
 export default function AttributesPanel({ attributes, loading, isEnriching = false, title, activeTab, onTabChange, allRecommendations, onManufacturerClick, xrefCategory, xrefMfr, onSelectXrefCategory, onSelectXrefMfr, acceptanceCriteria, onAcceptanceChange, spotQuantity = 1, onSpotQuantityChange, comparisonRows }: AttributesPanelProps) {
   const { t } = useTranslation();
   const { ref: scrollRef, canScrollUp, canScrollDown } = useScrollIndicators<HTMLDivElement>();
@@ -488,16 +423,7 @@ export default function AttributesPanel({ attributes, loading, isEnriching = fal
               </TableHead>
               <TableBody>
                 {loading
-                  ? Array.from({ length: 12 }).map((_, i) => (
-                      <TableRow key={i}>
-                        <TableCell sx={{ borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
-                          <Skeleton width={120} height={16} />
-                        </TableCell>
-                        <TableCell sx={{ borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
-                          <Skeleton width={80} height={16} />
-                        </TableCell>
-                      </TableRow>
-                    ))
+                  ? Array.from({ length: SPECS_SKELETON_ROWS }).map((_, i) => <SkeletonSpecRow key={i} />)
                   : <>
                       {specRows.map((vm) => {
                         // `param` present ⇒ a real source attribute (gets acceptance
@@ -641,6 +567,32 @@ export default function AttributesPanel({ attributes, loading, isEnriching = fal
                         </Fragment>
                         );
                       })}
+                      {/* Still fetching — pad to a full-looking table. The preview
+                          carries 0 rows for Atlas/parts.io cards (only Digikey
+                          populates keyParameters), which otherwise leaves a bare
+                          header over blank space for the whole ~20s fetch.
+                          `!comparisonRows` keeps the comparison row alignment
+                          invariant (Decision #246) explicit rather than incidental —
+                          the two states are already mutually exclusive by phase. */}
+                      {isEnriching && !comparisonRows &&
+                        Array.from({ length: Math.max(0, SPECS_SKELETON_ROWS - specRows.length) }).map((_, i) => (
+                          <SkeletonSpecRow key={`sk-${i}`} />
+                        ))}
+
+                      {/* Fetch done and still nothing — say so. Some parts genuinely
+                          publish no parametric data; without this the shimmer above
+                          would resolve to an unexplained blank table, which is worse
+                          than the stable blank it replaced. */}
+                      {!isEnriching && specRows.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={2} sx={{ borderColor: 'divider', py: 4, textAlign: 'center' }}>
+                            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.85rem' }}>
+                              {t('attributes.noParametricData')}
+                            </Typography>
+                          </TableCell>
+                        </TableRow>
+                      )}
+
                       {/* Extra unrecognized attributes toggle */}
                       {extras.length > 0 && (
                         <TableRow>
@@ -696,6 +648,7 @@ export default function AttributesPanel({ attributes, loading, isEnriching = fal
           <OverviewContent
             part={attributes.part}
             t={t}
+            isEnriching={isEnriching}
             allRecommendations={allRecommendations}
             dataSource={attributes.dataSource as 'digikey' | 'atlas' | 'partsio'}
             xrefCategory={xrefCategory}
