@@ -24,6 +24,7 @@ import { isDomainCoveredQualification, humanReadable } from '@/lib/services/qual
 import { computeBestPrice, formatPrice, comparePriceTone, type PriceTone } from '@/lib/services/bestPriceCalculator';
 import { QUANTITY_PRESETS, parseQuantity } from '@/lib/constants/quantityPresets';
 import QuantityPresetButtons from './QuantityPresetButtons';
+import { isPending, ShimmerValue, CommercialSkeleton } from './AttributesSkeletons';
 
 type T = TFunction<'translation', undefined>;
 
@@ -174,7 +175,7 @@ export function FieldRow({ label, value, source, children }: { label: string; va
 /* Description row — clamps to 2 lines with reserved height so comparison
    panels stay row-aligned. Tooltip + `cursor: help` activate only when the
    text actually overflows (detected via ResizeObserver). */
-function DescriptionRow({ description }: { description?: string }) {
+function DescriptionRow({ description, pending = false }: { description?: string; pending?: boolean }) {
   const ref = useRef<HTMLSpanElement | null>(null);
   const [overflowing, setOverflowing] = useState(false);
 
@@ -187,6 +188,19 @@ function DescriptionRow({ description }: { description?: string }) {
     ro.observe(el);
     return () => ro.disconnect();
   }, [description]);
+
+  if (pending) {
+    // Two shimmer lines inside the same reserved 2.8em clamp the resolved text
+    // uses, so the row height is identical before and after the value lands.
+    return (
+      <FieldRow label="Description">
+        <Box sx={{ minHeight: '2.8em', width: 220, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 0.4 }}>
+          <Skeleton variant="rounded" height={10} />
+          <Skeleton variant="rounded" height={10} width="65%" sx={{ alignSelf: 'flex-end' }} />
+        </Box>
+      </FieldRow>
+    );
+  }
 
   return (
     <FieldRow label="Description">
@@ -311,7 +325,14 @@ function SectionHeader({ label }: { label: string }) {
 }
 
 /* ── Overview tab content ── */
-export function OverviewContent({ part, t, allRecommendations, dataSource, xrefCategory = 'all', xrefMfr = '', onSelectXrefCategory, onSelectXrefMfr }: { part: Part; t: T; allRecommendations?: XrefRecommendation[]; dataSource?: DataSource; xrefCategory?: RecommendationCategory | 'all'; xrefMfr?: string; onSelectXrefCategory?: (cat: RecommendationCategory | 'all') => void; onSelectXrefMfr?: (mfr: string) => void }) {
+export function OverviewContent({ part, t, allRecommendations, dataSource, xrefCategory = 'all', xrefMfr = '', onSelectXrefCategory, onSelectXrefMfr, isEnriching = false }: { part: Part; t: T; allRecommendations?: XrefRecommendation[]; dataSource?: DataSource; xrefCategory?: RecommendationCategory | 'all'; xrefMfr?: string; onSelectXrefCategory?: (cat: RecommendationCategory | 'all') => void; onSelectXrefMfr?: (mfr: string) => void;
+  /** True while the part's attribute fetch is still in flight (the Decision #257
+   *  optimistic-preview window). Rows with no value YET shimmer instead of showing
+   *  an em-dash or a false "0", so "still loading" is distinguishable from "no data".
+   *  Applied PER FIELD, never per section: on the recommendation-click path the
+   *  preview already carries real quotes/lifecycle, and a section-level flag would
+   *  shimmer over live data. */
+  isEnriching?: boolean }) {
   const description = part.detailedDescription || part.description;
   const distributorCount = part.supplierQuotes?.length ?? 0;
   const totalStock = part.supplierQuotes?.reduce((sum, q) => sum + (q.quantityAvailable ?? 0), 0) ?? 0;
@@ -321,6 +342,8 @@ export function OverviewContent({ part, t, allRecommendations, dataSource, xrefC
 
   const visibleQualifications = part.qualifications?.filter(q => !isDomainCoveredQualification(q)) ?? [];
   const hasQualifications = visibleQualifications.length > 0;
+  // All four Distribution rows derive from this one field, so they resolve together.
+  const quotesPending = isPending(part.supplierQuotes, isEnriching);
 
   return (
     <Box sx={{ flex: 1, overflowY: 'auto' }}>
@@ -348,6 +371,10 @@ export function OverviewContent({ part, t, allRecommendations, dataSource, xrefC
               alt={part.mpn}
               sx={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
             />
+          ) : isPending(part.imageUrl, isEnriching) && dataSource !== 'atlas' ? (
+            // `imageUrl` is a Digikey field — an Atlas part would shimmer for the
+            // full fetch and still land on "No image", so skip the tease there.
+            <Skeleton variant="rectangular" sx={{ width: '100%', height: '100%' }} />
           ) : (
             <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.6rem' }}>No image</Typography>
           )}
@@ -374,7 +401,7 @@ export function OverviewContent({ part, t, allRecommendations, dataSource, xrefC
           positions match between the source panel and the side-by-side
           comparison panel. See parts.io rows below for the same pattern. */}
       <SectionHeader label="Attributes" />
-      <DescriptionRow description={description} />
+      <DescriptionRow description={description} pending={isPending(description, isEnriching)} />
       {part.datasheetUrl ? (
         <FieldRow label="Datasheet">
           <Link
@@ -387,6 +414,8 @@ export function OverviewContent({ part, t, allRecommendations, dataSource, xrefC
             <OpenInNewIcon sx={{ fontSize: '0.8rem' }} />
           </Link>
         </FieldRow>
+      ) : isPending(part.datasheetUrl, isEnriching) ? (
+        <FieldRow label="Datasheet"><ShimmerValue width={60} /></FieldRow>
       ) : (
         <FieldRow label="Datasheet" value="—" />
       )}
@@ -399,24 +428,32 @@ export function OverviewContent({ part, t, allRecommendations, dataSource, xrefC
       )}
       {/* Grade — qualification tier (Automotive / Medical / Military / Commercial).
           Always rendered for source/comparison alignment; "—" when unclassified. */}
-      <FieldRow
-        label="Grade"
-        value={
-          part.qualificationDomain && part.qualificationDomain.domain !== 'unknown'
-            ? humanReadable(part.qualificationDomain.domain)
-            : '—'
-        }
-        source={dataSource ?? 'digikey' as DataSource}
-      />
+      {isPending(part.qualificationDomain, isEnriching) ? (
+        <FieldRow label="Grade" source={dataSource ?? 'digikey' as DataSource}><ShimmerValue width={80} /></FieldRow>
+      ) : (
+        <FieldRow
+          label="Grade"
+          value={
+            part.qualificationDomain && part.qualificationDomain.domain !== 'unknown'
+              ? humanReadable(part.qualificationDomain.domain)
+              : '—'
+          }
+          source={dataSource ?? 'digikey' as DataSource}
+        />
+      )}
 
       {/* parts.io-sourced rows — always rendered so section heights stay aligned
           between the source and the side-by-side comparison panel. Values fall
           back to "—" when parts.io has no data for the part. */}
-      <FieldRow
-        label="Years to EOL"
-        value={part.yteol != null ? `${part.yteol.toFixed(1)} yrs` : '—'}
-        source="partsio"
-      />
+      {isPending(part.yteol, isEnriching) ? (
+        <FieldRow label="Years to EOL" source="partsio"><ShimmerValue width={50} /></FieldRow>
+      ) : (
+        <FieldRow
+          label="Years to EOL"
+          value={part.yteol != null ? `${part.yteol.toFixed(1)} yrs` : '—'}
+          source="partsio"
+        />
+      )}
       {part.riskRank != null ? (
         <FieldRow label={t('attributes.riskRank')} source="partsio">
           <Stack direction="row" alignItems="center" spacing={0.75}>
@@ -426,32 +463,59 @@ export function OverviewContent({ part, t, allRecommendations, dataSource, xrefC
             </Typography>
           </Stack>
         </FieldRow>
+      ) : isPending(part.riskRank, isEnriching) ? (
+        <FieldRow label={t('attributes.riskRank')} source="partsio"><ShimmerValue width={50} /></FieldRow>
       ) : (
         <FieldRow label={t('attributes.riskRank')} value="—" source="partsio" />
       )}
-      <FieldRow label={t('attributes.countryOfOrigin')} value={part.countryOfOrigin || '—'} source="partsio" />
+      {isPending(part.countryOfOrigin, isEnriching) ? (
+        <FieldRow label={t('attributes.countryOfOrigin')} source="partsio"><ShimmerValue width={70} /></FieldRow>
+      ) : (
+        <FieldRow label={t('attributes.countryOfOrigin')} value={part.countryOfOrigin || '—'} source="partsio" />
+      )}
       {part.lifecycleInfo?.filter(l => l.suggestedReplacement).map(l => (
         <FieldRow key={l.source} label={t('attributes.suggestedReplacement')} value={l.suggestedReplacement!} source={l.source as DataSource} />
       ))}
 
-      {/* Distribution — always shown so empty state is visible */}
+      {/* Distribution — always shown so empty state is visible. All four rows are
+          derived from `supplierQuotes`, so they share one pending check: while the
+          fetch is in flight they shimmer rather than asserting "0 distributors",
+          which reads as a fact and is the single most misleading row on the panel. */}
       <SectionHeader label="Distribution" />
-      <FieldRow label="Distributors" value={String(distributorCount)} />
-      <FieldRow label="Total Stock" value={totalStock > 0 ? totalStock.toLocaleString() : '—'} />
-      <FieldRow
-        label="Price Range"
-        value={priceRange ? `${formatPrice(priceRange.min, priceRange.currency)} – ${formatPrice(priceRange.max, priceRange.currency)}` : '—'}
-      />
-      <FieldRow label="Target Price">
-        <Stack direction="row" alignItems="center" spacing={0.5}>
-          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: targetPrice ? 600 : 400, fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE } }}>
-            {targetPrice ? formatPrice(targetPrice.targetPrice, targetPrice.currency) : '—'}
-          </Typography>
-          <Tooltip title="Lowest per-distributor top-tier price, reduced by 20%" arrow>
-            <Box component="span" sx={{ fontSize: '0.6rem', color: 'text.disabled', cursor: 'help' }}>ⓘ</Box>
-          </Tooltip>
-        </Stack>
-      </FieldRow>
+      {quotesPending ? (
+        <>
+          <FieldRow label="Distributors"><ShimmerValue width={28} /></FieldRow>
+          <FieldRow label="Total Stock"><ShimmerValue width={70} /></FieldRow>
+          <FieldRow label="Price Range"><ShimmerValue width={110} /></FieldRow>
+          <FieldRow label="Target Price">
+            <Stack direction="row" alignItems="center" spacing={0.5}>
+              <ShimmerValue width={60} />
+              <Tooltip title="Lowest per-distributor top-tier price, reduced by 20%" arrow>
+                <Box component="span" sx={{ fontSize: '0.6rem', color: 'text.disabled', cursor: 'help' }}>ⓘ</Box>
+              </Tooltip>
+            </Stack>
+          </FieldRow>
+        </>
+      ) : (
+        <>
+          <FieldRow label="Distributors" value={String(distributorCount)} />
+          <FieldRow label="Total Stock" value={totalStock > 0 ? totalStock.toLocaleString() : '—'} />
+          <FieldRow
+            label="Price Range"
+            value={priceRange ? `${formatPrice(priceRange.min, priceRange.currency)} – ${formatPrice(priceRange.max, priceRange.currency)}` : '—'}
+          />
+          <FieldRow label="Target Price">
+            <Stack direction="row" alignItems="center" spacing={0.5}>
+              <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: targetPrice ? 600 : 400, fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE } }}>
+                {targetPrice ? formatPrice(targetPrice.targetPrice, targetPrice.currency) : '—'}
+              </Typography>
+              <Tooltip title="Lowest per-distributor top-tier price, reduced by 20%" arrow>
+                <Box component="span" sx={{ fontSize: '0.6rem', color: 'text.disabled', cursor: 'help' }}>ⓘ</Box>
+              </Tooltip>
+            </Stack>
+          </FieldRow>
+        </>
+      )}
 
       {/* Qualifications */}
       {hasQualifications && (
@@ -477,10 +541,16 @@ export function OverviewContent({ part, t, allRecommendations, dataSource, xrefC
           (with "—" fallback) so row positions align with the comparison panel.
           Dynamic per-region HTS rows append after the fixed rows when present. */}
       <SectionHeader label="Environmental & Export" />
-      <FieldRow label={t('attributes.rohsStatus')} value={part.rohsStatus || '—'} source="mouser" />
-      <FieldRow label={t('attributes.reachCompliance')} value={part.reachCompliance || '—'} source="partsio" />
-      <FieldRow label={t('attributes.eccnCode')} value={part.eccnCode || '—'} source="partsio" />
-      <FieldRow label={t('attributes.htsCode')} value={part.htsCode || '—'} source="partsio" />
+      {([
+        [t('attributes.rohsStatus'), part.rohsStatus, 'mouser', 100],
+        [t('attributes.reachCompliance'), part.reachCompliance, 'partsio', 90],
+        [t('attributes.eccnCode'), part.eccnCode, 'partsio', 70],
+        [t('attributes.htsCode'), part.htsCode, 'partsio', 80],
+      ] as Array<[string, string | undefined, DataSource, number]>).map(([label, value, src, w]) => (
+        isPending(value, isEnriching)
+          ? <FieldRow key={label} label={label} source={src}><ShimmerValue width={w} /></FieldRow>
+          : <FieldRow key={label} label={label} value={value || '—'} source={src} />
+      ))}
       {part.complianceData?.filter(c => c.htsCodesByRegion).map(c => (
         Object.entries(c.htsCodesByRegion!).map(([region, code]) => (
           <FieldRow key={`${c.source}-${region}`} label={`HTS (${region.toUpperCase()})`} value={code} source={c.source as DataSource} />
@@ -790,24 +860,11 @@ export function CommercialContent({
   }, [sourcePart?.supplierQuotes, qty]);
 
   if (!hasQuotes) {
-    // Distinguish "still loading pricing" from "genuinely no data". Inline
-    // skeleton (not the AttributesPanel CommercialSkeleton — importing it here
-    // would create an AttributesPanel ↔ AttributesTabContent cycle).
+    // Distinguish "still loading pricing" from "genuinely no data". The shared
+    // skeleton lives in AttributesSkeletons because AttributesPanel imports this
+    // file — importing back would create a cycle.
     if (isEnriching) {
-      return (
-        <Box sx={{ flex: 1, overflowY: 'auto', p: 1.5 }} aria-label="Loading pricing and stock">
-          {[0, 1].map((i) => (
-            <Box key={i} sx={{ mb: 1.5, p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1 }}>
-              <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.5 }}>
-                <Skeleton variant="text" width={120} height={18} />
-                <Skeleton variant="text" width={60} height={18} />
-              </Stack>
-              <Skeleton variant="text" width="40%" height={14} />
-              <Skeleton variant="text" width="55%" height={14} />
-            </Box>
-          ))}
-        </Box>
-      );
+      return <CommercialSkeleton count={2} dense />;
     }
     return (
       <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', p: 4 }}>

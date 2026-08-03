@@ -52,3 +52,6 @@ atlas-rekey-snapshot-*.json
 
 # Connector-abstraction characterization artifacts (local, regenerated on demand)
 scripts/.characterization/
+
+# Knowledge-graph tooling scratch/cache (understand-anything)
+.ua/

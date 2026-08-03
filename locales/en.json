@@ -279,7 +279,8 @@
     "leadTime": "Lead Time",
     "unitPrice": "Unit Price",
     "priceBreaks": "Price Breaks",
-    "quantity": "Qty"
+    "quantity": "Qty",
+    "noParametricData": "No parametric data available for this part."
   },
   "chat": {
     "searchPlaceholder": "Enter a part number (e.g. EEF-LX0E471R)",

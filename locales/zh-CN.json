@@ -249,7 +249,8 @@
     "leadTime": "交货时间",
     "unitPrice": "单价",
     "priceBreaks": "阶梯价格",
-    "quantity": "数量"
+    "quantity": "数量",
+    "noParametricData": "该器件暂无参数数据。"
   },
   "chat": {
     "searchPlaceholder": "输入零件编号（例如 EEF-LX0E471R）",

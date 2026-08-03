@@ -25,6 +25,14 @@ interface PartDetailModalProps {
   selectedRec: XrefRecommendation | null;
   comparisonAttrs: PartAttributes | null;
   isComparing: boolean;
+  /** True while the selected replacement's attributes load. The comparison
+   *  panes mount immediately on click and show skeletons — previously the whole
+   *  block was gated on `comparisonAttrs`, so the right 2/3 of the modal went
+   *  BLANK for the ~10s fetch (the recommendations list unmounts the moment
+   *  `isComparing` flips). Mirrors DesktopLayout, which already works this way. */
+  isLoadingReplacement?: boolean;
+  /** True when that fetch failed — shows an error instead of a forever-skeleton. */
+  replacementError?: boolean;
   /** True while the opener's initial attributes/recs fetch is in flight.
    *  Drives the RecommendationsPanel loading overlay so the right pane doesn't
    *  read as "1 match found + blank space" before the full recs list lands. */
@@ -48,6 +56,8 @@ export default function PartDetailModal({
   selectedRec,
   comparisonAttrs,
   isComparing,
+  isLoadingReplacement = false,
+  replacementError = false,
   initialFetching,
   onClose,
   onSelectRec,
@@ -117,7 +127,7 @@ export default function PartDetailModal({
         )}
 
         {/* Source attributes + Comparison (when a rec is selected) */}
-        {isComparing && selectedRec && row.sourceAttributes && comparisonAttrs && (
+        {isComparing && selectedRec && row.sourceAttributes && (
           <>
             <Box sx={{ width: '35%', height: PANEL_HEIGHT, overflow: 'auto', borderRight: 1, borderColor: 'divider' }}>
               <AttributesPanel
@@ -136,6 +146,8 @@ export default function PartDetailModal({
                 onBack={onBackToRecs}
                 activeTab={attributesTab}
                 onTabChange={setAttributesTab}
+                isLoadingReplacement={isLoadingReplacement}
+                replacementError={replacementError}
               />
             </Box>
           </>

@@ -1,0 +1,758 @@
+<title>Source Part panel — loading states test script</title>
+
+<style>
+  :root {
+    --bg:        #F8F9FB;
+    --surface:   #FFFFFF;
+    --surface-2: #F1F3F7;
+    --line:      #DDE1E9;
+    --line-soft: #E9ECF2;
+    --ink:       #171A21;
+    --ink-2:     #4A5160;
+    --ink-3:     #767E8E;
+    --accent:    #B4530C;
+    --accent-bg: #FBF0E6;
+    --pass:      #1B7A46;
+    --pass-bg:   #E7F4ED;
+    --fail:      #B4243A;
+    --fail-bg:   #FBEAED;
+    --shimmer-a: #E3E7EE;
+    --shimmer-b: #F4F6FA;
+
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+    --step--1: 0.78rem;
+    --step-0:  0.94rem;
+    --step-1:  1.06rem;
+    --step-2:  1.32rem;
+    --step-3:  1.9rem;
+
+    --radius: 10px;
+    --maxw: 62rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:        #12151A;
+      --surface:   #191D24;
+      --surface-2: #21262F;
+      --line:      #2E353F;
+      --line-soft: #252B34;
+      --ink:       #E7EAEF;
+      --ink-2:     #AEB6C2;
+      --ink-3:     #7E8795;
+      --accent:    #F0A05E;
+      --accent-bg: #2B2118;
+      --pass:      #5FD095;
+      --pass-bg:   #16281F;
+      --fail:      #FF8195;
+      --fail-bg:   #2C1A1E;
+      --shimmer-a: #262C35;
+      --shimmer-b: #333B46;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg:        #12151A;
+    --surface:   #191D24;
+    --surface-2: #21262F;
+    --line:      #2E353F;
+    --line-soft: #252B34;
+    --ink:       #E7EAEF;
+    --ink-2:     #AEB6C2;
+    --ink-3:     #7E8795;
+    --accent:    #F0A05E;
+    --accent-bg: #2B2118;
+    --pass:      #5FD095;
+    --pass-bg:   #16281F;
+    --fail:      #FF8195;
+    --fail-bg:   #2C1A1E;
+    --shimmer-a: #262C35;
+    --shimmer-b: #333B46;
+  }
+
+  :root[data-theme="light"] {
+    --bg:        #F8F9FB;
+    --surface:   #FFFFFF;
+    --surface-2: #F1F3F7;
+    --line:      #DDE1E9;
+    --line-soft: #E9ECF2;
+    --ink:       #171A21;
+    --ink-2:     #4A5160;
+    --ink-3:     #767E8E;
+    --accent:    #B4530C;
+    --accent-bg: #FBF0E6;
+    --pass:      #1B7A46;
+    --pass-bg:   #E7F4ED;
+    --fail:      #B4243A;
+    --fail-bg:   #FBEAED;
+    --shimmer-a: #E3E7EE;
+    --shimmer-b: #F4F6FA;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: var(--step-0);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 0 1.25rem 5rem;
+  }
+
+  /* ── Sticky progress ─────────────────────────────────────────── */
+  .bar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 2.5rem;
+  }
+  .bar-inner {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 0.7rem 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .bar-label {
+    font-size: var(--step--1);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    white-space: nowrap;
+  }
+  .track {
+    flex: 1;
+    min-width: 8rem;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--surface-2);
+    overflow: hidden;
+  }
+  .fill {
+    height: 100%;
+    width: 0%;
+    background: var(--accent);
+    transition: width 0.28s ease;
+  }
+  .tally {
+    font-family: var(--font-mono);
+    font-size: var(--step--1);
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-2);
+    white-space: nowrap;
+  }
+  .tally b { color: var(--ink); font-weight: 600; }
+  .tally .t-pass { color: var(--pass); }
+  .tally .t-fail { color: var(--fail); }
+
+  /* ── Header ──────────────────────────────────────────────────── */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: var(--step--1);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.6rem;
+  }
+  h1 {
+    font-size: var(--step-3);
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    font-weight: 640;
+    text-wrap: balance;
+    margin-bottom: 0.6rem;
+  }
+  .lede {
+    font-size: var(--step-1);
+    color: var(--ink-2);
+    max-width: 46ch;
+  }
+  .meta {
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    margin-top: 1.4rem;
+    padding-top: 1.4rem;
+    border-top: 1px solid var(--line-soft);
+    font-size: var(--step--1);
+    color: var(--ink-3);
+  }
+  .meta b { color: var(--ink); font-weight: 600; }
+
+  h2 {
+    font-size: var(--step-2);
+    letter-spacing: -0.01em;
+    font-weight: 620;
+    margin-bottom: 0.5rem;
+    text-wrap: balance;
+  }
+  section { margin-top: 3.25rem; }
+  .sec-note { color: var(--ink-2); max-width: 62ch; margin-bottom: 1.4rem; }
+
+  /* ── Calibration panel ───────────────────────────────────────── */
+  .calib {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .calib-col { background: var(--surface); padding: 1.1rem 1.25rem 1.35rem; }
+  .calib-h {
+    font-size: var(--step--1);
+    font-weight: 650;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-bottom: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .calib-h.was { color: var(--fail); }
+  .calib-h.now { color: var(--pass); }
+  .calib-cap {
+    font-size: var(--step--1);
+    color: var(--ink-3);
+    margin-top: 0.9rem;
+    line-height: 1.5;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.42rem 0;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .row:last-of-type { border-bottom: 0; }
+  .row-k { font-size: var(--step--1); color: var(--ink-2); }
+  .row-v {
+    font-family: var(--font-mono);
+    font-size: var(--step--1);
+    color: var(--ink);
+  }
+  .row-v.dim { color: var(--ink-3); }
+
+  .sk {
+    display: block;
+    height: 9px;
+    border-radius: 4px;
+    background: linear-gradient(90deg, var(--shimmer-a) 25%, var(--shimmer-b) 50%, var(--shimmer-a) 75%);
+    background-size: 280% 100%;
+    animation: sweep 1.5s linear infinite;
+  }
+  @keyframes sweep {
+    0%   { background-position: 130% 0; }
+    100% { background-position: -30% 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sk { animation: none; background: var(--shimmer-a); }
+    .fill { transition: none; }
+  }
+
+  /* ── Parts table ─────────────────────────────────────────────── */
+  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+  table { border-collapse: collapse; width: 100%; min-width: 40rem; background: var(--surface); }
+  th, td { text-align: left; padding: 0.7rem 0.9rem; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th {
+    font-size: var(--step--1);
+    font-weight: 620;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    background: var(--surface-2);
+    white-space: nowrap;
+  }
+  tr:last-child td { border-bottom: 0; }
+  td.mpn { font-family: var(--font-mono); font-size: var(--step--1); white-space: nowrap; }
+  td.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ink-2); }
+  td.why { color: var(--ink-2); font-size: var(--step--1); min-width: 18rem; }
+
+  /* ── Test cards ──────────────────────────────────────────────── */
+  .group-h {
+    font-family: var(--font-mono);
+    font-size: var(--step--1);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 2.25rem 0 0.9rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .test {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line);
+    border-radius: var(--radius);
+    padding: 1.15rem 1.35rem 1.25rem;
+    margin-bottom: 0.85rem;
+    transition: border-color 0.15s ease;
+  }
+  .test[data-state="pass"] { border-left-color: var(--pass); }
+  .test[data-state="fail"] { border-left-color: var(--fail); }
+  .test[data-state="pass"] .t-title { color: var(--ink-3); }
+
+  .t-head { display: flex; align-items: baseline; gap: 0.7rem; flex-wrap: wrap; }
+  .t-n {
+    font-family: var(--font-mono);
+    font-size: var(--step--1);
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-3);
+    font-weight: 600;
+  }
+  .t-title { font-size: var(--step-1); font-weight: 620; letter-spacing: -0.01em; }
+  .t-crit {
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: var(--accent-bg);
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+    padding: 0.1rem 0.42rem;
+    border-radius: 20px;
+  }
+
+  .steps { margin: 0.85rem 0 0; padding-left: 1.15rem; color: var(--ink-2); }
+  .steps li { margin-bottom: 0.28rem; }
+  .steps li::marker { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
+  .box {
+    margin-top: 0.9rem;
+    padding: 0.7rem 0.9rem;
+    border-radius: 7px;
+    font-size: var(--step--1);
+    line-height: 1.55;
+  }
+  .box-h {
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    font-size: 0.68rem;
+    display: block;
+    margin-bottom: 0.3rem;
+  }
+  .box.expect { background: var(--pass-bg); color: var(--ink-2); }
+  .box.expect .box-h { color: var(--pass); }
+  .box.reject { background: var(--fail-bg); color: var(--ink-2); }
+  .box.reject .box-h { color: var(--fail); }
+  .box ul { margin: 0.2rem 0 0; padding-left: 1.1rem; }
+  .box li { margin-bottom: 0.2rem; }
+  .box li::marker { color: currentColor; opacity: 0.5; }
+
+  .aside {
+    margin-top: 0.8rem;
+    padding-left: 0.8rem;
+    border-left: 2px solid var(--line);
+    font-size: var(--step--1);
+    color: var(--ink-3);
+  }
+
+  .verdict { display: flex; gap: 0.45rem; margin-top: 1.05rem; }
+  .vb {
+    font-family: inherit;
+    font-size: var(--step--1);
+    font-weight: 600;
+    padding: 0.36rem 0.85rem;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    color: var(--ink-2);
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+  .vb:hover { border-color: var(--ink-3); color: var(--ink); }
+  .vb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .test[data-state="pass"] .vb[data-v="pass"] {
+    background: var(--pass); border-color: var(--pass);
+    color: var(--surface);
+  }
+  .test[data-state="fail"] .vb[data-v="fail"] {
+    background: var(--fail); border-color: var(--fail);
+    color: var(--surface);
+  }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.86em;
+    background: var(--surface-2);
+    border: 1px solid var(--line-soft);
+    border-radius: 4px;
+    padding: 0.08em 0.34em;
+  }
+  .box code { background: color-mix(in srgb, var(--ink) 8%, transparent); border-color: transparent; }
+
+  pre {
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 0.8rem 1rem;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: var(--step--1);
+    line-height: 1.7;
+    color: var(--ink);
+  }
+  pre code { background: none; border: 0; padding: 0; font-size: 1em; }
+
+  /* ── Quirks ──────────────────────────────────────────────────── */
+  .quirks { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.25rem 1.4rem; }
+  .quirk { padding: 0.75rem 0; border-bottom: 1px solid var(--line); }
+  .quirk:first-of-type { padding-top: 0; }
+  .quirk:last-child { border-bottom: 0; padding-bottom: 0; }
+  .quirk-t { font-weight: 620; margin-bottom: 0.15rem; }
+  .quirk-d { font-size: var(--step--1); color: var(--ink-2); }
+
+  .foot {
+    margin-top: 3.5rem;
+    padding-top: 1.4rem;
+    border-top: 1px solid var(--line);
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .foot-note { font-size: var(--step--1); color: var(--ink-3); flex: 1; min-width: 14rem; }
+  .btn {
+    font-family: inherit;
+    font-size: var(--step--1);
+    font-weight: 600;
+    padding: 0.45rem 0.95rem;
+    border-radius: 6px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--bg);
+    cursor: pointer;
+  }
+  .btn.ghost { background: transparent; color: var(--ink-2); border-color: var(--line); }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn:hover { filter: brightness(1.08); }
+</style>
+
+<div class="bar">
+  <div class="bar-inner">
+    <span class="bar-label">Progress</span>
+    <span class="track"><span class="fill" id="fill"></span></span>
+    <span class="tally" id="tally"><b>0</b>/7 checked</span>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <p class="eyebrow">XRefs · manual verification</p>
+  <h1>Source Part panel — loading states</h1>
+  <p class="lede">Seven checks that the panel now says <em>“still loading”</em> instead of looking empty — and that nothing else moved.</p>
+
+  <div class="meta">
+    <span><b>~12 min</b> to run</span>
+    <span><b>~17–20 s</b> per part — that wait <em>is</em> the thing you're testing</span>
+    <span><b>1</b> check marked critical</span>
+  </div>
+
+  <section>
+    <h2>Calibrate your eye first</h2>
+    <p class="sec-note">This is the entire change, side by side. The left column is what the panel used to show for the whole ~17-second load. Spend a moment here — the rest of the script assumes you can spot the difference at a glance.</p>
+
+    <div class="calib">
+      <div class="calib-col">
+        <div class="calib-h was">Before — reads as an answer</div>
+        <div class="row"><span class="row-k">Datasheet</span><span class="row-v dim">—</span></div>
+        <div class="row"><span class="row-k">Country of Origin</span><span class="row-v dim">—</span></div>
+        <div class="row"><span class="row-k">Distributors</span><span class="row-v">0</span></div>
+        <div class="row"><span class="row-k">Total Stock</span><span class="row-v dim">—</span></div>
+        <div class="row"><span class="row-k">Price Range</span><span class="row-v dim">—</span></div>
+        <p class="calib-cap">Dashes and a hard <strong>0</strong>. Indistinguishable from “we looked, there is nothing.”</p>
+      </div>
+      <div class="calib-col">
+        <div class="calib-h now">After — reads as “working on it”</div>
+        <div class="row"><span class="row-k">Datasheet</span><span class="sk" style="width:58px"></span></div>
+        <div class="row"><span class="row-k">Country of Origin</span><span class="sk" style="width:70px"></span></div>
+        <div class="row"><span class="row-k">Distributors</span><span class="sk" style="width:26px"></span></div>
+        <div class="row"><span class="row-k">Total Stock</span><span class="sk" style="width:66px"></span></div>
+        <div class="row"><span class="row-k">Price Range</span><span class="sk" style="width:104px"></span></div>
+        <p class="calib-cap">Shimmering bars. Each settles into a real value — or a dash, once we've actually checked.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Before you start</h2>
+    <p class="sec-note">Run this once. It should finish with all tests passing and both baseline counts unchanged.</p>
+    <pre><code>npm run verify
+npm run dev</code></pre>
+  </section>
+
+  <section>
+    <h2>Part numbers to use</h2>
+    <p class="sec-note">These are not interchangeable — each one is here for a specific case, and every load time below was measured rather than estimated.</p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Part number</th><th>Manufacturer</th><th>Loads in</th><th>Why this one</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mpn">MNS2N2222AUB</td><td>Microchip</td><td class="num">~17 s</td>
+            <td class="why">Has prices and a datasheet, but <strong>no specifications at all</strong> — exercises the shimmer <em>and</em> the new “no data” message</td>
+          </tr>
+          <tr>
+            <td class="mpn">GRM188R71H104KA93D</td><td>Murata</td><td class="num">~18 s</td>
+            <td class="why">Has <strong>11 specifications</strong> — proves the shimmer turns into real rows</td>
+          </tr>
+          <tr>
+            <td class="mpn">SN74LVC1G08DBVR</td><td>Texas Instruments</td><td class="num">~19 s</td>
+            <td class="why">Has <strong>14 specifications</strong> — an independent second example</td>
+          </tr>
+          <tr>
+            <td class="mpn">YNR4030-680M</td><td>YJYCOIN 🇨🇳</td><td class="num">slow</td>
+            <td class="why">Chinese manufacturer — <strong>the worst case before this fix</strong>, where the Specs tab was entirely blank</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="aside">If a part loads instantly you're seeing a cached copy and there's nothing to observe — switch to another part number. In testing, repeat loads still took the full ~18 s, so this should be rare.</div>
+  </section>
+
+  <section>
+    <h2>The checks</h2>
+
+    <div class="group-h">Does the fix work</div>
+
+    <article class="test" data-id="1">
+      <div class="t-head"><span class="t-n">01</span><span class="t-title">Overview no longer looks empty</span><span class="t-crit">Critical</span></div>
+      <ol class="steps">
+        <li>Search <code>MNS2N2222AUB</code> and click the result card.</li>
+        <li>The panel appears instantly. Watch the <strong>Overview</strong> tab for ~17 seconds.</li>
+      </ol>
+      <div class="box expect"><span class="box-h">Expect while loading</span>
+        <ul>
+          <li>Shimmering bars for Datasheet, Grade, Years to EOL, Risk Rank, Country of Origin, and the whole Distribution and Environmental sections.</li>
+          <li>The image box shimmers — it must <strong>not</strong> say “No image” yet.</li>
+          <li>Next to <strong>Distributors</strong>, a shimmer bar — <strong>not the number 0</strong>. This is the single most important thing on the screen.</li>
+        </ul>
+      </div>
+      <div class="box expect"><span class="box-h">Expect when it finishes</span>
+        A <strong>View PDF</strong> link, <strong>3</strong> distributors, and a RoHS status. Some rows settle on a dash — that's correct, see the quirks below.
+      </div>
+      <div class="box reject"><span class="box-h">Fail if</span>
+        You see a wall of dashes for the whole 17 seconds, or “Distributors 0” at any point before loading finishes.
+      </div>
+      <div class="verdict"><button class="vb" data-v="pass">Pass</button><button class="vb" data-v="fail">Fail</button></div>
+    </article>
+
+    <article class="test" data-id="2">
+      <div class="t-head"><span class="t-n">02</span><span class="t-title">Specs fills in instead of sitting blank</span></div>
+      <ol class="steps">
+        <li>Reload, click the same part again, and switch to the <strong>Specs</strong> tab while it loads.</li>
+      </ol>
+      <div class="box expect"><span class="box-h">Expect</span>
+        Roughly a dozen shimmering rows filling the table, then the message <strong>“No parametric data available for this part.”</strong>
+      </div>
+      <div class="box reject"><span class="box-h">Fail if</span>
+        The shimmer disappears and leaves an empty table with just the “Parameter / Value” header. That outcome would be <em>worse</em> than before the change — it's exactly what this check exists to catch.
+      </div>
+      <div class="verdict"><button class="vb" data-v="pass">Pass</button><button class="vb" data-v="fail">Fail</button></div>
+    </article>
+
+    <article class="test" data-id="3">
+      <div class="t-head"><span class="t-n">03</span><span class="t-title">Specs with real data</span></div>
+      <ol class="steps">
+        <li>Search <code>GRM188R71H104KA93D</code>, click it, open <strong>Specs</strong>.</li>
+        <li>Repeat with <code>SN74LVC1G08DBVR</code>.</li>
+      </ol>
+      <div class="box expect"><span class="box-h">Expect</span>
+        A few real rows immediately, shimmer rows beneath them, then the table fills with ~11 and ~14 real specifications respectively.
+      </div>
+      <div class="box reject"><span class="box-h">Fail if</span>
+        The “No parametric data available” message appears on a part that clearly has specifications.
+      </div>
+      <div class="verdict"><button class="vb" data-v="pass">Pass</button><button class="vb" data-v="fail">Fail</button></div>
+    </article>
+
+    <article class="test" data-id="4">
+      <div class="t-head"><span class="t-n">04</span><span class="t-title">The worst case — a Chinese-manufacturer part</span></div>
+      <ol class="steps">
+        <li>Search <code>YNR4030-680M</code> and click the result (it carries a 🇨🇳 flag).</li>
+        <li><strong>Switch to the Specs tab right away</strong>, while it is still loading.</li>
+      </ol>
+      <div class="box expect"><span class="box-h">Expect</span>
+        Shimmer rows fill the table straight away, and the real specs replace them ~10–20 s later when the load finishes. The shimmer is immediate; the <em>specs</em> are not — waiting for real rows is the pass condition, not a failure. Before this change this case showed a bare column header over blank space for the entire load.
+      </div>
+      <div class="verdict"><button class="vb" data-v="pass">Pass</button><button class="vb" data-v="fail">Fail</button></div>
+    </article>
+
+    <div class="group-h">Does it settle cleanly</div>
+
+    <article class="test" data-id="5">
+      <div class="t-head"><span class="t-n">05</span><span class="t-title">Nothing jumps</span></div>
+      <ol class="steps">
+        <li>While any part loads, fix your eye on one row — <strong>Total Stock</strong> works well.</li>
+        <li>Watch its position on screen at the moment the data lands.</li>
+      </ol>
+      <div class="box expect"><span class="box-h">Expect</span>
+        It stays exactly where it is. Values appear in place.
+      </div>
+      <div class="box reject"><span class="box-h">Fail if</span>
+        Rows shift up or down, or the panel jolts, as loading finishes.
+      </div>
+      <div class="verdict"><button class="vb" data-v="pass">Pass</button><button class="vb" data-v="fail">Fail</button></div>
+    </article>
+
+    <div class="group-h">Did anything else move</div>
+
+    <article class="test" data-id="6">
+      <div class="t-head"><span class="t-n">06</span><span class="t-title">Nothing else changed</span></div>
+      <ol class="steps">
+        <li><strong>Comparison view</strong> — load a part, find replacements, click a replacement card.</li>
+        <li><strong>Parts list</strong> — open any BOM list. Rows are <strong>not</strong> clickable: click the <strong>YES</strong> link in the <strong>Xrefs</strong> column (or a number in a cross-reference count column) to open the row popup.</li>
+      </ol>
+      <div class="box expect"><span class="box-h">Expect</span>
+        Both look and behave exactly as they did before — no shimmer bars in the popup, where the data is already loaded.
+      </div>
+      <div class="aside">A part with no specs will now say “No parametric data available for this part.” in the popup's Specs tab instead of a blank table. Intended — the same improvement carrying over.</div>
+      <div class="box reject"><span class="box-h">Fail if</span>
+        Either surface shows shimmer bars where it used to show data, or looks different from what you remember.
+      </div>
+      <div class="verdict"><button class="vb" data-v="pass">Pass</button><button class="vb" data-v="fail">Fail</button></div>
+    </article>
+  </section>
+
+    <article class="test" data-id="7">
+      <div class="t-head"><span class="t-n">07</span><span class="t-title">The BOM popup's comparison no longer goes blank</span></div>
+      <ol class="steps">
+        <li>In that same popup, <strong>click one of the replacement cards</strong>.</li>
+      </ol>
+      <div class="box expect"><span class="box-h">Expect</span>
+        The layout splits into three panes <strong>immediately</strong>, with shimmer skeletons on the right while the replacement's details load (~10 s), then the real content.
+      </div>
+      <div class="box reject"><span class="box-h">Fail if</span>
+        The right two-thirds goes blank for several seconds before anything appears. That was the bug this fixes.
+      </div>
+      <div class="verdict"><button class="vb" data-v="pass">Pass</button><button class="vb" data-v="fail">Fail</button></div>
+    </article>
+  </section>
+
+  <section>
+    <h2>Expected quirks — not bugs</h2>
+    <p class="sec-note">Four behaviours look wrong but are either intended or already known. Please don't file these.</p>
+    <div class="quirks">
+      <div class="quirk">
+        <div class="quirk-t">Some rows shimmer, then land on a dash</div>
+        <div class="quirk-d">Grade, Years to EOL, Risk Rank, ECCN and HTS Code are genuinely empty for most parts. The shimmer means “we're checking”; the dash means “we checked, there's nothing.” The fix separates loading from empty — it can't invent data that was never published.</div>
+      </div>
+      <div class="quirk">
+        <div class="quirk-t">Chinese-manufacturer parts show “No image” straight away</div>
+        <div class="quirk-d">Deliberate. Product images only ever come from Digikey, so shimmering there would be a tease that always ends in disappointment.</div>
+      </div>
+      <div class="quirk">
+        <div class="quirk-t">The status chip says “Active” before loading finishes</div>
+        <div class="quirk-d">A known, separate flaw: for a part whose lifecycle status we don't yet know, the app assumes Active. Written down as an open issue — not fixed here, and not caused by this change.</div>
+      </div>
+      <div class="quirk">
+        <div class="quirk-t">Qualifications and Cross References appear late</div>
+        <div class="quirk-d">These sections only render once they have content, so they push everything below them down when they arrive. Pre-existing, and out of scope for this work.</div>
+      </div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <p class="foot-note" id="foot-note">For anything that fails, note the check number, the part number, and what you saw instead. A screenshot mid-load is ideal — you have ~17 seconds.</p>
+    <button class="btn" id="copy">Copy results</button>
+    <button class="btn ghost" id="reset">Reset</button>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var KEY = 'xrefs-loading-checklist-v1';
+    var tests = Array.prototype.slice.call(document.querySelectorAll('.test'));
+    var fill = document.getElementById('fill');
+    var tally = document.getElementById('tally');
+    var note = document.getElementById('foot-note');
+    var noteText = note.textContent;
+
+    function load() {
+      try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; }
+    }
+    function save(state) {
+      try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* private mode — session only */ }
+    }
+
+    var state = load();
+
+    function render() {
+      var pass = 0, fail = 0;
+      tests.forEach(function (t) {
+        var v = state[t.dataset.id];
+        if (v) { t.setAttribute('data-state', v); } else { t.removeAttribute('data-state'); }
+        if (v === 'pass') pass++;
+        if (v === 'fail') fail++;
+      });
+      var done = pass + fail;
+      fill.style.width = (done / tests.length * 100) + '%';
+      fill.style.background = fail ? 'var(--fail)' : 'var(--accent)';
+      tally.innerHTML = '<b>' + done + '</b>/' + tests.length + ' checked' +
+        (pass ? ' · <span class="t-pass">' + pass + ' pass</span>' : '') +
+        (fail ? ' · <span class="t-fail">' + fail + ' fail</span>' : '');
+    }
+
+    tests.forEach(function (t) {
+      t.querySelectorAll('.vb').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var v = b.dataset.v;
+          state[t.dataset.id] = state[t.dataset.id] === v ? null : v;
+          if (!state[t.dataset.id]) delete state[t.dataset.id];
+          save(state); render();
+        });
+      });
+    });
+
+    document.getElementById('reset').addEventListener('click', function () {
+      state = {}; save(state); render();
+      note.textContent = noteText;
+    });
+
+    document.getElementById('copy').addEventListener('click', function () {
+      var lines = ['Source Part panel — loading states'];
+      tests.forEach(function (t) {
+        var v = state[t.dataset.id];
+        lines.push(
+          t.querySelector('.t-n').textContent + '  ' +
+          (v === 'pass' ? 'PASS' : v === 'fail' ? 'FAIL' : '—   ') + '  ' +
+          t.querySelector('.t-title').textContent
+        );
+      });
+      var fails = tests.filter(function (t) { return state[t.dataset.id] === 'fail'; });
+      lines.push('', fails.length ? fails.length + ' failing — needs a look.' : 'All checked items passed.');
+      var text = lines.join('\n');
+
+      function done(ok) {
+        note.textContent = ok ? 'Results copied — paste them wherever you need.' : text;
+        setTimeout(function () { note.textContent = noteText; }, ok ? 3000 : 60000);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
+      } else { done(false); }
+    });
+
+    render();
+  })();
+</script>
