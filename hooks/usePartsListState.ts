@@ -52,6 +52,14 @@ interface PartsListState {
   modalRowIndex: number | null;
   modalSelectedRec: XrefRecommendation | null;
   modalComparisonAttrs: PartAttributes | null;
+  /** True while the replacement's attributes are being fetched. Drives
+   *  ComparisonView's skeletons — the panel mounts optimistically on click
+   *  rather than waiting for the fetch, so the right pane is never blank. */
+  modalComparisonLoading: boolean;
+  /** True when that fetch FAILED. Distinct from loading so the panel shows an
+   *  error instead of shimmering forever — the catch below cannot leave
+   *  modalComparisonAttrs null with no way to tell the two apart. */
+  modalComparisonError: boolean;
   modalComparing: boolean;
   /** True while handleOpenModal's initial attributes/recs fetch is in flight.
    *  Drives the RecommendationsPanel loading overlay inside PartDetailModal so
@@ -99,6 +107,8 @@ const INITIAL_STATE: PartsListState = {
   modalRowIndex: null,
   modalSelectedRec: null,
   modalComparisonAttrs: null,
+  modalComparisonLoading: false,
+  modalComparisonError: false,
   modalComparing: false,
   modalInitialFetching: false,
   error: null,
@@ -610,6 +620,8 @@ export function usePartsListState() {
         modalRowIndex: null,
         modalSelectedRec: null,
         modalComparisonAttrs: null,
+        modalComparisonLoading: false,
+        modalComparisonError: false,
         modalComparing: false,
       };
     });
@@ -642,6 +654,8 @@ export function usePartsListState() {
       modalRowIndex: rowIndex,
       modalSelectedRec: null,
       modalComparisonAttrs: null,
+      modalComparisonLoading: false,
+      modalComparisonError: false,
       modalComparing: false,
       modalInitialFetching: willFetch,
     }));
@@ -705,6 +719,8 @@ export function usePartsListState() {
       modalRowIndex: null,
       modalSelectedRec: null,
       modalComparisonAttrs: null,
+      modalComparisonLoading: false,
+      modalComparisonError: false,
       modalComparing: false,
       modalInitialFetching: false,
     }));
@@ -716,13 +732,19 @@ export function usePartsListState() {
       modalSelectedRec: rec,
       modalComparing: true,
       modalComparisonAttrs: null,
+      modalComparisonLoading: true,
+      modalComparisonError: false,
     }));
 
     try {
       const attrs = await getPartAttributes(rec.part.mpn);
-      setState(prev => ({ ...prev, modalComparisonAttrs: attrs }));
+      setState(prev => ({ ...prev, modalComparisonAttrs: attrs, modalComparisonLoading: false }));
     } catch {
-      // Comparison view will show without full attributes
+      // Comparison view renders from the recommendation alone and shows an
+      // error in the attribute-backed tabs. Clearing `loading` here is what
+      // stops an indefinite skeleton — an empty catch would leave attrs null
+      // with no way to distinguish "still fetching" from "failed".
+      setState(prev => ({ ...prev, modalComparisonLoading: false, modalComparisonError: true }));
     }
   }, []);
 
@@ -731,6 +753,8 @@ export function usePartsListState() {
       ...prev,
       modalSelectedRec: null,
       modalComparisonAttrs: null,
+      modalComparisonLoading: false,
+      modalComparisonError: false,
       modalComparing: false,
     }));
   }, []);

@@ -57,6 +57,7 @@ export default function PartsListShell() {
     spreadsheetHeaders, activeListId, listViewConfigs, replacementPriorities,
     backfillCountsResult,
     modalRow, modalSelectedRec, modalComparisonAttrs, modalComparing, modalInitialFetching,
+    modalComparisonLoading, modalComparisonError,
     handleFileSelected, handleParsedDataReady,
     handleColumnMappingConfirmed, handleColumnMappingCancelled, handleSheetChange,
     handleConsolidateDuplicates, handleLeaveDuplicatesAsIs,
@@ -619,6 +620,8 @@ export default function PartsListShell() {
         selectedRec={modalSelectedRec}
         comparisonAttrs={modalComparisonAttrs}
         isComparing={modalComparing}
+        isLoadingReplacement={modalComparisonLoading}
+        replacementError={modalComparisonError}
         initialFetching={modalInitialFetching}
         onClose={handleCloseModal}
         onSelectRec={handleModalSelectRec}

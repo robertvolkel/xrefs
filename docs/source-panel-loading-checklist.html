@@ -459,10 +459,10 @@
 
   <p class="eyebrow">XRefs · manual verification</p>
   <h1>Source Part panel — loading states</h1>
-  <p class="lede">Six checks that the panel now says <em>“still loading”</em> instead of looking empty — and that nothing else moved.</p>
+  <p class="lede">Seven checks that the panel now says <em>“still loading”</em> instead of looking empty — and that nothing else moved.</p>
 
   <div class="meta">
-    <span><b>~10 min</b> to run</span>
+    <span><b>~12 min</b> to run</span>
     <span><b>~17–20 s</b> per part — that wait <em>is</em> the thing you're testing</span>
     <span><b>1</b> check marked critical</span>
   </div>
@@ -622,13 +622,29 @@ npm run dev</code></pre>
       <div class="t-head"><span class="t-n">06</span><span class="t-title">Nothing else changed</span></div>
       <ol class="steps">
         <li><strong>Comparison view</strong> — load a part, find replacements, click a replacement card.</li>
-        <li><strong>Parts list</strong> — open any BOM list and click a row to open its detail popup.</li>
+        <li><strong>Parts list</strong> — open any BOM list. Rows are <strong>not</strong> clickable: click the <strong>YES</strong> link in the <strong>Xrefs</strong> column (or a number in a cross-reference count column) to open the row popup.</li>
       </ol>
       <div class="box expect"><span class="box-h">Expect</span>
-        Both look and behave exactly as they did before.
+        Both look and behave exactly as they did before — no shimmer bars in the popup, where the data is already loaded.
       </div>
+      <div class="aside">A part with no specs will now say “No parametric data available for this part.” in the popup's Specs tab instead of a blank table. Intended — the same improvement carrying over.</div>
       <div class="box reject"><span class="box-h">Fail if</span>
         Either surface shows shimmer bars where it used to show data, or looks different from what you remember.
+      </div>
+      <div class="verdict"><button class="vb" data-v="pass">Pass</button><button class="vb" data-v="fail">Fail</button></div>
+    </article>
+  </section>
+
+    <article class="test" data-id="7">
+      <div class="t-head"><span class="t-n">07</span><span class="t-title">The BOM popup's comparison no longer goes blank</span></div>
+      <ol class="steps">
+        <li>In that same popup, <strong>click one of the replacement cards</strong>.</li>
+      </ol>
+      <div class="box expect"><span class="box-h">Expect</span>
+        The layout splits into three panes <strong>immediately</strong>, with shimmer skeletons on the right while the replacement's details load (~10 s), then the real content.
+      </div>
+      <div class="box reject"><span class="box-h">Fail if</span>
+        The right two-thirds goes blank for several seconds before anything appears. That was the bug this fixes.
       </div>
       <div class="verdict"><button class="vb" data-v="pass">Pass</button><button class="vb" data-v="fail">Fail</button></div>
     </article>

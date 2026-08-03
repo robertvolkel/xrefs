@@ -2,7 +2,7 @@
 
 Manual checklist for the change that makes the Source Part panel show **"still loading"** instead of looking empty (Decision #286).
 
-**Time:** about 10 minutes.
+**Time:** about 12 minutes.
 **You need:** the app running, and about 20 seconds of patience per part — that is genuinely how long a part takes to load, and it is the whole window you are testing.
 
 ---
@@ -104,9 +104,23 @@ While any part loads, keep your eye on one row — say **Total Stock** — and w
 ## Test 6 — Nothing else changed
 
 1. **Comparison view** — load a part, click **Find replacements**, then click a replacement card. Both panels should look and behave exactly as before.
-2. **Parts list** — open any BOM list and click a row to open its detail popup. Should look exactly as before.
+2. **Parts list** — open any BOM list. Rows are **not** clickable: click the **YES** link in the **Xrefs** column (or a number in one of the cross-reference count columns) to open the row popup.
+
+**Expect:** no shimmer bars anywhere in the popup — the data there is already loaded.
 
 ❌ **Fail if:** either surface shows shimmer bars where it used to show data, or looks different from what you remember.
+
+> A part with no specs will now say "No parametric data available for this part." in the popup's Specs tab instead of showing a blank table. Intended — the same improvement carrying over.
+
+---
+
+## Test 7 — The BOM popup's comparison no longer goes blank
+
+1. In that same popup, **click one of the replacement cards**.
+
+**Expect:** the layout splits into three panes **immediately**, with shimmer skeletons on the right while the replacement's details load (~10 s), then the real content.
+
+❌ **Fail if:** the right two-thirds goes blank/empty for several seconds before anything appears. That was the bug this fixes.
 
 ---
 
