@@ -25,6 +25,7 @@ const TABS = 'components/AttributesTabContent.tsx';
 const COMPARISON = 'components/ComparisonView.tsx';
 const DESKTOP = 'components/DesktopLayout.tsx';
 const MOBILE = 'components/MobileAppLayout.tsx';
+const STATE = 'hooks/useAppState.ts';
 
 /**
  * The source part's attribute fetch was MEASURED at ~17s against the live APIs
@@ -130,6 +131,65 @@ describe('Specs: filler rows while loading, an explicit message when empty', () 
     // shimmer would resolve to an unexplained blank table — worse than the stable
     // blank it replaced.
     expect(readCode(PANEL)).toMatch(/!isEnriching && specRows\.length === 0/);
+  });
+});
+
+describe('The attribute fetch has its own abort scope — and TWO guards, not one', () => {
+  /**
+   * The fetch was moved off the shared `signal` (which every chat turn cancels)
+   * onto its own `attrsSignal`, so typing mid-load no longer kills it. That
+   * narrowing opened a hole on the FAILURE path: when the fetch fails rather than
+   * aborts, `attrsSignal.aborted` is false, so control reaches the fallback —
+   * whose first act is `freshAbort()`, cancelling the user's in-flight chat
+   * request and leaving their message unanswered. Both guards are required.
+   */
+  const code = () => readCode(STATE);
+
+  it('passes the dedicated signal to the attribute fetch', () => {
+    expect(code()).toMatch(/getPartAttributes\(part\.mpn, attrsSignal,/);
+  });
+
+  it('discards a stale result when a DIFFERENT part superseded the fetch', () => {
+    expect(code()).toMatch(/if \(attrsSignal\.aborted\) return;/);
+  });
+
+  it('still honours the chat signal on the FAILURE path', () => {
+    // Without this the fallback aborts the chat turn the user just started.
+    const src = code();
+    const tail = src.slice(src.indexOf('if (!sourceAttrs) {'));
+    expect(tail.slice(0, 400)).toMatch(/if \(signal\.aborted\) return;/);
+    expect(tail.indexOf('if (signal.aborted) return;'))
+      .toBeLessThan(tail.indexOf('loadAttributesAndRecommendations(part)'));
+  });
+
+  it('lands attributes silently when only the NARRATIVE was superseded', () => {
+    // No chat message and no auto-fire on this path — both would race the turn
+    // now in flight. A state write, then return, BEFORE any narrative call.
+    const src = code();
+    const branch = src.slice(src.indexOf('if (signal.aborted) {'));
+    expect(branch).toMatch(/sourceAttributes: sourceAttrs/);
+    const ret = branch.indexOf('return;');
+    const narrative = Math.min(
+      ...['tryAutoFireIntent', 'presentNextStepChoices', 'addMessage(']
+        .map((s) => branch.indexOf(s))
+        .filter((i) => i >= 0),
+    );
+    expect(ret).toBeGreaterThan(-1);
+    expect(ret).toBeLessThan(narrative);
+  });
+
+  it('cancels the attribute fetch on reset and on conversation switch', () => {
+    // Otherwise a previous conversation's part can land over the new one.
+    // Anchored to each call site rather than counting occurrences — the factory
+    // freshAttrsAbort() contains the same call, so a bare count proves nothing.
+    const src = code();
+    const near = (anchor: string) => {
+      const i = src.indexOf(anchor);
+      expect(i).toBeGreaterThan(-1);
+      return src.slice(Math.max(0, i - 400), i + 400);
+    };
+    expect(near('conversationRef.current = [];')).toMatch(/attrsAbortRef\.current\?\.abort\(\)/);
+    expect(near('conversationRef.current = snapshot.orchestratorMessages;')).toMatch(/attrsAbortRef\.current\?\.abort\(\)/);
   });
 });
 

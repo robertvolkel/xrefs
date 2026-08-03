@@ -1740,6 +1740,13 @@ export function useAppState() {
       // sourceAttrsReadyRef true on its own SUCCESS path and leaves it false on
       // error (so a failed load can't open the gate against the partial preview).
       if (!sourceAttrs) {
+        // A chat turn owns the screen now. The fallback's first act is
+        // freshAbort(), which would cancel that in-flight chat request and leave
+        // the user's message unanswered. The guard above deliberately narrowed to
+        // attrsSignal (so a chat turn no longer kills the ATTRIBUTE fetch) — which
+        // means this failure path is the one place the chat signal must still be
+        // honoured. Do not collapse these two checks back into one.
+        if (signal.aborted) return;
         await loadAttributesAndRecommendations(part);
       }
     },

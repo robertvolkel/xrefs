@@ -122,6 +122,12 @@ While any part loads, keep your eye on one row — say **Total Stock** — and w
 
 ❌ **Fail if:** the panel shimmers indefinitely, stays stuck on partial data, or the chat posts two responses.
 
+3. **Now repeat with a part that fails to load** — type a nonsense part number that still returns a result card, or any part you know we can't resolve, then type in chat before it finishes.
+
+**Expect:** the chat still replies. This second run matters as much as the first — it exercises a different code path, and a bug that only shows up here was found *after* the first version of this script was written.
+
+❌ **Fail if:** your chat message gets no reply at all.
+
 > Previously, typing here silently cancelled the part's data load and left the screen stuck in its loading state.
 
 ---

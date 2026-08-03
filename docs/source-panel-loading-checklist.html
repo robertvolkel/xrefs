@@ -638,18 +638,19 @@ npm run dev</code></pre>
       <ol class="steps">
         <li>Search a part you haven't used yet and click it.</li>
         <li><strong>Immediately</strong> — before it finishes — type something into the chat and send it, e.g. “what is this part used for?”</li>
+        <li><strong>Then repeat with a part that fails to load</strong> — a part number we can't resolve — and type in chat again before it finishes.</li>
       </ol>
-      <div class="box expect"><span class="box-h">Expect</span>
+      <div class="box expect"><span class="box-h">Expect — both runs</span>
         <ul>
-          <li>The chat replies normally.</li>
-          <li>The panel <strong>finishes loading and fills in with real data</strong>.</li>
+          <li>The chat replies normally. <strong>Both times.</strong></li>
+          <li>The panel <strong>finishes loading and fills in with real data</strong> (first run).</li>
           <li>Exactly one reply — no duplicate “here are your options” message.</li>
         </ul>
       </div>
       <div class="box reject"><span class="box-h">Fail if</span>
-        The panel shimmers indefinitely, stays stuck on partial data, or the chat posts two responses.
+        The panel shimmers indefinitely, stays stuck on partial data, the chat posts two responses — or your message gets <strong>no reply at all</strong>.
       </div>
-      <div class="aside">Previously, typing here silently cancelled the part's data load and left the screen stuck in its loading state. This is the riskiest change in the set — it touches how the screen tracks what it's doing, not just how it looks.</div>
+      <div class="aside">Previously, typing here silently cancelled the part's data load and left the screen stuck in its loading state. This is the riskiest change in the set — it touches how the screen tracks what it's doing, not just how it looks. <strong>Step 3 exists because the first version of this script missed a real bug:</strong> it only tested a part that loads successfully, so the failure path — where a chat message was silently cancelled and never answered — went unexercised.</div>
       <div class="verdict"><button class="vb" data-v="pass">Pass</button><button class="vb" data-v="fail">Fail</button></div>
     </article>
 
