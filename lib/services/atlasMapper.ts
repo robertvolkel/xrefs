@@ -3112,6 +3112,9 @@ const atlasL2ParamDictionaries: Record<string, Record<string, AtlasParamMapping>
     // combined Dimensions field — and both would collide on the same id).
     '开关宽度': { attributeId: 'switch_width', attributeName: 'Switch Width', unit: 'mm', sortOrder: 18 },
     '开关长度': { attributeId: 'switch_length', attributeName: 'Switch Length', unit: 'mm', sortOrder: 19 },
+    // Terminal/lead style (J-lead, PC pin, SMD tab) — display-only, categorical. This is the
+    // terminal FORM, NOT the actuator type (button/toggle) — do not map to 'actuator_type'.
+    '引脚样式': { attributeId: 'termination', attributeName: 'Termination', sortOrder: 20 },
   },
   'RF and Wireless': {
     '类型': { attributeId: 'type', attributeName: 'Type', sortOrder: 1 },
