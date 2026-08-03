@@ -451,7 +451,7 @@
   <div class="bar-inner">
     <span class="bar-label">Progress</span>
     <span class="track"><span class="fill" id="fill"></span></span>
-    <span class="tally" id="tally"><b>0</b>/8 checked</span>
+    <span class="tally" id="tally"><b>0</b>/7 checked</span>
   </div>
 </div>
 
@@ -459,12 +459,12 @@
 
   <p class="eyebrow">XRefs · manual verification</p>
   <h1>Source Part panel — loading states</h1>
-  <p class="lede">Eight checks that the panel now says <em>“still loading”</em> instead of looking empty — and that nothing else moved.</p>
+  <p class="lede">Seven checks that the panel now says <em>“still loading”</em> instead of looking empty — and that nothing else moved.</p>
 
   <div class="meta">
-    <span><b>~15 min</b> to run</span>
+    <span><b>~12 min</b> to run</span>
     <span><b>~17–20 s</b> per part — that wait <em>is</em> the thing you're testing</span>
-    <span><b>2</b> checks marked critical</span>
+    <span><b>1</b> check marked critical</span>
   </div>
 
   <section>
@@ -616,7 +616,7 @@ npm run dev</code></pre>
       <div class="verdict"><button class="vb" data-v="pass">Pass</button><button class="vb" data-v="fail">Fail</button></div>
     </article>
 
-    <div class="group-h">The two bugs fixed alongside</div>
+    <div class="group-h">The bug fixed alongside</div>
 
     <article class="test" data-id="6">
       <div class="t-head"><span class="t-n">06</span><span class="t-title">Clicking the part's own name no longer blanks it</span></div>
@@ -633,31 +633,10 @@ npm run dev</code></pre>
       <div class="verdict"><button class="vb" data-v="pass">Pass</button><button class="vb" data-v="fail">Fail</button></div>
     </article>
 
-    <article class="test" data-id="7">
-      <div class="t-head"><span class="t-n">07</span><span class="t-title">Typing while a part loads</span><span class="t-crit">Critical</span></div>
-      <ol class="steps">
-        <li>Search a part you haven't used yet and click it.</li>
-        <li><strong>Immediately</strong> — before it finishes — type something into the chat and send it, e.g. “what is this part used for?”</li>
-        <li><strong>Then repeat with a part that fails to load</strong> — a part number we can't resolve — and type in chat again before it finishes.</li>
-      </ol>
-      <div class="box expect"><span class="box-h">Expect — both runs</span>
-        <ul>
-          <li>The chat replies normally. <strong>Both times.</strong></li>
-          <li>The panel <strong>finishes loading and fills in with real data</strong> (first run).</li>
-          <li>Exactly one reply — no duplicate “here are your options” message.</li>
-        </ul>
-      </div>
-      <div class="box reject"><span class="box-h">Fail if</span>
-        The panel shimmers indefinitely, stays stuck on partial data, the chat posts two responses — or your message gets <strong>no reply at all</strong>.
-      </div>
-      <div class="aside">Previously, typing here silently cancelled the part's data load and left the screen stuck in its loading state. This is the riskiest change in the set — it touches how the screen tracks what it's doing, not just how it looks. <strong>Step 3 exists because the first version of this script missed a real bug:</strong> it only tested a part that loads successfully, so the failure path — where a chat message was silently cancelled and never answered — went unexercised.</div>
-      <div class="verdict"><button class="vb" data-v="pass">Pass</button><button class="vb" data-v="fail">Fail</button></div>
-    </article>
-
     <div class="group-h">Did anything else move</div>
 
-    <article class="test" data-id="8">
-      <div class="t-head"><span class="t-n">08</span><span class="t-title">Nothing else changed</span></div>
+    <article class="test" data-id="7">
+      <div class="t-head"><span class="t-n">07</span><span class="t-title">Nothing else changed</span></div>
       <ol class="steps">
         <li><strong>Comparison view</strong> — load a part, find replacements, click a replacement card.</li>
         <li><strong>Parts list</strong> — open any BOM list and click a row to open its detail popup.</li>

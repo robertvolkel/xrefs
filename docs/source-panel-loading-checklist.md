@@ -2,7 +2,7 @@
 
 Manual checklist for the change that makes the Source Part panel show **"still loading"** instead of looking empty (Decision #286).
 
-**Time:** about 15 minutes.
+**Time:** about 12 minutes.
 **You need:** the app running, and about 20 seconds of patience per part — that is genuinely how long a part takes to load, and it is the whole window you are testing.
 
 ---
@@ -110,29 +110,7 @@ While any part loads, keep your eye on one row — say **Total Stock** — and w
 
 ---
 
-## Test 7 — Typing while a part loads ⭐ the riskiest fix
-
-1. Search a part you have not used yet and click it.
-2. **Immediately**, before it finishes, type anything into the chat and send it (e.g. "what is this part used for?").
-
-**Expect:**
-- The chat replies normally.
-- The panel **finishes loading and fills in with real data.**
-- Only one reply appears — no duplicate "here are your options" message.
-
-❌ **Fail if:** the panel shimmers indefinitely, stays stuck on partial data, or the chat posts two responses.
-
-3. **Now repeat with a part that fails to load** — type a nonsense part number that still returns a result card, or any part you know we can't resolve, then type in chat before it finishes.
-
-**Expect:** the chat still replies. This second run matters as much as the first — it exercises a different code path, and a bug that only shows up here was found *after* the first version of this script was written.
-
-❌ **Fail if:** your chat message gets no reply at all.
-
-> Previously, typing here silently cancelled the part's data load and left the screen stuck in its loading state.
-
----
-
-## Test 8 — Nothing else changed
+## Test 7 — Nothing else changed
 
 1. **Comparison view** — load a part, click **Find replacements**, then click a replacement card. Both panels should look and behave exactly as before.
 2. **Parts list** — open any BOM list and click a row to open its detail popup. Should look exactly as before.

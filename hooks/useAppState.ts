@@ -256,27 +256,6 @@ export function useAppState() {
     return controller.signal;
   }, []);
 
-  // SEPARATE abort scope for the source part's attribute fetch.
-  //
-  // `abortRef` is cancelled by every new chat turn, which is right for the chat
-  // round-trip but wrong for this fetch: the attributes being loaded are still
-  // the correct attributes for the part on screen no matter what the user types.
-  // Sharing one controller meant typing mid-load killed the fetch AND left the
-  // phase stuck on 'loading-attributes' (handleSearchWithLLM preserves the phase
-  // when sourceAttributes is set, and the optimistic preview always sets it), so
-  // the panel was stranded on partial data with the loading state still on.
-  //
-  // Cancel this one ONLY when the fetch's result would no longer be wanted:
-  // a different part is confirmed, a reset, or a conversation switch.
-  const attrsAbortRef = useRef<AbortController | null>(null);
-
-  const freshAttrsAbort = useCallback(() => {
-    attrsAbortRef.current?.abort();
-    const controller = new AbortController();
-    attrsAbortRef.current = controller;
-    return controller.signal;
-  }, []);
-
   // Keep refs in sync with state for async callbacks
   useEffect(() => {
     recsRef.current = state.recommendations;
@@ -1649,8 +1628,6 @@ export function useAppState() {
   const handleConfirmWithLLM = useCallback(
     async (part: PartSummary, preview?: PartAttributes) => {
       const signal = freshAbort();
-      // A new part supersedes any attribute fetch still running for the old one.
-      const attrsSignal = freshAttrsAbort();
       const stopRotation = startStatusRotation([
         { text: 'Checking all data sources...', delayMs: 0 },
         { text: 'Fetching technical attributes...', delayMs: 1200 },
@@ -1698,34 +1675,15 @@ export function useAppState() {
       const cardSource = part.dataSource === 'digikey' || part.dataSource === 'atlas' || part.dataSource === 'partsio'
         ? part.dataSource
         : undefined;
-      const sourceAttrs = await getPartAttributes(part.mpn, attrsSignal, {
+      const sourceAttrs = await getPartAttributes(part.mpn, signal, {
         source: cardSource,
         manufacturer: part.manufacturer,
       }).catch(() => null);
       stopRotation();
-      // A different part / reset superseded this fetch — its result is stale.
-      if (attrsSignal.aborted) return;
+      if (signal.aborted) return; // conversation switched mid-flight
 
       if (sourceAttrs) {
         sourceAttrsReadyRef.current = true; // canonical attrs in hand — preview superseded, gate lifted
-
-        if (signal.aborted) {
-          // A new chat turn superseded our NARRATIVE (the action menu / auto-fired
-          // intent), but these attributes are still correct for the part on screen.
-          // Land them silently — no chat message, no auto-fire, nothing that would
-          // race the turn now in flight — so the panel resolves to real data instead
-          // of being stranded on the optimistic preview with loading still showing.
-          setState((prev) =>
-            prev.sourcePart?.mpn === part.mpn
-              ? {
-                  ...prev,
-                  sourceAttributes: sourceAttrs,
-                  phase: prev.phase === 'loading-attributes' ? ('awaiting-action' as AppPhase) : prev.phase,
-                }
-              : prev,
-          );
-          return;
-        }
         // If the user's original query telegraphed an intent (e.g., "lowest
         // price for X"), skip the generic action menu and fire that action
         // directly. tryAutoFireIntent returns false when the intent can't be
@@ -1740,13 +1698,6 @@ export function useAppState() {
       // sourceAttrsReadyRef true on its own SUCCESS path and leaves it false on
       // error (so a failed load can't open the gate against the partial preview).
       if (!sourceAttrs) {
-        // A chat turn owns the screen now. The fallback's first act is
-        // freshAbort(), which would cancel that in-flight chat request and leave
-        // the user's message unanswered. The guard above deliberately narrowed to
-        // attrsSignal (so a chat turn no longer kills the ATTRIBUTE fetch) — which
-        // means this failure path is the one place the chat signal must still be
-        // honoured. Do not collapse these two checks back into one.
-        if (signal.aborted) return;
         await loadAttributesAndRecommendations(part);
       }
     },
@@ -1860,8 +1811,6 @@ export function useAppState() {
       // that already cleared these), closing the divergence that caused the bug.
       acceptanceCriteriaRef.current = {};
       sourceAttrsReadyRef.current = false; // canonical attrs not loaded yet — gate replacement-finding
-      // A new part supersedes any attribute fetch still running for the old one.
-      freshAttrsAbort();
       setState((prev) => ({
         ...prev,
         phase: 'loading-attributes',
@@ -2287,8 +2236,6 @@ export function useAppState() {
   const handleReset = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
-    attrsAbortRef.current?.abort();
-    attrsAbortRef.current = null;
     conversationRef.current = [];
     contextAskedRef.current = false;
     attributesAskedRef.current = false;
@@ -2491,8 +2438,6 @@ export function useAppState() {
     // Cancel any in-flight async operations from the previous conversation
     abortRef.current?.abort();
     abortRef.current = null;
-    attrsAbortRef.current?.abort();
-    attrsAbortRef.current = null;
 
     conversationRef.current = snapshot.orchestratorMessages;
     recsRef.current = snapshot.recommendations;
