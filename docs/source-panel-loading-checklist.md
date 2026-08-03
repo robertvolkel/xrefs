@@ -2,7 +2,7 @@
 
 Manual checklist for the change that makes the Source Part panel show **"still loading"** instead of looking empty (Decision #286).
 
-**Time:** about 12 minutes.
+**Time:** about 10 minutes.
 **You need:** the app running, and about 20 seconds of patience per part — that is genuinely how long a part takes to load, and it is the whole window you are testing.
 
 ---
@@ -83,9 +83,11 @@ Each one is here for a reason — they are not interchangeable. Load times were 
 ## Test 4 — The worst case: a Chinese-manufacturer part
 
 1. Search `YNR4030-680M` and click the result (it shows a 🇨🇳 flag).
-2. Go to **Specs** straight away.
+2. **Switch to the Specs tab right away**, while it is still loading.
 
-**Expect:** shimmer rows immediately. Before this change, this exact case showed a bare column header over blank space for the entire load.
+**Expect:** shimmer rows fill the table straight away, and the real specs replace them ~10–20 s later when the load finishes. Before this change this exact case showed a bare column header over blank space for the entire load.
+
+> The shimmer appears immediately; the **specs** do not. Waiting ~10 s for real rows is the pass condition, not a failure.
 
 ---
 
@@ -99,18 +101,7 @@ While any part loads, keep your eye on one row — say **Total Stock** — and w
 
 ---
 
-## Test 6 — Clicking the part's own name no longer blanks it
-
-1. Load `MNS2N2222AUB` and **wait for it to fully finish**.
-2. In the chat, click the part number where it appears as a link.
-
-**Expect:** the panel reloads but the values already on screen — datasheet, distributors, RoHS — **stay visible** throughout.
-
-❌ **Fail if:** those rows go blank or start shimmering again. They were already known.
-
----
-
-## Test 7 — Nothing else changed
+## Test 6 — Nothing else changed
 
 1. **Comparison view** — load a part, click **Find replacements**, then click a replacement card. Both panels should look and behave exactly as before.
 2. **Parts list** — open any BOM list and click a row to open its detail popup. Should look exactly as before.

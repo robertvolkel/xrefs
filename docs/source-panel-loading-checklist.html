@@ -459,10 +459,10 @@
 
   <p class="eyebrow">XRefs · manual verification</p>
   <h1>Source Part panel — loading states</h1>
-  <p class="lede">Seven checks that the panel now says <em>“still loading”</em> instead of looking empty — and that nothing else moved.</p>
+  <p class="lede">Six checks that the panel now says <em>“still loading”</em> instead of looking empty — and that nothing else moved.</p>
 
   <div class="meta">
-    <span><b>~12 min</b> to run</span>
+    <span><b>~10 min</b> to run</span>
     <span><b>~17–20 s</b> per part — that wait <em>is</em> the thing you're testing</span>
     <span><b>1</b> check marked critical</span>
   </div>
@@ -591,10 +591,10 @@ npm run dev</code></pre>
       <div class="t-head"><span class="t-n">04</span><span class="t-title">The worst case — a Chinese-manufacturer part</span></div>
       <ol class="steps">
         <li>Search <code>YNR4030-680M</code> and click the result (it carries a 🇨🇳 flag).</li>
-        <li>Go straight to <strong>Specs</strong>.</li>
+        <li><strong>Switch to the Specs tab right away</strong>, while it is still loading.</li>
       </ol>
       <div class="box expect"><span class="box-h">Expect</span>
-        Shimmer rows immediately. Before this change, this exact case showed a bare column header over blank space for the entire load.
+        Shimmer rows fill the table straight away, and the real specs replace them ~10–20 s later when the load finishes. The shimmer is immediate; the <em>specs</em> are not — waiting for real rows is the pass condition, not a failure. Before this change this case showed a bare column header over blank space for the entire load.
       </div>
       <div class="verdict"><button class="vb" data-v="pass">Pass</button><button class="vb" data-v="fail">Fail</button></div>
     </article>
@@ -616,27 +616,10 @@ npm run dev</code></pre>
       <div class="verdict"><button class="vb" data-v="pass">Pass</button><button class="vb" data-v="fail">Fail</button></div>
     </article>
 
-    <div class="group-h">The bug fixed alongside</div>
-
-    <article class="test" data-id="6">
-      <div class="t-head"><span class="t-n">06</span><span class="t-title">Clicking the part's own name no longer blanks it</span></div>
-      <ol class="steps">
-        <li>Load <code>MNS2N2222AUB</code> and <strong>wait for it to fully finish</strong>.</li>
-        <li>In the chat, click the part number where it appears as a link.</li>
-      </ol>
-      <div class="box expect"><span class="box-h">Expect</span>
-        The panel reloads, but the values already on screen — datasheet, distributors, RoHS — <strong>stay visible</strong> throughout.
-      </div>
-      <div class="box reject"><span class="box-h">Fail if</span>
-        Those rows go blank or start shimmering again. They were already known.
-      </div>
-      <div class="verdict"><button class="vb" data-v="pass">Pass</button><button class="vb" data-v="fail">Fail</button></div>
-    </article>
-
     <div class="group-h">Did anything else move</div>
 
-    <article class="test" data-id="7">
-      <div class="t-head"><span class="t-n">07</span><span class="t-title">Nothing else changed</span></div>
+    <article class="test" data-id="6">
+      <div class="t-head"><span class="t-n">06</span><span class="t-title">Nothing else changed</span></div>
       <ol class="steps">
         <li><strong>Comparison view</strong> — load a part, find replacements, click a replacement card.</li>
         <li><strong>Parts list</strong> — open any BOM list and click a row to open its detail popup.</li>

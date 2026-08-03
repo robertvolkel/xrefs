@@ -2563,13 +2563,7 @@ export function useAppState() {
       return;
     }
     if (state.sourcePart && state.sourcePart.mpn.toLowerCase() === lower) {
-      // Re-confirming the part already on screen: hand back the attributes we
-      // ALREADY hold as the preview. Without this, buildOptimisticFromSummary
-      // rebuilds from the thin PartSummary and discards the datasheet, quotes,
-      // compliance and lifecycle currently displayed — the panel visibly empties
-      // and then refills. `sourceAttrsReadyRef` is still cleared by the confirm
-      // flow, so replacement-finding stays gated exactly as before.
-      await handleConfirmPart(state.sourcePart, sourceAttributesRef.current ?? undefined);
+      await handleConfirmPart(state.sourcePart);
       return;
     }
     // Fourth source: a part the LLM surfaced in prose via a tool lookup this
