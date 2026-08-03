@@ -2454,6 +2454,13 @@ const L2_PARAMS = {
     '颜色-盖帽': { attributeId: 'illumination_color', attributeName: 'Cap Color', sortOrder: 15 },
     '开关位数': { attributeId: 'num_positions', attributeName: 'Number of Positions', sortOrder: 16 },
     '高度': { attributeId: 'actuator_height', attributeName: 'Height', unit: 'mm', sortOrder: 17 },
+    // Switch body width/length — display-only (Switches have no logic table; nothing is
+    // scored). No product carries a combined dimensions field (verified: 0 of 7,479), so
+    // these are the ONLY source of W/L; suppressing them would lose the data. Height is
+    // already shown, so W/L complete the trio. NOT mapped to 'outline' (that is the
+    // combined Dimensions field — and both would collide on the same id).
+    '开关宽度': { attributeId: 'switch_width', attributeName: 'Switch Width', unit: 'mm', sortOrder: 18 },
+    '开关长度': { attributeId: 'switch_length', attributeName: 'Switch Length', unit: 'mm', sortOrder: 19 },
   },
   'RF and Wireless': {
     '类型': { attributeId: 'type', attributeName: 'Type', sortOrder: 1 },
