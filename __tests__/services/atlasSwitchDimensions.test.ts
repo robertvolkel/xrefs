@@ -34,6 +34,7 @@ function switchModel(): any {
     parameters: [
       { name: '开关宽度', value: '1.62mm' },
       { name: '开关长度', value: '12.7mm' },
+      { name: '引脚样式', value: 'J型引脚' },
     ],
   };
 }
@@ -70,6 +71,14 @@ describe('switch dimensions — TS mapper', () => {
     expect(l!.unit).toBe('mm');
   });
 
+  it('maps 引脚样式 → termination (categorical, no unit), NOT actuator_type', () => {
+    const t = slot(out, 'termination');
+    expect(t).toBeDefined();
+    expect(t!.value).toBe('J型引脚');
+    expect(t!.unit).toBeUndefined();
+    expect(slot(out, 'actuator_type')).toBeUndefined();
+  });
+
   it('does NOT collapse width/length onto outline', () => {
     expect(slot(out, 'outline')).toBeUndefined();
   });
@@ -80,7 +89,7 @@ describe('switch dimensions — TS and .mjs agree (anti-drift)', () => {
     const model = switchModel();
     const tsOut = mapAtlasModel(model, 'TestCo', 'test.json');
     const mjsOut = mjsMapModel(model, 'TestCo', 'test.json');
-    for (const id of ['switch_width', 'switch_length', 'outline']) {
+    for (const id of ['switch_width', 'switch_length', 'termination', 'outline', 'actuator_type']) {
       expect(slot(mjsOut, id)).toEqual(slot(tsOut, id));
     }
   });
@@ -93,11 +102,15 @@ describe('switch dimensions — read path resolves display names', () => {
     const read = fromParametersJsonb(jsonb, null, 'Switches');
     const w = read.find((p) => p.parameterId === 'switch_width');
     const l = read.find((p) => p.parameterId === 'switch_length');
+    const t = read.find((p) => p.parameterId === 'termination');
     expect(w).toBeDefined();
     expect(w!.parameterName).toBe('Switch Width');
     expect(w!.recognized).toBe(true);
     expect(l).toBeDefined();
     expect(l!.parameterName).toBe('Switch Length');
     expect(l!.recognized).toBe(true);
+    expect(t).toBeDefined();
+    expect(t!.parameterName).toBe('Termination');
+    expect(t!.recognized).toBe(true);
   });
 });
