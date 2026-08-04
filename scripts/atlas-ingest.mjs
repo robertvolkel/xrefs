@@ -2966,6 +2966,11 @@ function mapModel(model, manufacturerName, sourceFile) {
         unmappedParams.push({ paramName: decodedName, sampleValue: String(p.value).slice(0, 80), attributeId: gaiaKey, kind: 'gaia' });
         continue;
       }
+      // Skip internal-only (underscore) attributes BEFORE suffix-preference and
+      // dedup, so a suppressed attr drops ALL its suffix variants entirely —
+      // otherwise a non-preferred variant leaks under a raw name via
+      // keepLosingValue → storeRawValue, defeating the suppression.
+      if (gaiaMapping.attributeId.startsWith('_')) continue;
       if (gaiaMapping.preferredSuffix && gaia.suffix && gaia.suffix !== gaiaMapping.preferredSuffix) {
         // Skip only if the preferred-suffix variant is actually present for
         // this stem; otherwise fall through and map the available variant.
@@ -2977,7 +2982,6 @@ function mapModel(model, manufacturerName, sourceFile) {
           continue;
         }
       }
-      if (gaiaMapping.attributeId.startsWith('_')) continue;
       if (parameters[gaiaMapping.attributeId]) {
         keepLosingValue(parameters, decodedName, p.value, parameters[gaiaMapping.attributeId]);
         continue; // dedup

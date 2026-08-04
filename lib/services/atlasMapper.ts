@@ -3637,6 +3637,13 @@ export function mapAtlasModel(
         continue;
       }
 
+      // Skip internal-only (underscore) attributes BEFORE suffix-preference and
+      // dedup. A suppressed attr must drop ALL its suffix variants entirely —
+      // otherwise a non-preferred variant (e.g. -Max when -Typ wins the slot) leaks
+      // under a raw name via keepLosingValue → storeRawValue, defeating the
+      // suppression (MOSFET switching times, B6 _tf/_ton, etc.).
+      if (gaiaMapping.attributeId.startsWith('_')) continue;
+
       // Suffix preference: skip a non-preferred suffix ONLY if the preferred
       // variant is actually present for this stem; otherwise map the available
       // one (don't silently drop the only value we have).
@@ -3649,9 +3656,6 @@ export function mapAtlasModel(
           continue;
         }
       }
-
-      // Skip internal-only attributes
-      if (gaiaMapping.attributeId.startsWith('_')) continue;
 
       // Deduplicate — first occurrence of each attributeId wins
       if (seenAttributeIds.has(gaiaMapping.attributeId)) {
