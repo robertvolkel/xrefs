@@ -41,6 +41,16 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+# Triage — "Copy for AI" button (deferred from Decision #288, P3)
+
+Decision #288 made the AI's `reasoning` / `confidence` / proposed mapping copyable by printing them as real text behind the "Show full AI notes" toggle. That solves the *availability* problem; it does not solve the *format* one — a select-all copy of a 16-column, 2,016px table pastes as a wide ragged block an AI has to untangle, and it captures whatever rows happen to be loaded.
+
+The better answer for the copy use-case specifically, designed and costed but not built:
+
+- **One toolbar button** emitting **one labelled block per row** (`UID · paramName / Family / Samples / AI verdict + confidence / reasoning / explanation / proposed mapping / note`), not TSV and not a Markdown table. ⚠️ **Both table formats are ruled out by real data, not taste:** the route can append `` `${baseExplanation}\n\nServer post-check: ${note}` `` — an **embedded newline terminates a TSV record and a Markdown row**, so a fires-on-every-downgrade code path would corrupt the export. Prose also carries commas, pipes and backticks.
+- **Put the formatter in `lib/services/` as a pure function**, not inline in the component — `jest.config.ts` (`testEnvironment: 'node'`, `testMatch: '**/*.test.ts'`) cannot test a `.tsx` component, so a pure module is the *only* testable option. Mutation cases worth pinning: an embedded `\n\n` doesn't split a record; a prose line that is literally `---` doesn't fake a separator; the header's row count equals the block count; **all** `sampleValues` are emitted (the UI slices to 3); the proposed mapping reads the **edited** values, not the AI's originals.
+- **Say what it actually copied.** The client only ever holds a window (`AUTO_LOAD_MAX_VISIBLE = 600`) and AI `detail` is hydrated per page, so the label must be `Copy N rows shown`, never an implied whole-queue export. At 600 rows the payload is ~420KB / ~110k tokens — fine for Claude, rejected by smaller-context chats, so the confirmation should state the size.
+
 # Triage — High-confidence filter follow-ups (Decision #282, P3)
 
 Deferred findings from the three review rounds on the whole-queue "High confidence" filter. All low-severity; the filter ships correct without them.
