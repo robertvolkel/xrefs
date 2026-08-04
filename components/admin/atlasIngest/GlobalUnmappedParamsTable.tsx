@@ -3856,10 +3856,12 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                   </Tooltip>
                 </TableCell>
                 {/* Width MUST be set here, not on the body cell: table-layout
-                    is fixed (see the note above), so the header wins. 270 only
+                    is fixed (see the note above), so the header wins. 405 only
                     while expanded — the table already overflows horizontally at
-                    the default widths, so the extra 90px is not paid full-time. */}
-                <TableCell sx={{ fontWeight: 600, width: aiNotesExpanded ? 270 : 180 }}>AI translation</TableCell>
+                    the default widths, so the extra 225px is not paid full-time.
+                    405 (not 270) was set from looking at the real thing: at 270
+                    the prose still wrapped too narrowly to read comfortably. */}
+                <TableCell sx={{ fontWeight: 600, width: aiNotesExpanded ? 405 : 180 }}>AI translation</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 300 }}>attributeId</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 240 }}>attributeName</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 90 }}>Unit</TableCell>
