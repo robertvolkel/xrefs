@@ -1105,7 +1105,12 @@ const TriageRow = memo(function TriageRow({
                               {state.suggestion.reasoning}
                             </Typography>
                           )}
-                          {expandExplanations && state.suggestion.confidence && (
+                          {/* !isSynthetic is load-bearing, not defensive: an
+                              override-seeded row carries filler confidence that
+                              no model produced, and this line is the text that
+                              gets copied INTO an AI. Printing it would fabricate
+                              the grounding the toggle exists to provide. */}
+                          {expandExplanations && state.suggestion.confidence && !state.suggestion.isSynthetic && (
                             <Typography
                               variant="caption"
                               sx={{ color: 'text.secondary', fontSize: '0.65rem', lineHeight: 1.35 }}
@@ -1150,6 +1155,12 @@ const TriageRow = memo(function TriageRow({
                                   fontSize: '0.65rem',
                                   lineHeight: 1.35,
                                   whiteSpace: 'pre-wrap',
+                                  // pre-wrap still uses overflow-wrap: normal, and
+                                  // the collapsed branch's `overflow: hidden` is gone
+                                  // here — so without this a long unbroken token (a
+                                  // quoted vendor paramName, an underscore-joined
+                                  // attributeId) spills into the next column.
+                                  wordBreak: 'break-word',
                                 }}
                               >
                                 {state.suggestion.explanation}
@@ -2097,6 +2108,15 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     };
   }, [rows]);
 
+  /** The toggle's EFFECTIVE state. In the auto-flagged view every row renders
+   *  the flagged branch of the AI cell and never reaches the suggestion branch
+   *  the expanded fields live in — so expanding there changes nothing on screen
+   *  while still widening the column and worsening the table's existing ~306px
+   *  horizontal overflow. AND-ing here (rather than only hiding the button)
+   *  also covers the case where the toggle was already on before the view
+   *  switched. Still a primitive, so TriageRow's memo is unaffected. */
+  const aiNotesExpanded = expandExplanations && !allFlagged;
+
   // Show the suggestion-fetch progress in the header even when collapsed so users
   // see processing happening before they expand.
   const fetchInFlight = !!suggestionProgress;
@@ -2230,6 +2250,11 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           reasoning: null,
           suggestion: 'accept',
           explanation: ov.isActive ? 'Saved mapping.' : 'Previously accepted (now reverted).',
+          // `confidence: 'high'` above is FILLER to suppress the Defer chip —
+          // no model ever looked at this row. Mark it so anything that PRINTS
+          // confidence skips it; otherwise the expanded AI notes (and the text
+          // copied out of them into an AI) assert a rating nobody earned.
+          isSynthetic: true,
         };
         initialStates[row.paramName] = {
           suggestion: syntheticSuggestion,
@@ -3608,7 +3633,11 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           {/* Reading/copying mode. The Stack is justifyContent="space-between"
               with the paragraph above as its only other child, so this lands
               flush right with no extra wrapper. Styled on the "Show stale
-              first" button below for consistency. */}
+              first" button below for consistency.
+              Hidden in the auto-flagged view — those rows have no AI notes to
+              expand, so the control would do nothing. Same gate the Generate
+              alert above already uses. */}
+          {!allFlagged && (
           <Tooltip
             title="Expand every row to show the AI's reasoning, confidence and full explanation — normally only visible on hover. Makes rows taller, and lets you select the table and copy it into an AI chat."
             placement="top"
@@ -3623,6 +3652,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
               {expandExplanations ? 'Full AI notes ✓' : 'Show full AI notes'}
             </Button>
           </Tooltip>
+          )}
         </Stack>
 
         {/* Per-batch tally — shown after a Generate run finishes so the engineer
@@ -3829,7 +3859,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                     is fixed (see the note above), so the header wins. 270 only
                     while expanded — the table already overflows horizontally at
                     the default widths, so the extra 90px is not paid full-time. */}
-                <TableCell sx={{ fontWeight: 600, width: expandExplanations ? 270 : 180 }}>AI translation</TableCell>
+                <TableCell sx={{ fontWeight: 600, width: aiNotesExpanded ? 270 : 180 }}>AI translation</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 300 }}>attributeId</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 240 }}>attributeName</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 90 }}>Unit</TableCell>
@@ -3875,7 +3905,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                     isReverting={!!r.acceptedOverride && revertingIds.has(r.acceptedOverride.id)}
                     bulkMatches={normalizedMatchesByRow[r.paramName]}
                     isBulkOptedOut={bulkOptedOut.has(r.paramName)}
-                    expandExplanations={expandExplanations}
+                    expandExplanations={aiNotesExpanded}
                     toggleRowSelected={toggleRowSelected}
                     setStates={setStates}
                     setDrawerParamName={setDrawerParamName}

@@ -307,6 +307,15 @@ export type DictSuggestion = {
    *  team note popover. ALWAYS populated for both verdicts so Accept doesn't
    *  get a "trust me" chip while Defer gets a full essay. */
   explanation: string | null;
+  /** TRUE only for the placeholder record synthesized client-side from a saved
+   *  override when no AI suggestion was ever cached (GlobalUnmappedParamsTable).
+   *  Its `confidence: 'high'` is filler chosen to suppress the Defer chip — no
+   *  model ever assessed the row — so any surface that PRINTS confidence must
+   *  skip it, or it fabricates a rating (Decision #288). Absent on every real
+   *  suggestion: those arrive from /suggest as whole server objects, so a
+   *  wholesale replacement clears this automatically and it cannot go stale.
+   *  Never persisted — the synthetic is rebuilt from the override each load. */
+  isSynthetic?: boolean;
 };
 
 // Full /suggest response payload — `schemaIds` is the canonical attributeId list
