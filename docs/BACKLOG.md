@@ -1356,6 +1356,30 @@ Why this hasn't bitten yet: zero MFRs are currently disabled in either table. As
 
 **Also confirmed:** the lesson generalizes to plain `.from(table).select()` whole-result reads (Decision #232 + this fix) — a stale "~N small rows" code comment is the tell that an assumption went stale under growth.
 
+## Atlas data-quality issues found during Triage — running log (P2/P3)
+**Status:** Running list — add a one-liner as each new pattern surfaces; do NOT deep-dive here. Tackle in one focused sweep later.
+**Priority:** P2/P3 (low blast radius — mis-filed/junk data is still searchable; the harm is polluted specs + Triage clutter).
+
+Two distinct buckets keep appearing in the Mapping Triage queue. **Only one is recoverable:**
+
+| Bucket | What it is | Fixable later? | Triage disposition NOW |
+|---|---|---|---|
+| **Garbage columns** | A real, correctly-filed part carries a malformed column (value = the column name echoed back, or one boilerplate constant stamped on every part). No measurement hiding in it. | Only by *deleting* the junk column — nothing to recover. | Mark **unmappable** |
+| **Misclassified parts** | A real part with real data filed under the wrong family (e.g. a transistor filed under "diodes", a TVS filed under Zener). | **Yes** — reclassify to the right family and the specs come back. | Mark **unmappable** (the param map isn't the fix; reclassification is) |
+
+The shared fix for the misclassified bucket is value-based reclassification (a `reclassifyByValueSignals` sibling of the existing `reclassifyByParameterSignals`), driven by the vendor's own category strings. Do it as one pass across all the entries below, not one MFR at a time.
+
+**Log (newest first):**
+
+| Date | Family | Pattern | Bucket | Count | Evidence |
+|---|---|---|---|---|---|
+| Aug 4 2026 | B3 | LRC Zener diodes carry a malformed TVS-spec fragment: `VC @IPP (V)` and `Power tp=8/20µs (WATT)` columns. 293/702 echo the column name as the value; the rest are one boilerplate constant (VC=`46` on 407 parts, Power=`40` on 409). Vendor category = "Zener Diodes" on all 702; MPNs are canonical Zener series (1N47xx, LMBZ/LMSZ/LM5Z). These are genuine Zeners with a junk column — **not** misclassified TVS (the AI guessed B4; wrong). | Garbage columns | 702 | Grounded against live `atlas_products` Aug 4 2026 (`family_id='B3'`, `atlas_raw` scan). Accepting `vc`/`ppk` would stamp a fake 46V clamp / 40W pulse onto 400+ real Zeners. |
+| Aug 1 2026 | B1 | Transistors (`晶体管` ×1,711) + Schottky (~913, belong in **B2**) + bridge rectifiers + switching/HV diodes mis-filed under B1 Rectifier Diodes; surfaced via `类别`/`子类` taxonomy columns. | Misclassified parts | ~2,700+ | Full detail below ("Products filed under B1 Rectifier Diodes that are NOT rectifier diodes"). |
+| May 27 2026 | B8 | CT MICRO opto-SCRs (`c3="Triac, SCR Output Optoisolators"`) sit in B8 but should route to E1. | Misclassified parts | ~89 | Full detail below ("CT MICRO opto-SCRs misclassified as B8"). |
+| — | B4→B8 | JJW products (`cate3` signal) mis-filed B4→B8. | Misclassified parts | ~6,748 | Full detail below (JJW `cate3` entry). |
+
+*(Detailed write-ups for the misclassification rows live in the dedicated entries that follow. This table is the index so nothing gets lost.)*
+
 ## CT MICRO opto-SCRs misclassified as B8 (~89 products) — pre-existing data drift
 **Status:** Not started
 **Priority:** P3 (data quality, low blast radius)
