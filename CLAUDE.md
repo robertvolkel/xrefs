@@ -471,7 +471,7 @@ Separate from QC feedback. App feedback is the general user-facing channel — b
 
 **Data model:**
 - `app_feedback` — original submission + status (`open`/`reviewed`/`wip`/`resolved`/`dismissed`; `wip` = Work In Progress, added June 9 2026, ordered between reviewed and resolved — migration `scripts/supabase-app-feedback-add-wip-status.sql` updates the CHECK constraint on existing tables) + JSONB `attachments` + `user_last_read_at` + `admin_last_read_at`. RLS: users SELECT/INSERT own, admin SELECT/UPDATE all, user can delete own, admin can delete any.
-- `app_feedback_comments` — `(id, feedback_id, author_id, author_role IN ('user','admin'), body, created_at)`. Immutable (no UPDATE/DELETE-by-author policies). Cascades on parent delete.
+- `app_feedback_comments` — `(id, feedback_id, author_id, author_role IN ('user','admin'), body, created_at)`. No edits (no UPDATE policy), but an author may delete their OWN comment (RLS policy "Authors delete own comments", `author_id = auth.uid()` — migration `scripts/supabase-app-feedback-comments-add-author-delete.sql`; neither side can delete the other party's comment). Cascades on parent delete.
 - `mark_app_feedback_user_read(p_feedback_id UUID) RETURNS TIMESTAMPTZ` — `SECURITY DEFINER` function. The only way a non-admin can stamp `user_last_read_at` — RLS blocks direct UPDATE for users (intentional, so they can't tamper with status/notes). Both the GET-thread route and the comment-POST route call this RPC. See [[silent-update-under-rls]] memory.
 - Storage bucket `app-feedback-attachments`: per-user folder prefix, signed-URL reads (1h TTL), user can delete own, admin can delete any.
 
@@ -479,7 +479,7 @@ Separate from QC feedback. App feedback is the general user-facing channel — b
 - `FeedbackShell` — full-width card list + "+ New Feedback" header button + 30s background poll (paused when tab hidden, refreshes on `visibilitychange`).
 - `FeedbackList` — `<Paper>` card per item (NOT `<ButtonBase>` — adding the kebab inside revealed that button-in-button is invalid HTML; Paper carries `role="button"` instead). Activity-first sort (`hasUnread` rows on top, then `createdAt desc`). Unread cards get primary-color border + "NEW REPLY" label + bold preview.
 - `FeedbackDetailModal` (shared admin/user) — `<Dialog maxWidth="lg" fullWidth height: 90vh>` with a 60/40 flex body. Mounts → fires GET-thread → server stamps the appropriate `*_last_read_at` → modal echoes `onUpdated({})` so the parent list can flip `hasUnread` locally and clear the visual signals immediately.
-- `FeedbackThread` (shared admin/user) — composer at top, comments below newest-first, avatar+name+timestamp+body feed layout (NOT chat bubbles). `viewerRole` prop only drives the "You" label.
+- `FeedbackThread` (shared admin/user) — composer at top, comments below newest-first, avatar+name+timestamp+body feed layout (NOT chat bubbles). `viewerRole` prop drives the "You" label AND which comments show the delete affordance (a trash icon on the viewer's own messages → inline "Delete? / Cancel" confirm → `DELETE /api/app-feedback/[id]/comments/[commentId]`, then `onCommentDeleted` bubbles up so the modal removes it locally + decrements `commentCount`).
 - `FeedbackRowMenu` (shared) — kebab → "Delete thread" → confirm dialog → `DELETE /api/app-feedback/[id]` (cleans storage paths first, then DB row; comments cascade). Confirm copy explicitly spells out that delete affects both sides.
 
 **Surfaces (admin side, `/monitoring → AppFeedbackTab`):**
@@ -498,6 +498,7 @@ Separate from QC feedback. App feedback is the general user-facing channel — b
 - `GET /api/app-feedback/[id]` — own thread, side-effect stamps `user_last_read_at` via RPC
 - `DELETE /api/app-feedback/[id]` — wipe thread (storage + row); RLS gates user-own / admin-any
 - `POST /api/app-feedback/[id]/comments` — append comment; role inferred from `profiles.role`; stamps author's own read
+- `DELETE /api/app-feedback/[id]/comments/[commentId]` — delete your OWN comment; RLS + explicit `author_id` scope enforce author-only; inspects returned rows to distinguish deleted from not-yours/not-found
 - `GET /api/app-feedback/unread-count` — sidebar dot driver for user side
 - `GET /api/admin/app-feedback` — list + `statusCounts` + `needsAttentionCount`; supports `sort_by=activity` + `pinned_ids` (comma-separated, floats pinned rows above the page slice)
 - `PATCH /api/admin/app-feedback/[id]` — status only (admin_notes removed; comments replace it)

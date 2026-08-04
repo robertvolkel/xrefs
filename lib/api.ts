@@ -492,6 +492,18 @@ export async function postAppFeedbackComment(feedbackId: string, body: string): 
   });
 }
 
+/**
+ * Delete one of your own comments from a feedback thread. Server-side RLS
+ * enforces author-only deletion — you cannot delete the other party's comment.
+ */
+export async function deleteAppFeedbackComment(feedbackId: string, commentId: string): Promise<void> {
+  const res = await fetch(`${BASE}/app-feedback/${feedbackId}/comments/${commentId}`, {
+    method: 'DELETE',
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error ?? 'Failed to delete comment');
+}
+
 /** Count of threads with unread admin replies for the signed-in user. */
 export async function getOwnAppFeedbackUnreadCount(): Promise<{ count: number }> {
   return fetchApi<{ count: number }>(`${BASE}/app-feedback/unread-count`);

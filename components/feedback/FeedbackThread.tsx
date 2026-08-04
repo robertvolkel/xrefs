@@ -1,9 +1,10 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Box, Stack, Typography, TextField, Button, Avatar } from '@mui/material';
+import { Box, Stack, Typography, TextField, Button, Avatar, IconButton, Tooltip } from '@mui/material';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import { AppFeedbackComment, AppFeedbackCommentAuthorRole } from '@/lib/types';
-import { postAppFeedbackComment } from '@/lib/api';
+import { postAppFeedbackComment, deleteAppFeedbackComment } from '@/lib/api';
 import { formatAbsolute, formatRelative } from '@/lib/feedbackChrome';
 
 interface Props {
@@ -12,6 +13,8 @@ interface Props {
   viewerRole: AppFeedbackCommentAuthorRole;
   comments: AppFeedbackComment[];
   onCommentAdded: (c: AppFeedbackComment) => void;
+  /** Called after one of the viewer's own comments is deleted. */
+  onCommentDeleted?: (commentId: string) => void;
   /** Label for the other party (defaults: "XQ Admin" when viewer=user, "User" when viewer=admin). */
   otherPartyLabel?: string;
   /** Disable composer (e.g. while parent is reloading). */
@@ -32,12 +35,17 @@ export default function FeedbackThread({
   viewerRole,
   comments,
   onCommentAdded,
+  onCommentDeleted,
   otherPartyLabel,
   disabled,
 }: Props) {
   const [body, setBody] = useState('');
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The comment id currently awaiting delete confirmation, and the one
+  // whose delete request is in flight.
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const defaultOtherLabel = viewerRole === 'user' ? 'XQ Admin' : 'User';
   const otherLabel = otherPartyLabel ?? defaultOtherLabel;
@@ -61,6 +69,20 @@ export default function FeedbackThread({
       setError(e instanceof Error ? e.message : 'Failed to post comment');
     } finally {
       setPosting(false);
+    }
+  };
+
+  const handleDelete = async (commentId: string) => {
+    setDeletingId(commentId);
+    setError(null);
+    try {
+      await deleteAppFeedbackComment(feedbackId, commentId);
+      onCommentDeleted?.(commentId);
+      setConfirmingId(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to delete comment');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -135,7 +157,7 @@ export default function FeedbackThread({
                     {initialsOf(displayName)}
                   </Avatar>
                   <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Stack direction="row" spacing={1} alignItems="baseline" sx={{ mb: 0.25 }}>
+                    <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.25 }}>
                       <Typography
                         variant="body2"
                         sx={{ fontSize: '0.8rem', fontWeight: 600 }}
@@ -150,6 +172,47 @@ export default function FeedbackThread({
                       >
                         {formatRelative(c.createdAt)}
                       </Typography>
+                      {mine && (
+                        <>
+                          <Box sx={{ flex: 1 }} />
+                          {confirmingId === c.id ? (
+                            <Stack direction="row" spacing={0.5} alignItems="center">
+                              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
+                                Delete?
+                              </Typography>
+                              <Button
+                                size="small"
+                                color="error"
+                                onClick={() => handleDelete(c.id)}
+                                disabled={deletingId === c.id}
+                                sx={{ minWidth: 0, px: 0.75, fontSize: '0.7rem' }}
+                              >
+                                {deletingId === c.id ? '…' : 'Delete'}
+                              </Button>
+                              <Button
+                                size="small"
+                                color="inherit"
+                                onClick={() => setConfirmingId(null)}
+                                disabled={deletingId === c.id}
+                                sx={{ minWidth: 0, px: 0.75, fontSize: '0.7rem' }}
+                              >
+                                Cancel
+                              </Button>
+                            </Stack>
+                          ) : (
+                            <Tooltip title="Delete this message">
+                              <IconButton
+                                size="small"
+                                onClick={() => { setConfirmingId(c.id); setError(null); }}
+                                sx={{ p: 0.25 }}
+                                aria-label="Delete this message"
+                              >
+                                <DeleteOutlineIcon sx={{ fontSize: '1rem' }} />
+                              </IconButton>
+                            </Tooltip>
+                          )}
+                        </>
+                      )}
                     </Stack>
                     <Box
                       sx={{

@@ -114,6 +114,14 @@ export default function FeedbackDetailModal({
     window.dispatchEvent(new Event('feedback-unread-changed'));
   }, [onUpdated]);
 
+  const handleCommentDeleted = useCallback((commentId: string) => {
+    setThread((prev) =>
+      prev ? { ...prev, comments: prev.comments.filter((c) => c.id !== commentId) } : prev,
+    );
+    onUpdated?.({ commentCountDelta: -1 });
+    window.dispatchEvent(new Event('feedback-unread-changed'));
+  }, [onUpdated]);
+
   const handleSaveStatus = async () => {
     setSavingStatus(true);
     try {
@@ -382,6 +390,7 @@ export default function FeedbackDetailModal({
                 viewerRole={viewerRole}
                 comments={thread.comments}
                 onCommentAdded={handleCommentAdded}
+                onCommentDeleted={handleCommentDeleted}
                 otherPartyLabel={isAdmin ? (feedback.userName || 'User') : 'XQ Admin'}
               />
             </Box>
