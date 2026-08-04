@@ -217,7 +217,20 @@
       "rds(on)@vgs=4.5v(ω)":                  { "attributeId": "rds_on", "attributeName": "Rds(on)", "unit": "Ω", "sortOrder": 13, "preferredSuffix": "Max" },
       "rds(on)@vgs=10v(ω)":                   { "attributeId": "rds_on", "attributeName": "Rds(on)", "unit": "Ω", "sortOrder": 13, "preferredSuffix": "Max" },
       "rds(on) (mω) 4.5v typ":                { "attributeId": "_rds_on_4v5", "attributeName": "Rds(on) @4.5V", "unit": "mΩ", "sortOrder": 83 },
-      "rd(mω) typ":                            { "attributeId": "rds_on", "attributeName": "Rds(on)", "unit": "mΩ", "sortOrder": 13, "preferredSuffix": "Max" }
+      "rd(mω) typ":                            { "attributeId": "rds_on", "attributeName": "Rds(on)", "unit": "mΩ", "sortOrder": 13, "preferredSuffix": "Max" },
+      "turn_on_delay_time":                    { "attributeId": "_td_on", "attributeName": "Turn-On Delay (td(on))", "unit": "ns", "sortOrder": 84, "preferredSuffix": "Typ" },
+      "turn-on_delay_time":                    { "attributeId": "_td_on", "attributeName": "Turn-On Delay (td(on))", "unit": "ns", "sortOrder": 84, "preferredSuffix": "Typ" },
+      "turn_off_delay_time":                   { "attributeId": "_td_off", "attributeName": "Turn-Off Delay (td(off))", "unit": "ns", "sortOrder": 85, "preferredSuffix": "Typ" },
+      "turn-off_delay_time":                   { "attributeId": "_td_off", "attributeName": "Turn-Off Delay (td(off))", "unit": "ns", "sortOrder": 85, "preferredSuffix": "Typ" },
+      "turn_on_rise_time":                     { "attributeId": "_tr", "attributeName": "Rise Time (tr)", "unit": "ns", "sortOrder": 86, "preferredSuffix": "Typ" },
+      "rise_time":                             { "attributeId": "_tr", "attributeName": "Rise Time (tr)", "unit": "ns", "sortOrder": 86, "preferredSuffix": "Typ" },
+      "rising_time":                           { "attributeId": "_tr", "attributeName": "Rise Time (tr)", "unit": "ns", "sortOrder": 86, "preferredSuffix": "Typ" },
+      "turn_off_fall_time":                    { "attributeId": "_tf", "attributeName": "Fall Time (tf)", "unit": "ns", "sortOrder": 87, "preferredSuffix": "Typ" },
+      "fall_time":                             { "attributeId": "_tf", "attributeName": "Fall Time (tf)", "unit": "ns", "sortOrder": 87, "preferredSuffix": "Typ" },
+      "turn_on_fall_time":                     { "attributeId": "_tf", "attributeName": "Fall Time (tf)", "unit": "ns", "sortOrder": 87, "preferredSuffix": "Typ" },
+      "turn_on_time":                          { "attributeId": "_ton", "attributeName": "Turn-On Time (ton)", "unit": "ns", "sortOrder": 88, "preferredSuffix": "Typ" },
+      "forward_turn_on_time":                  { "attributeId": "_ton", "attributeName": "Turn-On Time (ton)", "unit": "ns", "sortOrder": 88, "preferredSuffix": "Typ" },
+      "turn_off_time":                         { "attributeId": "_toff", "attributeName": "Turn-Off Time (toff)", "unit": "ns", "sortOrder": 89, "preferredSuffix": "Typ" }
     },
     "B6": {
       "collector_emitter_voltage":              { "attributeId": "vceo_max", "attributeName": "Vceo Max", "unit": "V", "sortOrder": 3 },
