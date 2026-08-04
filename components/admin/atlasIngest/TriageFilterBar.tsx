@@ -253,7 +253,18 @@ export default function TriageFilterBar({ mfrOptions, familyOptions, filters, on
         </ToggleButtonGroup>
       </Stack>
 
-      <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ md: 'center' }}>
+      {/* THREE fixed rows, not one row left to wrap where it happens to run out.
+          All three together cannot shrink below ~1,470px (has-note + the 4-way
+          AI verdict group + High confidence + Search minWidth 240 + MFR 180 +
+          Family 140 + Min prods 110 + Clear all + gaps), while the admin content
+          pane is only viewport − 60px app sidebar − 240px admin nav — so as one
+          row it overflowed the filter card and the chips bled out over the page
+          on any window under roughly 1,780px. Splitting on MEANING (toggles that
+          narrow which rows qualify · inputs that search and scope them) rather
+          than letting flex-wrap pick the break keeps the grouping identical at
+          every width. flexWrap stays on both as a last-resort guard for very
+          narrow windows. */}
+      <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ md: 'center' }} sx={{ flexWrap: 'wrap', rowGap: 1.5 }}>
         {/* Has-note toggle. Placed at the LEFT end of the row (far from
             "Clear all" on the right) so the affordances can't be visually
             conflated. Notes themselves are managed strictly per-row via
@@ -372,7 +383,19 @@ export default function TriageFilterBar({ mfrOptions, familyOptions, filters, on
             </Stack>
           </ToggleButton>
         </Tooltip>
+      </Stack>
 
+      {/* Row 3 — the search + scoping inputs. Deliberately its own row: these
+          are the widest, least compressible controls in the bar (Search alone
+          claims 240px and flexes), so keeping them off the toggle row is what
+          stops the bar overflowing on a normal-width window. mt matches the
+          rowGap above so a wrapped row and a fixed row look the same. */}
+      <Stack
+        direction={{ xs: 'column', md: 'row' }}
+        spacing={1.5}
+        alignItems={{ md: 'center' }}
+        sx={{ flexWrap: 'wrap', rowGap: 1.5, mt: 1.5 }}
+      >
         <TextField
           size="small"
           placeholder="Search raw attribute name or UID (TR-…)"

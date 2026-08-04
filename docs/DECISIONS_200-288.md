@@ -1,6 +1,6 @@
-# Architectural Decisions — Archive (Decisions 200–285)
+# Architectural Decisions — Archive (Decisions 200–288)
 
-> Full text of decisions 200–285. The index lives in [docs/DECISIONS.md](DECISIONS.md).
+> Full text of decisions 200–288. The index lives in [docs/DECISIONS.md](DECISIONS.md).
 > Historical record — some entries here are superseded by later decisions.
 
 ## Decision #200 — Coverage Repair Workflow: Matching Impact + Per-MFR Drilldown + One-Click Backfill (May 23, 2026)
@@ -3464,3 +3464,42 @@ MNS2N2222AUB (reported part)  ms=16661  params=0   quotes=3   subcat="BJT"
 **Known limits, deliberately not fixed.** A *partly* specified part still shows a confident percentage — now with "1 of 18 specs compared" beside it, which is the honest handling short of re-scoring. The engine still scores a missing source value as a pass; changing that touches every family and two cache versions. And the "fill in missing specs" form still only appears when ≤6 specs are missing ([useAppState.ts](../hooks/useAppState.ts)), so it never fires for a part missing all of them.
 
 **Follow-up found in the browser: the decline was answered twice.** Typing "Find me replacements" for a coverage-less part rendered the user's question **twice**, with two competing assistant answers — and the model's second one asserted that another manufacturer's variant "does have replacement logic enabled", an internal capability flag for a part it had never loaded. Cause: `handleSearch` posts the user message itself before calling `dispatchIntent`, then falls through to `handleSearchWithLLM` on a capability miss — which posts it again. Pre-existing on both capability-miss branches (the follow-up shortcut and the pre-recs origin-filter branch); this change made it common enough to see. Fixed two ways: `handleSearchWithLLM(query, alreadyRecorded)` so a caller that already posted says so, and `intentAnsweredCompletelyRef` so a decline that fully answers the question short-circuits the LLM instead of inviting a competing answer. 4/4 mutations caught.
+
+---
+
+## Decision #288 — Hover-only AI reasoning in Mapping Triage becomes copyable text, behind a toggle (August 3, 2026)
+
+**Symptom, in the user's words:** *"the AI Suggestions for each parameter mapping cannot be fully seen until I hover over them. But I need to be able to copy and paste the screen with all the parameters and the suggestions so I can feed it to AI."*
+
+**Why a copy silently lost the reasoning.** Per row the `/suggest` route returns four fields ([atlasParamSuggestionTypes.ts](../lib/services/atlasParamSuggestionTypes.ts)). Only one and a bit reached the page:
+
+| Field | Before |
+|---|---|
+| `translation` | visible |
+| `explanation` (1–3 sentences) | in the DOM, but `WebkitLineClamp: 3` |
+| `reasoning` (one sentence) | **Tooltip title only** |
+| `confidence` | **Tooltip title only** |
+
+A Tooltip's text lives in a Popper that only mounts on hover — it is **never in the document**, so no text selection can reach it. The clamp, by contrast, only hides visually; `explanation` was always copyable. So the fix is not "un-clamp": it is *get the two Popper-only fields into the document.*
+
+**The second, less obvious hole.** `attributeId` / `attributeName` / `Unit` are `<TextField>`s ([GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx)). **No browser includes an input's contents in a page text selection.** A copied table therefore explained *why* a mapping was chosen and never said *what* it was — the single most important column for the AI being asked to review it. Expanded mode prints those three as a plain `→ id · name · unit` line, reading the **edited** values (what would actually be committed), not the AI's originals, since either may have been typed over.
+
+**A toggle, not a permanent change.** `expandExplanations`, session-only, styled and scoped exactly like the neighbouring `staleFirstSort`. **Off (default) the AI cell is byte-identical to before** — 180px, clamped, both Tooltips intact. On, the column goes 180→**405px** and all four fields print inline. Expanded rows are roughly twice as tall; that cost is real for an engineer working 50 rows at a time, which is why it is opt-in rather than the new normal. (405 was **set from the running app, not computed** — the first cut shipped 270px off a chars-per-line estimate and read too narrow in practice. The estimate was labelled as an estimate in the plan precisely so it would be checked here.)
+
+**`pre-wrap`, not just "no clamp".** The server can append a second paragraph to an explanation — `` `${baseExplanation}\n\nServer post-check: ${postValidationNote}` `` ([suggest/route.ts](../app/api/admin/atlas/dictionaries/suggest/route.ts)). The clamp rendered that as one run-on block; `whiteSpace: 'pre-wrap'` restores the break.
+
+**Decision #269 compliance.** `expandExplanations` enters `TriageRow` as a **primitive** prop — never bundled into a settings object, which would hand every row a fresh identity and silently disable the memo that exists because this row once froze the main thread for 14s. Net per expanded row: **+3 plain elements, −2 Poppers** (expanded drops the `reasoning` and `explanation` Tooltips rather than adding to them — a Popper duplicating text the clipboard still can't reach is pure cost). Collapsed is unchanged.
+
+⚠️ **The horizontal-scroll budget is already spent.** The 16 header widths sum to **1,926px** against 1,620px of usable width on a 1920px screen (viewport − 60px app sidebar − 240px admin nav), and there is no `maxWidth` anywhere in the container chain — so the table overflows by ~306px *today*. Expanded (405px) takes it to ~531px. Any future column widening starts from that fact, not from zero. The width must be set on the **header** cell: `tableLayout: 'fixed'` means the header wins and the body cell's `maxWidth` is inert.
+
+**No unit tests, deliberately and unavoidably.** [jest.config.ts](../jest.config.ts) is `testEnvironment: 'node'` with `testMatch: ['<rootDir>/__tests__/**/*.test.ts']` — React components cannot run in this setup, and this change extracts no pure function to test. Verification is visual, and the plan says so rather than implying coverage that does not exist. Gates run: 3,818 tests pass, lint 85 / type 92 both unchanged, `docs:check:strict` clean.
+
+⚠️ **A CLAUDE.md edit was planned and REJECTED — the guard would have failed the build.** The intent was to name `expandExplanations` in the "Memoized `TriageRow`" Key-Patterns bullet as the reference example of a display flag entering as a primitive. That bullet is **1,113 bytes**, already over the 1,100-byte cap in [check-claude-md-facts.mjs](../scripts/check-claude-md-facts.mjs). The cap is scoped to lines that differ from `origin/main` (`!previous.has(l)`), so pre-existing paragraphs are grandfathered **only while untouched** — editing it at all, by even one word, converts it to a changed line and fails `npm run verify` and CI. The bullet's invariant is already general ("every row input is a **prop** … primitives, never containers"); this is an instance of a rule already written down, so it is recorded here instead. **Grandfathering is per-line and evaporates on touch — check the byte count before editing any Key-Patterns line, not just before adding one.**
+
+⚠️ **Surfacing a hidden field exposes whatever placeholder was hiding in it — found in review, on this change.** `confidence` had only ever rendered inside a Tooltip. Printing it inline immediately started asserting **"Confidence: high" on every already-mapped row**, because the client synthesizes a placeholder `DictSuggestion` for override-seeded rows (no AI ever assessed them — its siblings are `reasoning: null`, `explanation: 'Saved mapping.'`) and `confidence: 'high'` was filler chosen only to suppress the Defer chip. Invisible in a tooltip; a **fabricated rating** once printed — and printed straight into the text the engineer copies to an AI for a second opinion, i.e. fabricating the very grounding the toggle exists to supply.
+
+The marker is `isSynthetic?: boolean` **on the suggestion object, NOT on `RowState`** — and the placement is the whole point. A real `/suggest` result is written as a **whole server object** (`{ ...prev[key], suggestion, … }`), so a marker on the *suggestion* is cleared by that replacement automatically, while a marker on `RowState` would survive the spread and go stale the moment an engineer regenerates a mapped row. *Put provenance on the data that gets replaced, not on the container that gets merged.* Two rejected alternatives: keying off `reasoning === null` (implicit coupling, and the server type allows null on real records), and making the synthetic's `confidence` null — **that one is unsafe**, because `confidence` is not display-only: `isStarrableRow` ([triageBatchApprove.ts](../lib/services/triageBatchApprove.ts)) hard-compares it to `'high'` to gate the ⭐ star and Batch Accept. It reads the SERVER-carried `suggestion.detail`, never this client record, which is why the display-only fix is safe and a type change would not have been.
+
+**Also from the same review:** the toggle was a **dead control in the auto-flagged view** — every row there renders the flagged branch of the AI cell and never reaches the suggestion branch, so expanding changed nothing while still widening the column and worsening the overflow. Gated via one derived primitive (`aiNotesExpanded = expandExplanations && !allFlagged`) feeding *both* the width and the row prop, so a toggle left on before the view switched is covered too — hiding the button alone would not have been. And the expanded explanation had lost the collapsed branch's `overflow: 'hidden'` without gaining a `wordBreak`, so a long unbroken token could spill into the next column; `pre-wrap` does not imply word-breaking.
+
+**Known limit.** An MPN-style `paramName` and the row's other columns are still ordinary table cells, so a select-all copy produces a wide, ragged paste that an AI must untangle. A dedicated "Copy for AI" button emitting one labelled block per row was designed and deferred — it is the better answer for the copy use-case specifically, and is in BACKLOG.

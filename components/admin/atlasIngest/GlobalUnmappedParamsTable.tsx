@@ -652,6 +652,10 @@ interface TriageRowProps {
   isReverting: boolean;
   bulkMatches: SimilarSibling[] | undefined;
   isBulkOptedOut: boolean;
+  /** "Show full AI notes" toggle. A PRIMITIVE by requirement, not a settings
+   *  object: it enters the memo's shallow compare, so bundling it would give
+   *  every row a fresh object identity and silently disable the memo. */
+  expandExplanations: boolean;
   // Every callback below MUST be identity-stable or the memo never bails out.
   // useState setters are stable by React guarantee; the rest are useCallback'd
   // with churning deps (`states`, `notesByParam`) read via refs instead.
@@ -707,6 +711,7 @@ const TriageRow = memo(function TriageRow({
   isReverting,
   bulkMatches,
   isBulkOptedOut,
+  expandExplanations,
   toggleRowSelected,
   setStates,
   setDrawerParamName,
@@ -1046,11 +1051,22 @@ const TriageRow = memo(function TriageRow({
                       ) : state?.suggestion?.translation ? (
                         <Stack spacing={0.5}>
                           <Stack direction="row" spacing={0.5} alignItems="flex-start">
-                            <Tooltip title={state.suggestion.reasoning ?? ''}>
+                            {/* Expanded drops this Tooltip rather than adding to
+                                it: `reasoning` is printed below as real text, so
+                                the Popper would be a duplicate the clipboard
+                                still couldn't reach. Collapsed keeps today's
+                                hover-only behaviour untouched. */}
+                            {expandExplanations ? (
                               <Typography variant="caption" sx={{ fontStyle: 'italic', flex: 1 }}>
                                 {state.suggestion.translation}
                               </Typography>
-                            </Tooltip>
+                            ) : (
+                              <Tooltip title={state.suggestion.reasoning ?? ''}>
+                                <Typography variant="caption" sx={{ fontStyle: 'italic', flex: 1 }}>
+                                  {state.suggestion.translation}
+                                </Typography>
+                              </Tooltip>
+                            )}
                             {/* Per-row refresh ↻ — always rendered when a cached
                                 suggestion exists. Stale rows (Decision #187 — card
                                 or schema version drift) render the icon in warning
@@ -1077,30 +1093,97 @@ const TriageRow = memo(function TriageRow({
                               </IconButton>
                             </Tooltip>
                           </Stack>
+                          {/* Expanded-only: the two fields that live ONLY in a
+                              Popper today, so a select-all-and-copy never sees
+                              them. Printing them as real text is the whole point
+                              of the toggle. */}
+                          {expandExplanations && state.suggestion.reasoning && (
+                            <Typography
+                              variant="caption"
+                              sx={{ color: 'text.secondary', fontSize: '0.65rem', lineHeight: 1.35 }}
+                            >
+                              {state.suggestion.reasoning}
+                            </Typography>
+                          )}
+                          {/* !isSynthetic is load-bearing, not defensive: an
+                              override-seeded row carries filler confidence that
+                              no model produced, and this line is the text that
+                              gets copied INTO an AI. Printing it would fabricate
+                              the grounding the toggle exists to provide. */}
+                          {expandExplanations && state.suggestion.confidence && !state.suggestion.isSynthetic && (
+                            <Typography
+                              variant="caption"
+                              sx={{ color: 'text.secondary', fontSize: '0.65rem', lineHeight: 1.35 }}
+                            >
+                              Confidence: {state.suggestion.confidence}
+                            </Typography>
+                          )}
+                          {/* Expanded-only mirror of the attributeId / attributeName
+                              / Unit cells. Those are <TextField>s, and NO browser
+                              includes an input's contents in a page text selection —
+                              so without this line a copied table says WHY a mapping
+                              was chosen but never WHAT it is. Reads the EDITED values
+                              (what would actually be committed), not the AI's
+                              originals, since either may have been typed over. */}
+                          {expandExplanations && (state?.editedAttributeId || state?.editedAttributeName || state?.editedUnit) && (
+                            <Typography
+                              variant="caption"
+                              sx={{ color: 'text.primary', fontSize: '0.65rem', lineHeight: 1.35, wordBreak: 'break-word' }}
+                            >
+                              {`→ ${[state.editedAttributeId, state.editedAttributeName, state.editedUnit]
+                                .map((v) => v?.trim())
+                                .filter(Boolean)
+                                .join(' · ')}`}
+                            </Typography>
+                          )}
                           {state.suggestion.explanation && (
                             // Symmetric in-cell explanation — visible by default
                             // for BOTH Accept and Defer rows so Claude doesn't
                             // get an opaque "trust me" chip on Accepts. Color
-                            // hints which suggestion the explanation supports;
-                            // line-clamp at 3 keeps row height bounded, full
-                            // text on tooltip hover.
-                            <Tooltip title={<Box sx={{ whiteSpace: 'pre-wrap', maxWidth: 360 }}>{state.suggestion.explanation}</Box>} placement="left" arrow>
+                            // hints which suggestion the explanation supports.
+                            // Collapsed: line-clamp at 3 keeps row height bounded,
+                            // full text on tooltip hover. Expanded: pre-wrap, no
+                            // Tooltip (nothing left to reveal) — pre-wrap also
+                            // restores the paragraph break the server can append
+                            // ("\n\nServer post-check: …"), which the clamp
+                            // renders as one run-on block.
+                            expandExplanations ? (
                               <Typography
                                 variant="caption"
                                 sx={{
                                   color: state.suggestion.suggestion === 'defer' ? 'warning.light' : 'success.light',
                                   fontSize: '0.65rem',
                                   lineHeight: 1.35,
-                                  display: '-webkit-box',
-                                  WebkitLineClamp: 3,
-                                  WebkitBoxOrient: 'vertical',
-                                  overflow: 'hidden',
-                                  cursor: 'help',
+                                  whiteSpace: 'pre-wrap',
+                                  // pre-wrap still uses overflow-wrap: normal, and
+                                  // the collapsed branch's `overflow: hidden` is gone
+                                  // here — so without this a long unbroken token (a
+                                  // quoted vendor paramName, an underscore-joined
+                                  // attributeId) spills into the next column.
+                                  wordBreak: 'break-word',
                                 }}
                               >
                                 {state.suggestion.explanation}
                               </Typography>
-                            </Tooltip>
+                            ) : (
+                              <Tooltip title={<Box sx={{ whiteSpace: 'pre-wrap', maxWidth: 360 }}>{state.suggestion.explanation}</Box>} placement="left" arrow>
+                                <Typography
+                                  variant="caption"
+                                  sx={{
+                                    color: state.suggestion.suggestion === 'defer' ? 'warning.light' : 'success.light',
+                                    fontSize: '0.65rem',
+                                    lineHeight: 1.35,
+                                    display: '-webkit-box',
+                                    WebkitLineClamp: 3,
+                                    WebkitBoxOrient: 'vertical',
+                                    overflow: 'hidden',
+                                    cursor: 'help',
+                                  }}
+                                >
+                                  {state.suggestion.explanation}
+                                </Typography>
+                              </Tooltip>
+                            )
                           )}
                         </Stack>
                       ) : (
@@ -1667,6 +1750,16 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
    *  Off by default so a fresh page load preserves the parent panel's
    *  source order (which is itself sorted by triage priority upstream). */
   const [staleFirstSort, setStaleFirstSort] = useState(false);
+  /** "Show full AI notes". Off => the AI cell renders exactly as it always
+   *  has (180px, explanation clamped to 3 lines, reasoning + confidence
+   *  reachable only on hover). On => the cell widens and prints all four AI
+   *  fields inline, so they can be READ without hovering and — the actual
+   *  reason this exists — survive a select-all-and-copy into an AI chat.
+   *  Tooltip text lives in a Popper, never in the document, so a copy can
+   *  never capture it.
+   *  Session-only on purpose, matching staleFirstSort above: default-off keeps
+   *  the queue compact, and it's a per-sitting reading mode, not a preference. */
+  const [expandExplanations, setExpandExplanations] = useState(false);
 
   // Per-row opt-out from bulk normalized-match acceptance. By default,
   // accepting a row that has cosmetic-duplicate paramNames in the same
@@ -2015,6 +2108,15 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     };
   }, [rows]);
 
+  /** The toggle's EFFECTIVE state. In the auto-flagged view every row renders
+   *  the flagged branch of the AI cell and never reaches the suggestion branch
+   *  the expanded fields live in — so expanding there changes nothing on screen
+   *  while still widening the column and worsening the table's existing ~306px
+   *  horizontal overflow. AND-ing here (rather than only hiding the button)
+   *  also covers the case where the toggle was already on before the view
+   *  switched. Still a primitive, so TriageRow's memo is unaffected. */
+  const aiNotesExpanded = expandExplanations && !allFlagged;
+
   // Show the suggestion-fetch progress in the header even when collapsed so users
   // see processing happening before they expand.
   const fetchInFlight = !!suggestionProgress;
@@ -2148,6 +2250,11 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           reasoning: null,
           suggestion: 'accept',
           explanation: ov.isActive ? 'Saved mapping.' : 'Previously accepted (now reverted).',
+          // `confidence: 'high'` above is FILLER to suppress the Defer chip —
+          // no model ever looked at this row. Mark it so anything that PRINTS
+          // confidence skips it; otherwise the expanded AI notes (and the text
+          // copied out of them into an AI) assert a rating nobody earned.
+          isSynthetic: true,
         };
         initialStates[row.paramName] = {
           suggestion: syntheticSuggestion,
@@ -3523,6 +3630,29 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
               </>
             )}
           </Typography>
+          {/* Reading/copying mode. The Stack is justifyContent="space-between"
+              with the paragraph above as its only other child, so this lands
+              flush right with no extra wrapper. Styled on the "Show stale
+              first" button below for consistency.
+              Hidden in the auto-flagged view — those rows have no AI notes to
+              expand, so the control would do nothing. Same gate the Generate
+              alert above already uses. */}
+          {!allFlagged && (
+          <Tooltip
+            title="Expand every row to show the AI's reasoning, confidence and full explanation — normally only visible on hover. Makes rows taller, and lets you select the table and copy it into an AI chat."
+            placement="top"
+          >
+            <Button
+              size="small"
+              variant={expandExplanations ? 'contained' : 'outlined'}
+              color="primary"
+              onClick={() => setExpandExplanations((v) => !v)}
+              sx={{ fontSize: '0.7rem', whiteSpace: 'nowrap', flexShrink: 0 }}
+            >
+              {expandExplanations ? 'Full AI notes ✓' : 'Show full AI notes'}
+            </Button>
+          </Tooltip>
+          )}
         </Stack>
 
         {/* Per-batch tally — shown after a Generate run finishes so the engineer
@@ -3725,7 +3855,13 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                     <span>Impact</span>
                   </Tooltip>
                 </TableCell>
-                <TableCell sx={{ fontWeight: 600, width: 180 }}>AI translation</TableCell>
+                {/* Width MUST be set here, not on the body cell: table-layout
+                    is fixed (see the note above), so the header wins. 405 only
+                    while expanded — the table already overflows horizontally at
+                    the default widths, so the extra 225px is not paid full-time.
+                    405 (not 270) was set from looking at the real thing: at 270
+                    the prose still wrapped too narrowly to read comfortably. */}
+                <TableCell sx={{ fontWeight: 600, width: aiNotesExpanded ? 405 : 180 }}>AI translation</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 300 }}>attributeId</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 240 }}>attributeName</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 90 }}>Unit</TableCell>
@@ -3771,6 +3907,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                     isReverting={!!r.acceptedOverride && revertingIds.has(r.acceptedOverride.id)}
                     bulkMatches={normalizedMatchesByRow[r.paramName]}
                     isBulkOptedOut={bulkOptedOut.has(r.paramName)}
+                    expandExplanations={aiNotesExpanded}
                     toggleRowSelected={toggleRowSelected}
                     setStates={setStates}
                     setDrawerParamName={setDrawerParamName}
