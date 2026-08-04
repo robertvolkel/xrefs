@@ -1092,9 +1092,18 @@ export function useAppState() {
 
       if (intent === 'find_replacements') {
         if (!hasAnyReplacements(sourceAttrs)) {
+          // Two different reasons land here and they need different words. All
+          // four axes are false, so `logic` is false — but it has two inputs.
+          // If the family IS supported, the rulebook exists and the missing
+          // half is the part's own specifications; saying "no rules table"
+          // there would be a false product limitation the user never retries
+          // past (the same failure mode as the SSR registry-key bug in
+          // digikeyMapper). See `countComparableSourceRules`.
           addMessage(
             'assistant',
-            `No replacement coverage for **${mpn}** — no rules table for this category and no certified crosses available.`,
+            isFamilySupported(sourceAttrs.part.subcategory)
+              ? `I can't cross-reference **${mpn}** — we don't have any published specifications for it to match against, and there are no manufacturer-published cross-references on file. Nothing to compare means any match score would be meaningless.`
+              : `No replacement coverage for **${mpn}** — no rules table for this category and no certified crosses available.`,
           );
           return false;
         }

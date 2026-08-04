@@ -232,6 +232,35 @@ export function countRealMismatches(rec: XrefRecommendation): number {
   return rec.matchDetails.filter(d => d.ruleResult === 'fail' && d.replacementValue !== 'N/A').length;
 }
 
+/** How much of a match percentage is real evidence.
+ *
+ *  `compared` counts rules where BOTH sides supplied a value — the only rules
+ *  where a comparison actually happened. `total` is every scored rule the
+ *  family evaluates.
+ *
+ *  Why this exists: a rule whose SOURCE value is missing scores a silent full
+ *  `pass` (matchingEngine `evaluateIdentity`/`evaluateThreshold`) — correct
+ *  normally, since a candidate shouldn't be penalised for a gap on our side,
+ *  and the invariant Decision #243's greenfield search depends on. But it makes
+ *  match % a number derived from nothing when the source is sparse. Measured on
+ *  real logs: `MNS2N2222AUB` → `DTC113ZE` shows **94% with 1 of 18 compared**,
+ *  while `MCP1703T-5002E/CB` → `TPL810F33-3TR` shows 76% with 15 of 22.
+ *
+ *  ⚠️ This is a DISPLAY companion to the percentage, never a filter or a sort
+ *  key. A coverage cutoff was measured against all 174 real source parts in the
+ *  production logs and REJECTED: the median part answers only ~60% of its
+ *  family's scored rule weight, and commodity parts sit exactly where the bad
+ *  one does (`LL4148` 26%, `MAX232DRG4` 17%, `2SC1815M-GR` 17% vs
+ *  `MNS2N2222AUB` 13%). There is no clean line — so report the number, don't
+ *  threshold it. */
+export function countComparedSpecs(rec: XrefRecommendation): { compared: number; total: number } {
+  const details = rec.matchDetails ?? [];
+  return {
+    compared: details.filter(d => d.sourceValue !== 'N/A' && d.replacementValue !== 'N/A').length,
+    total: details.length,
+  };
+}
+
 /** Drop candidates with too many real mismatches. Always-keep: certified
  *  crosses (MFR/Accuris). Always-drop: Obsolete/Discontinued. Threshold by
  *  caller — batch uses 1, single-part xref UI uses 2. */

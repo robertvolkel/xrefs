@@ -73,12 +73,23 @@ const RETIRED = new Map([
   ['BatchProgressDialog.tsx', 'never existed in git; documented in error'],
 ]);
 
+/** The decision archive is renamed on purpose every time a decision is added
+ *  (`DECISIONS_200-285.md` → `-286` → `-287`, see `git log --diff-filter=R`).
+ *  Pinning the exact upper bound as a hard fact makes every future decision
+ *  land red for a rename that lost nothing — and this repo's documented
+ *  response to a permanently-red check is `|| true`. Collapse the moving part
+ *  so baseline and current compare on the thing that actually matters: that the
+ *  archive is still reachable. Any OTHER `DECISIONS_*` path is left intact. */
+function normalizeFact(fact) {
+  return fact.replace(/DECISIONS_(\d+)-\d+\.md/g, 'DECISIONS_$1-N.md');
+}
+
 /** A "hard fact" is a token a future session could BREAK by not knowing it.
  *  Deliberately over-inclusive: a false positive costs one grep; a false
  *  negative is a silently-lost invariant, which is the thing we are preventing. */
 function extractFacts(text) {
   const facts = new Set();
-  const add = (m) => { for (const x of m ?? []) facts.add(x.trim()); };
+  const add = (m) => { for (const x of m ?? []) facts.add(normalizeFact(x.trim())); };
   add(text.match(/`[^`\n]{2,80}`/g));                    // `anything in backticks`
   add(text.match(/\b[A-Z][A-Z0-9_]{3,}\b/g));            // CONSTANT_NAMES
   add(text.match(/\b[\w./-]+\.(ts|tsx|mjs|sql|json|docx|md)\b/g)); // file paths
@@ -128,7 +139,9 @@ for (const ref of baseRefs) {
   const text = showAtRef(ref, 'CLAUDE.md');
   if (text) for (const f of extractFacts(text)) baseline.add(f);
 }
-const reachable = corpus();
+// Normalized on BOTH sides or the comparison silently never matches: baseline
+// facts are normalized at extraction, so the corpus must be too.
+const reachable = normalizeFact(corpus());
 
 const lost = [...baseline].filter((f) => !reachable.includes(f) && !RETIRED.has(f));
 const retiredHits = [...baseline].filter((f) => !reachable.includes(f) && RETIRED.has(f));

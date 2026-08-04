@@ -11,9 +11,15 @@ interface PanelVisibilityResult {
   isLoadingRecs: boolean;
 }
 
+/**
+ * @param sourceResolved whether a source part has resolved at all — deliberately
+ *   NOT "does it have parametric data". A zero-parameter part still gets
+ *   recommendations (and a chat message announcing them), so gating on
+ *   parameter count hid the panel while chat promised results.
+ */
 export function usePanelVisibility(
   phase: AppPhase,
-  hasAttributes: boolean,
+  sourceResolved: boolean,
 ): PanelVisibilityResult {
   // Delay showing the skeleton panel by 2s after attributes load
   const [recsRevealed, setRecsRevealed] = useState(false);
@@ -39,7 +45,7 @@ export function usePanelVisibility(
     'comparing',
     'unsupported',
   ].includes(phase);
-  const showRightPanel = recsRevealed && hasAttributes;
+  const showRightPanel = recsRevealed && sourceResolved;
   const isLoadingRecs = phase === 'finding-matches';
 
   return {

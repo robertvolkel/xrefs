@@ -2,7 +2,7 @@
 import { Card, CardActionArea, CardContent, Chip, Divider, Tooltip, Typography, Stack, Box, Skeleton } from '@mui/material';
 import StarIcon from '@mui/icons-material/Star';
 import StarOutlineIcon from '@mui/icons-material/StarOutline';
-import { XrefRecommendation, CertificationSource, deriveRecommendationCategories } from '@/lib/types';
+import { XrefRecommendation, CertificationSource, deriveRecommendationCategories, countComparedSpecs } from '@/lib/types';
 import { computePriceRange, formatPrice } from './AttributesTabContent';
 import DomainChip from './DomainChip';
 import { isDomainCoveredQualification } from '@/lib/services/qualificationDomain';
@@ -40,6 +40,11 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
   const failCount = matchDetails.filter(d => d.ruleResult === 'fail').length;
   const reviewCount = matchDetails.filter(d => d.ruleResult === 'review').length;
   const showSummary = failCount > 0 || reviewCount > 0;
+  // How much of the percentage is real evidence. A rule the SOURCE can't answer
+  // scores a silent full pass, so a sparse source part yields a high number
+  // derived from nothing (measured: 94% off 1 of 18 on MNS2N2222AUB). Reported,
+  // never thresholded — see countComparedSpecs.
+  const comparedSpecs = countComparedSpecs(recommendation);
   // Dark-mode colors are fine as-is; light mode needs readable substitutes
   // (white price/stock is invisible on a light card; the review amber washes out).
   const { mode, systemMode } = useColorScheme();
@@ -227,12 +232,30 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                 </>
               )}
             </Box>
-            <MatchPercentageBadge
-              percentage={Math.round(recommendation.matchPercentage)}
-              size="small"
-              hasFailures={failCount > 0}
-              hasReviews={reviewCount > 0}
-            />
+            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+              <MatchPercentageBadge
+                percentage={Math.round(recommendation.matchPercentage)}
+                size="small"
+                hasFailures={failCount > 0}
+                hasReviews={reviewCount > 0}
+              />
+              {comparedSpecs.total > 0 && (
+                <Tooltip
+                  title={
+                    comparedSpecs.compared === 0
+                      ? `None of the ${comparedSpecs.total} specifications this category matches on could be compared — we have no published value for this part on any of them. The percentage above is not based on a comparison.`
+                      : `${comparedSpecs.compared} of ${comparedSpecs.total} specifications had a published value on BOTH parts, so only those were actually compared. The rest are unknown on one side or the other and score as a pass.`
+                  }
+                >
+                  <Typography
+                    variant="caption"
+                    sx={{ mt: 0.25, fontSize: '0.62rem', lineHeight: 1.2, color: 'text.secondary', whiteSpace: 'nowrap', cursor: 'help' }}
+                  >
+                    {comparedSpecs.compared} of {comparedSpecs.total} specs compared
+                  </Typography>
+                </Tooltip>
+              )}
+            </Box>
           </Stack>
         </CardContent>
       </CardActionArea>

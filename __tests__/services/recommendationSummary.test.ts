@@ -44,7 +44,7 @@ describe('buildRecsSummary', () => {
     const recs = [rec('CC0805KKX5R7BB106', '3PEAK', 80, [mkDetail('Capacitance', 'pass')])];
     const out = buildRecsSummary(recs, 'GRM188R71C104KA01D');
     expect(out).toContain('Found **1** replacement candidate for **GRM188R71C104KA01D**.');
-    expect(out).toContain('Top match: **CC0805KKX5R7BB106** — 3PEAK, 80% match.');
+    expect(out).toContain('Top match: **CC0805KKX5R7BB106** — 3PEAK, 80% match (1 of 1 specs compared).');
     expect(out).toContain('All candidates pass primary rules.');
   });
 
@@ -56,7 +56,7 @@ describe('buildRecsSummary', () => {
     ];
     const out = buildRecsSummary(recs, 'X');
     expect(out).toContain('Found **3** replacement candidates for **X**.');
-    expect(out).toContain('Top match: **A1** — CapXon, 95% match.');
+    expect(out).toContain('Top match: **A1** — CapXon, 95% match (1 of 1 specs compared).');
     expect(out).toContain('All candidates pass primary rules.');
   });
 
@@ -68,7 +68,7 @@ describe('buildRecsSummary', () => {
     ];
     const out = buildRecsSummary(recs, 'X');
     expect(out).toContain('Found **3** replacement candidates for **X**.');
-    expect(out).toContain('Top match: **A1** — CapXon, 88% match.');
+    expect(out).toContain('Top match: **A1** — CapXon, 88% match (1 of 1 specs compared).');
     expect(out).toContain('1 pass all rules; 2 flagged for parameter mismatches');
     expect(out).toContain('review per-card spec match before committing');
   });
