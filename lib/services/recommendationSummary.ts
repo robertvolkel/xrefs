@@ -1,5 +1,5 @@
 import type { XrefRecommendation } from '../types';
-import { countRealMismatches } from '../types';
+import { countRealMismatches, countComparedSpecs } from '../types';
 
 /**
  * Deterministic chat summary posted after recs land — replaces the LLM-driven
@@ -30,7 +30,19 @@ export function buildRecsSummary(recs: XrefRecommendation[], sourceMpn: string):
     recs.length === 1
       ? `Found **1** replacement candidate for **${sourceMpn}**.`
       : `Found **${recs.length}** replacement candidates for **${sourceMpn}**.`;
-  const topLine = `Top match: **${top.part.mpn}** — ${top.part.manufacturer}, ${Math.round(top.matchPercentage)}% match.`;
+  // Say how much of that percentage is real evidence. A rule the SOURCE part
+  // can't answer scores a silent full pass, so a sparse source produces a
+  // confident number derived from nothing — measured on real logs, MNS2N2222AUB
+  // reported "94% match" off 1 of 18 specs actually compared, while a healthy
+  // part (MCP1703T-5002E/CB) compared 15 of 22. Reporting the count is
+  // threshold-free; a coverage cutoff was measured against all 174 real source
+  // parts in the logs and rejected (see countComparedSpecs).
+  //
+  // Phrasing is uniform on purpose — "(12 of 12 specs compared)" is mildly
+  // redundant, but one branch means one thing to test and no prose to drift.
+  const { compared, total } = countComparedSpecs(top);
+  const evidence = total > 0 ? ` (${compared} of ${total} specs compared)` : '';
+  const topLine = `Top match: **${top.part.mpn}** — ${top.part.manufacturer}, ${Math.round(top.matchPercentage)}% match${evidence}.`;
   const breakdown =
     flaggedCount === 0
       ? `All candidates pass primary rules.`

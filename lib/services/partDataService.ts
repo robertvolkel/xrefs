@@ -27,6 +27,7 @@ import { reportServiceFailure } from './serviceStatusTracker';
 import { AUTOMOTIVE_AEC_ENFORCEMENT, getAutomotiveAecEnforcementTable, hasAutomotiveAecEnforcement } from './automotiveAecEnforcement';
 import { getLogicTableForSubcategory, enrichRectifierAttributes, isFamilySupported } from '../logicTables';
 import { findReplacements } from './matchingEngine';
+import { canLogicMatch } from './replacementCapability';
 import { resolveManufacturerAlias } from './manufacturerAliasResolver';
 import { sortRecommendationsForDisplay } from './recommendationSort';
 import { looksLikeMpn } from './searchSummary';
@@ -1446,7 +1447,9 @@ async function attachPartCapabilities(
       .catch(() => false),
   ]);
 
-  const logic = isFamilySupported(attrs.part.subcategory);
+  // Rulebook exists AND the part gives us something to compare against it.
+  // A supported family alone is not enough — see `canLogicMatch`.
+  const logic = canLogicMatch(attrs);
   const mouserSuggested = (attrs.part.lifecycleInfo ?? []).some(
     l => l.source === 'mouser' && !!l.suggestedReplacement,
   );

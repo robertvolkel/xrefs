@@ -13,10 +13,17 @@ import type { ChoiceOption } from '@/lib/types';
 
 export default function AppShell() {
   const appState = useAppState();
-  const hasAttributes = (appState.sourceAttributes?.parameters.length ?? 0) > 0;
+  // "Did the source part resolve?" — NOT "does it carry parametric data?".
+  // These are different questions and this gate wants the first one. It asked
+  // the second for six months: a part with zero parameters could never show the
+  // Replacements panel, while the chat summary still announced the candidates
+  // it found. Reachable today — `NLAS9041DFT2G` has no usable specs, 3 active
+  // manufacturer-published crosses, and a supported family, so it keeps its
+  // button and would open to a blank panel.
+  const sourceResolved = !!appState.sourceAttributes;
 
   const mfr = useManufacturerProfile();
-  const panels = usePanelVisibility(appState.phase, hasAttributes);
+  const panels = usePanelVisibility(appState.phase, sourceResolved);
 
   // Auto-clear manual collapse when leaving 3-panel mode
   useEffect(() => {

@@ -1220,6 +1220,37 @@ export function findReplacements(
  * attributeId has no corresponding parameterId in the source attributes.
  * Sorted by weight descending (most critical first).
  */
+/**
+ * How many of a family's SCORED rules the source part can actually answer.
+ *
+ * `application_review` and `operational` rules are excluded because they never
+ * compare values (see `ruleCanCompare`) — counting them would report evidence
+ * that does not exist.
+ *
+ * Zero is the structural signal that a cross-reference is impossible: every
+ * rule would return the silent full `pass` that a missing SOURCE value earns
+ * (see `countComparedSpecs` in types.ts), so the resulting match % is derived
+ * from nothing at all. Digikey lists a small number of parts it never
+ * characterised — measured at 6 of 4,203 cached lookups (0.1%) — plus parts
+ * whose only published fields are non-parametric (`ES3GB` carries just
+ * "Moisture Sensitivity Level" and "Recovery Behavior: Consult datasheet").
+ *
+ * ⚠️ Callers must treat ONLY zero as a gate. Anything above zero is a quality
+ * question, not a capability one — see the rejected-cutoff note on
+ * `countComparedSpecs`.
+ */
+export function countComparableSourceRules(
+  attributes: PartAttributes,
+  logicTable: LogicTable
+): number {
+  // Same key as buildParamMap — a source attribute's `parameterId` IS the
+  // canonical attributeId the rules are written against.
+  const paramIds = new Set(attributes.parameters.map(p => p.parameterId));
+  return logicTable.rules.filter(
+    rule => ruleCanCompare(rule) && paramIds.has(rule.attributeId)
+  ).length;
+}
+
 export function detectMissingAttributes(
   attributes: PartAttributes,
   logicTable: LogicTable

@@ -216,6 +216,10 @@ export function useAppState() {
   // through context-question or missing-attribute prompts in between. Cleared
   // on consumption inside showRecsAndDeferAssessment.
   const pendingPostRecsFilterRef = useRef<string | null>(null);
+  /** Set by `dispatchIntent` when it declines an intent with an answer that
+   *  fully addresses the question, so the caller skips the LLM fall-through
+   *  instead of answering the same question twice. Cleared on read. */
+  const intentAnsweredCompletelyRef = useRef(false);
   // Mirror of `pendingIntent` that captures the user's original query string at
   // search time, so when `tryAutoFireIntent` later fires `find_replacements`
   // after part confirmation, any filter qualifier bundled into the original
@@ -1092,10 +1096,28 @@ export function useAppState() {
 
       if (intent === 'find_replacements') {
         if (!hasAnyReplacements(sourceAttrs)) {
+          // Two different reasons land here and they need different words. All
+          // four axes are false, so `logic` is false — but it has two inputs.
+          // If the family IS supported, the rulebook exists and the missing
+          // half is the part's own specifications; saying "no rules table"
+          // there would be a false product limitation the user never retries
+          // past (the same failure mode as the SSR registry-key bug in
+          // digikeyMapper). See `countComparableSourceRules`.
           addMessage(
             'assistant',
-            `No replacement coverage for **${mpn}** — no rules table for this category and no certified crosses available.`,
+            isFamilySupported(sourceAttrs.part.subcategory)
+              ? `I can't cross-reference **${mpn}** — we don't have any published specifications for it to match against, and there are no manufacturer-published cross-references on file. Nothing to compare means any match score would be meaningless.`
+              : `No replacement coverage for **${mpn}** — no rules table for this category and no certified crosses available.`,
           );
+          // This message is a COMPLETE answer, so the follow-up path must not
+          // hand the same question to the LLM as well. Observed when it did:
+          // the user's question rendered twice, and the model's second answer
+          // contradicted the first and asserted that another manufacturer's
+          // variant "does have replacement logic enabled" — an internal
+          // capability flag for a part it had never loaded. Same reasoning as
+          // Decision #173: where the facts are already known, deterministic
+          // wins. Read and cleared by `handleSearch`.
+          intentAnsweredCompletelyRef.current = true;
           return false;
         }
         // Sync-prime sourceAttributesRef before handleFindReplacements runs:
@@ -1398,9 +1420,14 @@ export function useAppState() {
   // ============================================================
 
   const handleSearchWithLLM = useCallback(
-    async (query: string) => {
+    // `alreadyRecorded` — the caller has ALREADY posted the user's message and
+    // pushed it to conversation history. The capability-miss fall-through in
+    // `handleSearch` does exactly that before calling `dispatchIntent`, so
+    // without this the message is added a second time: the user sees their own
+    // question twice, and the model sees it twice in its history.
+    async (query: string, alreadyRecorded = false) => {
       const signal = freshAbort();
-      addMessage('user', query);
+      if (!alreadyRecorded) addMessage('user', query);
       setStatus('Thinking...');
       setState((prev) => ({
         ...prev,
@@ -1408,7 +1435,7 @@ export function useAppState() {
       }));
 
       // Add to conversation history
-      conversationRef.current.push({ role: 'user', content: query });
+      if (!alreadyRecorded) conversationRef.current.push({ role: 'user', content: query });
 
       try {
         const response = await chatWithOrchestrator(
@@ -1912,6 +1939,10 @@ export function useAppState() {
         }
       }
 
+      // Tracks whether a branch below already posted the user's message, so the
+      // LLM fall-through doesn't post it a second time.
+      let userMessageRecorded = false;
+
       // Follow-up intent shortcut: when a part is already loaded and the user
       // types a message that pattern-matches a known capability ("show me
       // replacements", "best price", "tell me about the manufacturer"),
@@ -1942,8 +1973,18 @@ export function useAppState() {
         // Capability missing — dispatchIntent has already shown a one-line note.
         // Clear the stash so a stale predicate doesn't re-fire on the next recs load.
         pendingPostRecsFilterRef.current = null;
+        // …unless that note already answered the question in full, in which case
+        // handing it to the LLM as well produces a second, competing answer.
+        if (intentAnsweredCompletelyRef.current) {
+          intentAnsweredCompletelyRef.current = false;
+          setStatus('');
+          return;
+        }
         // Fall through to LLM so it can engage with the user's question (e.g.,
-        // explain why coverage is missing, suggest related actions).
+        // explain why coverage is missing, suggest related actions). The user's
+        // message is already posted and in history — say so, or it is added a
+        // second time and the user sees their own question twice.
+        userMessageRecorded = true;
       }
 
       // Bare-quantity restatement ("I will need 100 units", "make it 50", "100")
@@ -1976,6 +2017,12 @@ export function useAppState() {
         // No replacement coverage — dispatchIntent already said so. Clear the
         // stash so it can't bleed into a later recs load; fall through to the LLM.
         pendingPostRecsFilterRef.current = null;
+        if (intentAnsweredCompletelyRef.current) {
+          intentAnsweredCompletelyRef.current = false;
+          setStatus('');
+          return;
+        }
+        userMessageRecorded = true;
       }
 
       // Pattern-detect user intent so the post-confirmation flow can skip the
@@ -1995,7 +2042,7 @@ export function useAppState() {
       // genuinely-unconfigured deployment the retry costs one fast failed
       // round-trip per message (immediate 500), which is the right trade for
       // automatic recovery the moment the AI comes back.
-      await handleSearchWithLLM(query);
+      await handleSearchWithLLM(query, userMessageRecorded);
     },
     [state.sourcePart, addMessage, dispatchIntent, dispatchFilterIntent, dispatchClearFilter, dispatchSearchFilter, dispatchClearSearchFilter, handleSearchWithLLM, priceAtQuantity]
   );

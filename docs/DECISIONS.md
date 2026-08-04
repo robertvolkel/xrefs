@@ -214,7 +214,7 @@ Key design decisions inferred from the codebase, with rationale.
 - **#198** — Triage Queue Cache: L2 as Source of Truth (May 22, 2026)
 - **#199** — Retroactive Dict Override Backfill (May 23, 2026)
 
-## Decisions 200–286 — [DECISIONS_200-286.md](DECISIONS_200-286.md)
+## Decisions 200–287 — [DECISIONS_200-287.md](DECISIONS_200-287.md)
 
 - **#200** — Coverage Repair Workflow: Matching Impact + Per-MFR Drilldown + One-Click Backfill (May 23, 2026)
 - **#201** — Vendor-Name Hygiene: "gaia-" Prefix Must Never Reach End Users (May 24, 2026)
@@ -305,3 +305,4 @@ Key design decisions inferred from the codebase, with rationale.
 - **#284** ✓ — Atlas translation backfill re-translates from the DB (`atlas_raw`), not local `data/atlas/*.json` files (deploy-proof; "Refresh from accepts" was exiting 0-scanned on the server), with a non-lossy guard that keeps the richer stored row when re-mapping would drop values (July 29, 2026)
 - **#285** ✓ — Mapping Triage ~60s load fixed: the blocking server rebuild's "+N similar" clustering was an O(groups²) fuzzy scan (measured 16.9s over 26k params) — replaced with a deletion-neighborhood (SymSpell) index (byte-identical output; ~18.7s→~2.2s), and per-row cache invalidation now marks-stale + serve-stale instead of delete-and-block (July 29, 2026)
 - **#286** ✓ — The source panel distinguishes "still loading" from "no data" on every tab: one `isPending` rule (0/false/[] are REAL values), height-exact shimmer, Specs filler rows + a genuine empty state — plus the two loading-window bugs the shimmer would have made worse (August 2, 2026)
+- **#287** ✓ — Don't offer a cross-reference we cannot produce (zero comparable specs ⇒ no button, with the certified carve-out), the panel gate asks "did it resolve?" not "does it have specs?", and every match reports how many specs were actually compared — coverage-ratio cutoff measured against 174 real parts and rejected (August 3, 2026)
