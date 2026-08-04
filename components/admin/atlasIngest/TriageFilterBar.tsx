@@ -253,7 +253,14 @@ export default function TriageFilterBar({ mfrOptions, familyOptions, filters, on
         </ToggleButtonGroup>
       </Stack>
 
-      <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ md: 'center' }}>
+      {/* flexWrap is load-bearing, not cosmetic. This row's contents cannot
+          shrink below ~1,470px (has-note + the 4-way AI verdict group + High
+          confidence + Search minWidth 240 + MFR 180 + Family 140 + Clear all
+          110 + gaps), and the admin content pane resolves to viewport − 60px
+          app sidebar − 240px admin nav. Below roughly a 1,780px window the row
+          overflowed the filter card and the chips bled out over the page.
+          Matches the mode/status row above, which has wrapped since day one. */}
+      <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ md: 'center' }} sx={{ flexWrap: 'wrap', rowGap: 1.5 }}>
         {/* Has-note toggle. Placed at the LEFT end of the row (far from
             "Clear all" on the right) so the affordances can't be visually
             conflated. Notes themselves are managed strictly per-row via
