@@ -208,3 +208,39 @@ describe('the Replacements panel opens whenever recommendations exist', () => {
     expect(hook).not.toContain('parameters');
   });
 });
+
+// ── The decline is answered ONCE ───────────────────────────────────────────
+// Observed in the browser: typing "Find me replacements" for a part with no
+// coverage rendered the user's question TWICE, with two competing assistant
+// answers. `handleSearch` posts the user message before `dispatchIntent`, then
+// falls through to `handleSearchWithLLM` on a capability miss — which posted it
+// again. The model's second answer also contradicted the first and asserted
+// that another manufacturer's variant "does have replacement logic enabled", a
+// flag it cannot see for a part it never loaded.
+
+describe('a capability decline answers once, not twice', () => {
+  const state = readCode('hooks/useAppState.ts');
+
+  it('the LLM path can be told the user message is already recorded', () => {
+    expect(state).toMatch(/async \(query: string, alreadyRecorded = false\)/);
+    expect(state).toContain('if (!alreadyRecorded) addMessage(\'user\', query);');
+    expect(state).toContain("if (!alreadyRecorded) conversationRef.current.push({ role: 'user', content: query });");
+  });
+
+  it('every fall-through to the LLM declares the message already posted', () => {
+    // Both capability-miss branches post the user message themselves before
+    // dispatching. Neither may reach the LLM without saying so.
+    expect(state).toContain('await handleSearchWithLLM(query, userMessageRecorded);');
+    const flagSets = state.match(/userMessageRecorded = true;/g) ?? [];
+    expect(flagSets.length).toBe(2);
+    // …and the raw two-argument-less call must not come back.
+    expect(state).not.toMatch(/await handleSearchWithLLM\(query\);/);
+  });
+
+  it('a complete decline short-circuits the LLM entirely', () => {
+    expect(state).toContain('intentAnsweredCompletelyRef.current = true;');
+    // Read AND cleared at every consumer, or the next unrelated turn is eaten.
+    const clears = state.match(/intentAnsweredCompletelyRef\.current = false;/g) ?? [];
+    expect(clears.length).toBe(2);
+  });
+});
