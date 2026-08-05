@@ -47,7 +47,12 @@ export function useMasterViews() {
     if (initializedRef.current) return;
     initializedRef.current = true;
 
-    let cancelled = false;
+    // NOTE: deliberately no cleanup that cancels this work. `initializedRef`
+    // makes the effect single-run, and StrictMode's dev double-invoke would
+    // otherwise fire a cleanup between the two runs while the ref blocks the
+    // second — cancelling the only load attempt and leaving the dropdown empty
+    // in dev. A setState after unmount is a no-op in React 18+, so there is
+    // nothing to guard against.
 
     /**
      * One attempt at "load the account's master views, seeding starters only if
@@ -55,26 +60,33 @@ export function useMasterViews() {
      * retry an aborted attempt instead of inventing data.
      */
     async function attempt(): Promise<SeedDecision> {
-      // Resolve the signed-in user first — every branch below needs to know
-      // whether there is one, and a write attributed to nobody is worse than
-      // no write at all.
-      const userId = await getCurrentUserId();
-
-      // Migration writes rows too, so it is gated on a known user as well.
-      // Bailing WITHOUT setting the flag means it is retried, not lost.
-      if (userId) {
-        const migrated = typeof window !== 'undefined' && localStorage.getItem(MIGRATION_FLAG);
-        const hasLocalStorage = typeof window !== 'undefined' && localStorage.getItem(VIEW_STORAGE_KEY);
-        if (!migrated && hasLocalStorage) {
-          await migrateLocalStorageToSupabase();
-        }
+      // Migration writes rows, so it needs a known user. Bailing WITHOUT
+      // setting the one-time flag means it is retried, not lost.
+      const migrated = typeof window !== 'undefined' && localStorage.getItem(MIGRATION_FLAG);
+      const hasLocalStorage = typeof window !== 'undefined' && localStorage.getItem(VIEW_STORAGE_KEY);
+      let userId: string | null = null;
+      if (!migrated && hasLocalStorage) {
+        userId = await getCurrentUserId();
+        if (userId) await migrateLocalStorageToSupabase(userId);
       }
 
       const read = await fetchMasterViews();
+
+      // Resolve the user ONLY when it can change the outcome — i.e. when the
+      // account looks empty and we are about to write. On the overwhelmingly
+      // common path (views exist) this saves an auth round-trip per page load.
+      // Safe because decideSeedAction lets a successful non-empty read win
+      // regardless of userId.
+      if (read.ok && read.views.length === 0 && userId === null) {
+        userId = await getCurrentUserId();
+      }
+
       const decision = decideSeedAction({ userId, read });
 
+      // `read.ok` is required for type narrowing, not defensiveness:
+      // read.views only exists on the ok branch.
       if (decision.action === 'use-existing' && read.ok) {
-        if (!cancelled) setMasterViews(read.views);
+        setMasterViews(read.views);
         return decision;
       }
 
@@ -86,10 +98,26 @@ export function useMasterViews() {
             columns: sanitizeTemplateColumns(seed.columns),
             description: seed.description,
             isDefault: seed.isDefault,
-          });
+          }, userId);
           if (v) created.push(v);
         }
-        if (!cancelled) setMasterViews(created);
+
+        // Nothing was written — the account is still empty, so retrying is safe
+        // and cannot duplicate. Without this, a failed seed is reported as
+        // success and the account is left with no views until a reload.
+        if (created.length === 0) {
+          return { action: 'abort', reason: 'read-failed' };
+        }
+        if (created.length < SEED_MASTER_VIEWS.length) {
+          // Partial. Do NOT auto-create the missing one on later loads: an
+          // account with some starter views is indistinguishable from one where
+          // the user deleted the rest on purpose, and resurrecting a deliberately
+          // deleted view is worse than a missing one they can recreate.
+          console.warn(
+            `[useMasterViews] seeded ${created.length}/${SEED_MASTER_VIEWS.length} starter views`,
+          );
+        }
+        setMasterViews(created);
         return decision;
       }
 
@@ -99,10 +127,8 @@ export function useMasterViews() {
     (async () => {
       try {
         for (let i = 0; i < SEED_MAX_ATTEMPTS; i++) {
-          if (cancelled) return;
           if (i > 0) {
             await new Promise(r => setTimeout(r, SEED_RETRY_DELAYS_MS[i - 1]));
-            if (cancelled) return;
           }
 
           const decision = await attempt();
@@ -119,18 +145,16 @@ export function useMasterViews() {
       } catch (err) {
         console.error('[useMasterViews] init error:', err);
       } finally {
-        if (!cancelled) setIsLoading(false);
+        setIsLoading(false);
       }
     })();
-
-    return () => { cancelled = true; };
   }, []);
 
   // ----------------------------------------------------------
   // localStorage → Supabase migration (one-time)
   // ----------------------------------------------------------
 
-  async function migrateLocalStorageToSupabase() {
+  async function migrateLocalStorageToSupabase(userId: string) {
     try {
       const raw = localStorage.getItem(VIEW_STORAGE_KEY);
       if (!raw) return;
@@ -152,7 +176,7 @@ export function useMasterViews() {
           description: view.description,
           calculatedFields: safeCalcFields,
           isDefault: view.id === oldDefaultId,
-        });
+        }, userId);
       }
 
       // If the old default was 'default' (Basic) or no custom default was set,

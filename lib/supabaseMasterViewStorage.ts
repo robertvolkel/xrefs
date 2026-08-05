@@ -90,24 +90,26 @@ export async function createMasterViewSupabase(view: {
   columnMeta?: Record<string, string>;
   calculatedFields?: CalculatedFieldDef[];
   isDefault?: boolean;
-}): Promise<MasterView | null> {
+}, knownUserId?: string | null): Promise<MasterView | null> {
   const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+  // Callers that already resolved the user pass it in — each getUser() is a
+  // network round-trip, and the seed path creates several views in a row.
+  const userId = knownUserId ?? (await supabase.auth.getUser()).data.user?.id ?? null;
+  if (!userId) return null;
 
   // If setting as default, unset existing default first
   if (view.isDefault) {
     await supabase
       .from('view_templates')
       .update({ is_default: false })
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .eq('is_default', true);
   }
 
   const { data, error } = await supabase
     .from('view_templates')
     .insert({
-      user_id: user.id,
+      user_id: userId,
       name: view.name,
       columns: view.columns,
       description: view.description ?? '',
