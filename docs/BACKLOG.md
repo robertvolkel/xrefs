@@ -1378,8 +1378,36 @@ The shared fix for the misclassified bucket is value-based reclassification (a `
 | Aug 1 2026 | B1 | Transistors (`晶体管` ×1,711) + Schottky (~913, belong in **B2**) + bridge rectifiers + switching/HV diodes mis-filed under B1 Rectifier Diodes; surfaced via `类别`/`子类` taxonomy columns. | Misclassified parts | ~2,700+ | Full detail below ("Products filed under B1 Rectifier Diodes that are NOT rectifier diodes"). |
 | May 27 2026 | B8 | CT MICRO opto-SCRs (`c3="Triac, SCR Output Optoisolators"`) sit in B8 but should route to E1. | Misclassified parts | ~89 | Full detail below ("CT MICRO opto-SCRs misclassified as B8"). |
 | — | B4→B8 | JJW products (`cate3` signal) mis-filed B4→B8. | Misclassified parts | ~6,748 | Full detail below (JJW `cate3` entry). |
+| Aug 4 2026 | B5 | MOSFET channel type is unreliable on the weight-10 match gate — two problems: (1) ~7,322 parts store it in a format the engine doesn't recognize as equal (`N沟道`/`N-Channel`/`N-CH` ≠ `N`); (2) ~1,738 parts hide their polarity in a "Configuration" column that isn't parsed. | Coverage / matching fix | 7,322 + 1,738 | Full detail below ("MOSFET channel_type — value normalization + Configuration-column parser"). |
 
-*(Detailed write-ups for the misclassification rows live in the dedicated entries that follow. This table is the index so nothing gets lost.)*
+*(Detailed write-ups for the misclassification + fix rows live in the dedicated entries that follow. This table is the index so nothing gets lost.)*
+
+## MOSFET channel_type — value normalization + Configuration-column parser (P2)
+**Status:** Not started — grounded/verified Aug 4 2026, deferred by Rob ("add to backlog, don't deal with now").
+**Priority:** P2 — `channel_type` is the **weight-10 identity rule** ([mosfets.ts:43](../lib/logicTables/mosfets.ts#L43)), the top MOSFET match gate ("never a drop-in substitution"). Both problems below silently degrade it.
+**Do these as TWO independently-reversible changes; Step 1 first (bigger, cheaper).**
+
+**The trigger:** two Triage rows mapping a "Configuration"/"Conf." column → `channel_type` (JJW, AFsemi — both **deferred**, do NOT accept: the column mixes polarity with process tech like `Trench`/`SGT` and dual configs like `N+P`, which would corrupt the weight-10 gate). Investigating the column surfaced a bigger latent bug.
+
+**Grounded numbers (live `atlas_products`, `family_id='B5'`, 30,903 parts, Aug 4 2026):**
+
+### Step 1 — value normalization (the bigger win, ~7,322 parts)
+The engine's identity compare only lowercases + trims ([matchingEngine.ts:51](../lib/services/matchingEngine.ts#L51)); there are **no `valueAliases` on the channel_type rule**. So of 14,919 B5 parts that HAVE a channel type, **7,322 (49%) store it in a format that never string-matches a plain `N`/`P`** and silently score as "unknown polarity" on the top gate:
+- `N沟道` ×2,536 · `1个N沟道` ×878 · `N-Channel` ×500 · `N-沟道` ×175 · `N-CH` ×86 · `SN` ×72 · `Single N` ×54 (+ the P-side equivalents `P沟道` ×903, `1个P沟道` ×303, `P-Channel` ×144, …).
+- **Fix:** add a curated `valueAliases` group to the channel_type rule (N-group = every N spelling → `N`; P-group → `P`), reusing the Decision #160 mechanism. **No data change, no 15k-row backfill, instantly reversible.** Use an explicit curated list, NOT an auto-detector (short codes like `SN` make polarity-guessing unsafe — cf. [[hand-set-labels-are-unverified]] / explicit-blocklist pattern).
+
+### Step 2 — Configuration-column parser (the original ask, ~1,738 net-new)
+4,128 B5 parts carry a config column (`Configuration` ×3,061 · `Confi- guration` ×794 · `Conf.` ×273), 42 distinct values. Only the polarity-bearing values are usable:
+- **Net-new channel_type = 1,738** (1,399 N + 273 P + 66 complementary). **Cleanly additive — all 1,738 currently have NO channel_type, zero conflict.** (The "4,128" headline was overstated ~2.4×.)
+- **2,390 are unrecoverable from this column** — `Single` ×1,805 (count, not polarity), `Dual` ×128, `Trench`/`SGT` ×147 (process tech), `-` ×65. Parser must SKIP these, not guess. (Of the 1,805 `Single`, only 5 have polarity in the description; 1,337 already have channel_type elsewhere.)
+- **Fix:** ingest-time derivation in [atlasMapper.ts](../lib/services/atlasMapper.ts) **+ its `scripts/atlas-ingest.mjs` mirror** (Decision #174 lockstep, regen + diff the golden, mutation-test). Parse polarity-bearing values → canonical `channel_type` only where absent; preserve the raw value (Decision #278). Then backfill.
+
+**Three domain decisions needed before building (judgment calls, not lookups):**
+1. Canonical value = `N`/`P`? (Recommended — already the most common: N ×5,850, P ×1,745.)
+2. Dual same-type (`N+N`, `Dual N`) → polarity `N`, but must NOT pose as a single-transistor part (no dual-count attribute exists in B5 today; minting one is out of scope — flag it).
+3. Complementary (`N+P`, `Complementary`, `Half Bridge`) → its own value (e.g. `N+P`), NOT forced to N or P.
+
+**Verification:** measure the match-gate recognition rate before/after on live data (not a claim); mutation-tested tests that fail if any equivalence/parse case is removed.
 
 ## CT MICRO opto-SCRs misclassified as B8 (~89 products) — pre-existing data drift
 **Status:** Not started
