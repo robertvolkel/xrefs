@@ -1379,8 +1379,12 @@ The shared fix for the misclassified bucket is value-based reclassification (a `
 | May 27 2026 | B8 | CT MICRO opto-SCRs (`c3="Triac, SCR Output Optoisolators"`) sit in B8 but should route to E1. | Misclassified parts | ~89 | Full detail below ("CT MICRO opto-SCRs misclassified as B8"). |
 | — | B4→B8 | JJW products (`cate3` signal) mis-filed B4→B8. | Misclassified parts | ~6,748 | Full detail below (JJW `cate3` entry). |
 | Aug 4 2026 | B5 | MOSFET channel type is unreliable on the weight-10 match gate — two problems: (1) ~7,322 parts store it in a format the engine doesn't recognize as equal (`N沟道`/`N-Channel`/`N-CH` ≠ `N`); (2) ~1,738 parts hide their polarity in a "Configuration" column that isn't parsed. | Coverage / matching fix | 7,322 + 1,738 | Full detail below ("MOSFET channel_type — value normalization + Configuration-column parser"). |
+| Aug 4 2026 | B5 | XTX microcontrollers mis-filed under B5 MOSFETs — surfaced via a `UART` column. The products carry MCU columns (`Core`, `Flash(KB)`, `RAM(KB)`, `I2C`, `ADC`); one is an 8-bit MCU (8FX core, 36 KB flash). A couple aren't even parts (`Fan-Cooling Fan`, `Power Tool-Electric Saw` as MPNs). Fix = reclassify to an MCU/IC family; do NOT map `UART`→`_uart_count`. | Misclassified parts | 10 (all XTX) | Grounded live Aug 4 2026 (`family_id='B5'`, exact `UART` column, full-family scan). Small but a clean foreign-family signal. |
 
 *(Detailed write-ups for the misclassification + fix rows live in the dedicated entries that follow. This table is the index so nothing gets lost.)*
+
+**Checked and DROPPED (not real, kept so we don't re-chase):**
+- **C5 `功能` → NOT a misclassification.** The AI snapshot showed `Buck`/`GNSS`/`SAW`/`LNA` (non-logic), but a live scan (`family_id='C5'`, exact `功能` column, Aug 4 2026) found 170 products / 9 MFRs whose values are genuine logic functions in Chinese free-text (`二输入与门`=2-input AND, `复位`=reset, `8位串行输入/并行输出移位寄存器`=shift register). Correctly-filed logic ICs. The mapping is still declined, but because `logic_function` expects the part-number **code** (`08`/`373`), not a free-text description — a value-format mismatch, not a family error. Not a reclassification item.
 
 ## MOSFET channel_type — value normalization + Configuration-column parser (P2)
 **Status:** Not started — grounded/verified Aug 4 2026, deferred by Rob ("add to backlog, don't deal with now").
