@@ -214,7 +214,7 @@ Key design decisions inferred from the codebase, with rationale.
 - **#198** — Triage Queue Cache: L2 as Source of Truth (May 22, 2026)
 - **#199** — Retroactive Dict Override Backfill (May 23, 2026)
 
-## Decisions 200–288 — [DECISIONS_200-288.md](DECISIONS_200-288.md)
+## Decisions 200–289 — [DECISIONS_200-289.md](DECISIONS_200-289.md)
 
 - **#200** — Coverage Repair Workflow: Matching Impact + Per-MFR Drilldown + One-Click Backfill (May 23, 2026)
 - **#201** — Vendor-Name Hygiene: "gaia-" Prefix Must Never Reach End Users (May 24, 2026)
@@ -307,3 +307,4 @@ Key design decisions inferred from the codebase, with rationale.
 - **#286** ✓ — The source panel distinguishes "still loading" from "no data" on every tab: one `isPending` rule (0/false/[] are REAL values), height-exact shimmer, Specs filler rows + a genuine empty state — plus the two loading-window bugs the shimmer would have made worse (August 2, 2026)
 - **#287** ✓ — Don't offer a cross-reference we cannot produce (zero comparable specs ⇒ no button, with the certified carve-out), the panel gate asks "did it resolve?" not "does it have specs?", and every match reports how many specs were actually compared — coverage-ratio cutoff measured against 174 real parts and rejected (August 3, 2026)
 - **#288** ✓ — Mapping Triage: `reasoning` + `confidence` lived only in Tooltip Poppers (never in the DOM, so no copy could reach them) — a session-only "Show full AI notes" toggle prints all four AI fields plus the `<TextField>`-trapped attributeId/name/unit as real text; collapsed is byte-identical to before (August 3, 2026)
+- **#289** ✓ — A failed read is not an empty account: a swallowed error let the app re-seed starter views, showing "Basic View (Master)" and "Replacements (Master)" twice in the parts-list View dropdown — plus the two fixes that were checked and rejected (a stale-token theory the library disproves, and a unique index that would have made template saves fail silently) (August 5, 2026)

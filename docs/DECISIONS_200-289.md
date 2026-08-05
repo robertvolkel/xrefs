@@ -3503,3 +3503,38 @@ The marker is `isSynthetic?: boolean` **on the suggestion object, NOT on `RowSta
 **Also from the same review:** the toggle was a **dead control in the auto-flagged view** — every row there renders the flagged branch of the AI cell and never reaches the suggestion branch, so expanding changed nothing while still widening the column and worsening the overflow. Gated via one derived primitive (`aiNotesExpanded = expandExplanations && !allFlagged`) feeding *both* the width and the row prop, so a toggle left on before the view switched is covered too — hiding the button alone would not have been. And the expanded explanation had lost the collapsed branch's `overflow: 'hidden'` without gaining a `wordBreak`, so a long unbroken token could spill into the next column; `pre-wrap` does not imply word-breaking.
 
 **Known limit.** An MPN-style `paramName` and the row's other columns are still ordinary table cells, so a select-all copy produces a wide, ragged paste that an AI must untangle. A dedicated "Copy for AI" button emitting one labelled block per row was designed and deferred — it is the better answer for the copy use-case specifically, and is in BACKLOG.
+
+---
+
+## Decision #289 — A failed read is not an empty account: duplicate starter views in the parts-list View dropdown (August 5, 2026)
+
+**Symptom, from a client:** the parts-list View dropdown showed **"Basic View (Master)" and "Replacements (Master)" twice each**.
+
+**One account affected**, found by querying `view_templates` rather than reasoning about the code:
+
+| Created | View | Starred |
+|---|---|---|
+| 2026-06-03 06:32:00 | Basic View | no |
+| 2026-06-03 06:32:01 | Replacements | no |
+| 2026-07-07 08:41:37 | Basic View | **yes** |
+| 2026-07-07 08:41:37 | Replacements | no |
+
+**The timestamps did the diagnosis.** The two batches are **34 days apart**, which rules out the obvious candidate — two tabs or a double-click racing each other, which would land milliseconds apart. All four rows are untouched factory copies (`updated_at == created_at`, columns byte-identical to `SEED_MASTER_VIEWS`), so they are not user-made views that happen to share a name. The June "Basic View" had **lost its star**, which is exactly what `createMasterViewSupabase` does before inserting a new default. And 7 July was the account's first visit after a 21-day gap (activity: 16 June → 8 July). Structural signal first, content second.
+
+**Root cause, in one line:** [`fetchMasterViews()`](../lib/supabaseMasterViewStorage.ts) returned `[]` on error, and [`useMasterViews`](../hooks/useMasterViews.ts) seeded starter views whenever the read returned zero rows. **A failed read was indistinguishable from a new account**, so a transient error created a second permanent set. Nothing dedupes.
+
+⚠️ **A plausible-sounding second hypothesis was checked and is WRONG — do not repeat it.** "The page loaded with an expired login token, so the read came back unauthenticated and empty." Verified false in the installed library: every PostgREST request resolves its token through `SupabaseClient._getAccessToken()` → `auth.getSession()` (`supabase-js/dist/index.cjs:325-331`), and `getSession()` opens with `await this.initializePromise` (`auth-js GoTrueClient.js:1094-1095`), whose recover-and-refresh path calls `_callRefreshToken` on an expired session (`:1918-1920`). **Reads already wait for the refresh.** The empty result therefore came from a read that *errored* and was swallowed — which is our code, not a library quirk. The distinction matters: the first story blames the platform and suggests no fix; the second names one line.
+
+⚠️ **The obvious hardening — a unique index on `(user_id, name)` — was REJECTED, and would have shipped a worse bug.** `createMasterViewSupabase` returns `null` on failure and all three callers swallow it: `if (created) selectView(created.id)` on save-as-master ([PartsListShell.tsx](../components/parts-list/PartsListShell.tsx)) and `if (created) { deleteView(...) }` in `doPromote`. A user saving a template under an existing name would get a **silent no-op** — no row, no error, no message. A duplicate row is visible and repairable; a save that quietly does nothing is neither. The guard belongs on the seeding path, which is where the bug is, not on the table.
+
+**The fix.** [masterViewSeeding.ts](../lib/services/masterViewSeeding.ts) — a pure `decideSeedAction({ userId, read })` whose **ordering is the safety property**: a failed read aborts *before* emptiness is considered; a successful read with views always wins (never discard data we actually read); an unknown user never seeds. `fetchMasterViews()` now returns `{ ok: true, views } | { ok: false }` — one caller, so the change is total. Up to three attempts with 0.5s/2s backoff, since the original trigger was transient. The localStorage→Supabase migration is gated on a known user and **bails without setting its one-time flag**, so a migration attempted while signed-out is retried rather than lost.
+
+**The failure mode is traded, not eliminated.** If all three attempts fail the dropdown degrades to "Original" alone and a reload recovers it. That is strictly better than inventing a second set of views that persists forever. **Never invent data on a failed read.**
+
+**Residual, stated rather than hidden:** two tabs seeding a genuinely-new account simultaneously can still duplicate. It is not what happened here (34 days), and the only airtight fix is the DB constraint rejected above.
+
+**Repair:** [scripts/fix-duplicate-master-views.mjs](../scripts/fix-duplicate-master-views.mjs) — dry-run default, `--apply` to write, `--user <email>` to scope. Keeps the **newest** of each same-named group (the copy the account is actively using), **refuses to delete any duplicate edited since creation**, re-points `activeViewId` / `defaultViewId` / `masterViewOverrides` on every list in the system that referenced a removed copy, and snapshots before deleting. Applied 5 August 2026: 2 rows deleted, 1 list re-pointed (`Atlas_test1.defaultViewId` → the surviving Basic View, which was already its `activeViewId`). Post-verified: every account now has unique view names and exactly one default; re-running reports "no duplicates found".
+
+**Gates:** 3,848 tests pass; lint 85 / type 92 unchanged. The new suite was **mutation-tested** — reintroducing the original defect (`const views = read.ok ? read.views : []`) turns 3 of 13 tests red, including one that asserts the two inputs must not decide the same way.
+
+**Unrelated finding, left alone:** the sweep surfaced a dangling view reference on `rvolkel@supplyframe.com` / "A simple list of parts" (`52401d84…`, in neither `view_templates` nor the list's own views) — pre-existing, not one of the deleted ids, and it merely opens that list on "Original".

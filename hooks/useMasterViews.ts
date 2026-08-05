@@ -12,11 +12,19 @@ import {
 import type { CalculatedFieldDef } from '@/lib/calculatedFields';
 import {
   fetchMasterViews,
+  getCurrentUserId,
   createMasterViewSupabase,
   updateMasterViewSupabase,
   deleteMasterViewSupabase,
   setDefaultMasterViewSupabase,
 } from '@/lib/supabaseMasterViewStorage';
+import type { SeedDecision } from '@/lib/services/masterViewSeeding';
+import {
+  decideSeedAction,
+  shouldRetry,
+  SEED_RETRY_DELAYS_MS,
+  SEED_MAX_ATTEMPTS,
+} from '@/lib/services/masterViewSeeding';
 
 const MIGRATION_FLAG = 'xrefs_views_migrated';
 
@@ -39,41 +47,83 @@ export function useMasterViews() {
     if (initializedRef.current) return;
     initializedRef.current = true;
 
-    (async () => {
-      try {
-        // Check if migration needed
+    let cancelled = false;
+
+    /**
+     * One attempt at "load the account's master views, seeding starters only if
+     * the account is CONFIRMED empty". Returns the decision so the caller can
+     * retry an aborted attempt instead of inventing data.
+     */
+    async function attempt(): Promise<SeedDecision> {
+      // Resolve the signed-in user first — every branch below needs to know
+      // whether there is one, and a write attributed to nobody is worse than
+      // no write at all.
+      const userId = await getCurrentUserId();
+
+      // Migration writes rows too, so it is gated on a known user as well.
+      // Bailing WITHOUT setting the flag means it is retried, not lost.
+      if (userId) {
         const migrated = typeof window !== 'undefined' && localStorage.getItem(MIGRATION_FLAG);
         const hasLocalStorage = typeof window !== 'undefined' && localStorage.getItem(VIEW_STORAGE_KEY);
-
         if (!migrated && hasLocalStorage) {
           await migrateLocalStorageToSupabase();
         }
+      }
 
-        // Fetch from Supabase
-        let views = await fetchMasterViews();
+      const read = await fetchMasterViews();
+      const decision = decideSeedAction({ userId, read });
 
-        // If no master views exist (fresh user, or migration produced none), seed defaults
-        if (views.length === 0) {
-          const created: MasterView[] = [];
-          for (const seed of SEED_MASTER_VIEWS) {
-            const v = await createMasterViewSupabase({
-              name: seed.name,
-              columns: sanitizeTemplateColumns(seed.columns),
-              description: seed.description,
-              isDefault: seed.isDefault,
-            });
-            if (v) created.push(v);
-          }
-          views = created;
+      if (decision.action === 'use-existing' && read.ok) {
+        if (!cancelled) setMasterViews(read.views);
+        return decision;
+      }
+
+      if (decision.action === 'seed') {
+        const created: MasterView[] = [];
+        for (const seed of SEED_MASTER_VIEWS) {
+          const v = await createMasterViewSupabase({
+            name: seed.name,
+            columns: sanitizeTemplateColumns(seed.columns),
+            description: seed.description,
+            isDefault: seed.isDefault,
+          });
+          if (v) created.push(v);
         }
+        if (!cancelled) setMasterViews(created);
+        return decision;
+      }
 
-        setMasterViews(views);
+      return decision;
+    }
+
+    (async () => {
+      try {
+        for (let i = 0; i < SEED_MAX_ATTEMPTS; i++) {
+          if (cancelled) return;
+          if (i > 0) {
+            await new Promise(r => setTimeout(r, SEED_RETRY_DELAYS_MS[i - 1]));
+            if (cancelled) return;
+          }
+
+          const decision = await attempt();
+          if (!shouldRetry(decision)) return;
+
+          console.warn(
+            `[useMasterViews] load aborted (${decision.reason}), attempt ${i + 1}/${SEED_MAX_ATTEMPTS}`,
+          );
+        }
+        // Every attempt failed. Leave the list empty rather than create a second
+        // set of starter views: the dropdown degrades to "Original" and a reload
+        // recovers, which is repairable. Duplicate views are not.
+        console.error('[useMasterViews] could not load master views; not seeding');
       } catch (err) {
         console.error('[useMasterViews] init error:', err);
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     })();
+
+    return () => { cancelled = true; };
   }, []);
 
   // ----------------------------------------------------------

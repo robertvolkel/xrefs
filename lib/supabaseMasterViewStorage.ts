@@ -6,6 +6,7 @@
 
 import { createClient } from './supabase/client';
 import type { MasterView } from './viewConfigStorage';
+import type { MasterViewReadResult } from './services/masterViewSeeding';
 import type { CalculatedFieldDef } from './calculatedFields';
 
 // ============================================================
@@ -42,20 +43,43 @@ function fromRow(row: ViewTemplateRow): MasterView {
 // CRUD
 // ============================================================
 
-/** Fetch all master views for the current user */
-export async function fetchMasterViews(): Promise<MasterView[]> {
+/** The signed-in user's id, or null if the session could not be resolved. */
+export async function getCurrentUserId(): Promise<string | null> {
   const supabase = createClient();
-  const { data, error } = await supabase
-    .from('view_templates')
-    .select('*')
-    .order('sort_order', { ascending: true })
-    .order('created_at', { ascending: true });
-
-  if (error) {
-    console.error('[masterViews] fetch error:', error);
-    return [];
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    return user?.id ?? null;
+  } catch (err) {
+    console.error('[masterViews] auth error:', err);
+    return null;
   }
-  return (data as ViewTemplateRow[]).map(fromRow);
+}
+
+/**
+ * Fetch all master views for the current user.
+ *
+ * Returns a result object, NOT a bare array: callers must be able to tell
+ * "this account has no views" apart from "the read failed". Collapsing the two
+ * is what caused duplicate starter views — see lib/services/masterViewSeeding.ts.
+ */
+export async function fetchMasterViews(): Promise<MasterViewReadResult> {
+  const supabase = createClient();
+  try {
+    const { data, error } = await supabase
+      .from('view_templates')
+      .select('*')
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('[masterViews] fetch error:', error);
+      return { ok: false };
+    }
+    return { ok: true, views: (data as ViewTemplateRow[]).map(fromRow) };
+  } catch (err) {
+    console.error('[masterViews] fetch threw:', err);
+    return { ok: false };
+  }
 }
 
 /** Create a new master view */
